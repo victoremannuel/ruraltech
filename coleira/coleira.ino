@@ -10,6 +10,9 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
+#if __has_include(<esp_idf_version.h>)
+#include <esp_idf_version.h>
+#endif
 #include "config.h"
 #include "Logger.h"
 #include "SensorsManager.h"
@@ -84,7 +87,15 @@ static void applyDownlink(const LoRaFrame& frame) {
 
 void setup() {
   Serial.begin(cfg::SERIAL_BAUD);
+#if defined(ESP_IDF_VERSION_MAJOR) && ESP_IDF_VERSION_MAJOR >= 5
+  esp_task_wdt_config_t wdtConfig = {};
+  wdtConfig.timeout_ms = 12000;
+  wdtConfig.idle_core_mask = 0;
+  wdtConfig.trigger_panic = true;
+  esp_task_wdt_init(&wdtConfig);
+#else
   esp_task_wdt_init(12, true);
+#endif
   esp_task_wdt_add(NULL);
 
   sensors.begin();
