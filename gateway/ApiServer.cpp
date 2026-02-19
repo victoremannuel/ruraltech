@@ -33,7 +33,10 @@ void ApiServer::loop() {
   ws_.loop();
 }
 
-void ApiServer::broadcastTelemetry(const String& json) { ws_.broadcastTXT(json); }
+void ApiServer::broadcastTelemetry(const String& json) {
+  String payload = json;
+  ws_.broadcastTXT(payload);
+}
 
 bool ApiServer::hasPendingCommand() const { return head_ != tail_; }
 
