@@ -33,6 +33,16 @@ Firmware da coleira com telemetria, cerca virtual autônoma, condução por fase
 4. Compile e faça upload.
 5. Serial Monitor em 115200.
 
+## Atualização de firmware via Wi-Fi (OTA)
+- OTA já vem habilitado no firmware (`config.h`).
+- A coleira tenta entrar em modo OTA em boot frio (ligar/reset), conectando no Wi-Fi:
+  - SSID: `RuralTech-Gateway`
+  - Senha: `ruraltechota`
+- Se conectar, ela fica em janela de manutenção OTA por 5 minutos.
+- Nesse período, no Arduino IDE selecione a porta de rede `ruraltech-coleira` e faça upload.
+- Senha OTA: `ruraltechota`.
+- Se não houver Wi-Fi disponível, ela segue operação normal sem OTA.
+
 ## Protocolo LoRa
 - Estrutura: `device_id, msg_type, seq, timestamp, nonce(12), payload_len, payload, auth_tag(16)`.
 - Criptografia: AES-CTR + HMAC-SHA256 truncado (16 bytes).

@@ -21,7 +21,10 @@ constexpr int PIN_I2C_SCL = 22;
 constexpr float LORA_FREQ_MHZ = 915.0;
 constexpr uint16_t WS_PORT = 81;
 constexpr char AP_SSID[] = "RuralTech-Gateway";
-constexpr char AP_PASS[] = "ruraltech123";
+constexpr char AP_PASS[] = "ruraltechota";
+constexpr bool OTA_ENABLED = true;
+constexpr char OTA_HOSTNAME[] = "ruraltech-gateway";
+constexpr char OTA_PASSWORD[] = "ruraltechota";
 
 // Criptografia LoRa (deve casar com a coleira no MVP)
 constexpr uint8_t AES_KEY[16] = {0x31,0x62,0x13,0x44,0x75,0x26,0x57,0x98,0xA9,0xBA,0xCB,0xDC,0xED,0x0F,0x11,0x22};

@@ -9,7 +9,10 @@
  */
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <WiFi.h>
+#include <ArduinoOTA.h>
 #include <esp_task_wdt.h>
+#include <esp_sleep.h>
 #if __has_include(<esp_idf_version.h>)
 #include <esp_idf_version.h>
 #endif
@@ -35,9 +38,47 @@ uint32_t seq = 1;
 uint32_t lastCycle = 0;
 uint32_t violationStart = 0;
 bool wasInside = true;
+bool otaModeActive = false;
+uint32_t otaWindowStartMs = 0;
 
 static void randomNonce(uint8_t* nonce12) {
   for (int i = 0; i < 12; ++i) nonce12[i] = (uint8_t)esp_random();
+}
+
+static void setupWifiOtaMaintenance() {
+  if (!cfg::OTA_ENABLED) return;
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(cfg::WIFI_SSID, cfg::WIFI_PASS);
+  LOGI("OTA: conectando Wi-Fi SSID=%s", cfg::WIFI_SSID);
+
+  const uint32_t start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < cfg::OTA_CONNECT_TIMEOUT_MS) {
+    delay(250);
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    LOGW("OTA: Wi-Fi indisponível, seguindo modo normal.");
+    WiFi.disconnect(true, true);
+    WiFi.mode(WIFI_OFF);
+    return;
+  }
+
+  ArduinoOTA.setHostname(cfg::OTA_HOSTNAME);
+  ArduinoOTA.setPassword(cfg::OTA_PASSWORD);
+  ArduinoOTA.onStart([]() { LOGI("OTA iniciado"); });
+  ArduinoOTA.onEnd([]() { LOGI("OTA concluído"); });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    LOGI("OTA progresso: %u%%", (progress * 100U) / total);
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    LOGE("OTA erro=%u", (unsigned int)error);
+  });
+  ArduinoOTA.begin();
+
+  otaModeActive = true;
+  otaWindowStartMs = millis();
+  LOGI("OTA pronto em %s (%s)", WiFi.localIP().toString().c_str(), cfg::OTA_HOSTNAME);
 }
 
 static void logEvent(EventType type, int32_t d1 = 0, int32_t d2 = 0) {
@@ -98,6 +139,10 @@ void setup() {
 #endif
   esp_task_wdt_add(NULL);
 
+  const esp_sleep_wakeup_cause_t wakeCause = esp_sleep_get_wakeup_cause();
+  const bool coldBoot = (wakeCause == ESP_SLEEP_WAKEUP_UNDEFINED);
+  if (coldBoot) setupWifiOtaMaintenance();
+
   sensors.begin();
   safety.begin();
   storage.begin();
@@ -107,6 +152,18 @@ void setup() {
 }
 
 void loop() {
+  if (otaModeActive) {
+    ArduinoOTA.handle();
+    if (millis() - otaWindowStartMs < cfg::OTA_WINDOW_MS) {
+      delay(10);
+      return;
+    }
+    otaModeActive = false;
+    WiFi.disconnect(true, true);
+    WiFi.mode(WIFI_OFF);
+    LOGI("OTA: janela de manutenção encerrada.");
+  }
+
   esp_task_wdt_reset();
   sensors.tick();
 

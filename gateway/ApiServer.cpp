@@ -1,13 +1,23 @@
 /** @file ApiServer.cpp */
 #include "ApiServer.h"
 #include "config.h"
+#include <WiFi.h>
 
 static ApiServer* g_server = nullptr;
 
 void ApiServer::begin() {
   g_server = this;
   http_.on("/status", HTTP_GET, [this]() {
-    http_.send(200, "application/json", "{\"ok\":true,\"service\":\"gateway\"}");
+    StaticJsonDocument<256> doc;
+    doc["ok"] = true;
+    doc["service"] = "gateway";
+    doc["fw"] = cfg::FW_VERSION;
+    doc["ap_ssid"] = cfg::AP_SSID;
+    doc["ap_ip"] = WiFi.softAPIP().toString();
+    doc["ota"] = cfg::OTA_ENABLED;
+    String out;
+    serializeJson(doc, out);
+    http_.send(200, "application/json", out);
   });
   http_.on("/devices", HTTP_GET, [this]() { http_.send(200, "application/json", "[]"); });
   http_.on("/logs", HTTP_GET, [this]() { http_.send(200, "text/plain", "Consulte SD local"); });

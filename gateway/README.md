@@ -34,3 +34,10 @@ Receber LoRa da coleira, expor REST+WebSocket para o app, logar em microSD com h
 2. Configure placa ESP32 Dev Module.
 3. Instale bibliotecas.
 4. Compile/upload.
+
+## Atualização de firmware via Wi-Fi (OTA)
+- OTA já vem habilitado no firmware (`config.h`).
+- Conecte seu PC no AP do gateway: `RuralTech-Gateway` / `ruraltechota`.
+- No Arduino IDE, selecione a porta de rede do dispositivo `ruraltech-gateway`.
+- Faça upload normalmente; quando solicitado, use a senha OTA: `ruraltechota`.
+- Endpoint útil: `GET /status` mostra `ota=true` e IP do AP.

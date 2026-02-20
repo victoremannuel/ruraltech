@@ -6,6 +6,7 @@
  */
 #include <Arduino.h>
 #include <WiFi.h>
+#include <ArduinoOTA.h>
 #include <Wire.h>
 #include <SPI.h>
 #include <ArduinoJson.h>
@@ -31,6 +32,22 @@ static void setupWiFi() {
   LOGI("AP ativo: %s", cfg::AP_SSID);
 }
 
+static void setupOta() {
+  if (!cfg::OTA_ENABLED) return;
+  ArduinoOTA.setHostname(cfg::OTA_HOSTNAME);
+  ArduinoOTA.setPassword(cfg::OTA_PASSWORD);
+  ArduinoOTA.onStart([]() { LOGI("OTA iniciado"); });
+  ArduinoOTA.onEnd([]() { LOGI("OTA concluído"); });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    LOGI("OTA progresso: %u%%", (progress * 100U) / total);
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    LOGE("OTA erro=%u", (unsigned int)error);
+  });
+  ArduinoOTA.begin();
+  LOGI("OTA ativo hostname=%s", cfg::OTA_HOSTNAME);
+}
+
 static void drawStatus(const char* line1, const char* line2) {
   display.clearDisplay();
   display.setTextSize(1);
@@ -49,6 +66,7 @@ void setup() {
   drawStatus("Boot", cfg::FW_VERSION);
 
   setupWiFi();
+  setupOta(); //comando para ligar o OTA (wifi do gateway)
   api.begin();
   rtc.begin();
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
@@ -60,6 +78,7 @@ void setup() {
 }
 
 void loop() {
+  if (cfg::OTA_ENABLED) ArduinoOTA.handle();
   api.loop();
 
   LoRaFrame rx;

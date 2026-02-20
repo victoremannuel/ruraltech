@@ -39,6 +39,15 @@ constexpr uint8_t LORA_SF = 9;
 constexpr uint8_t LORA_CR = 7;
 constexpr uint8_t LORA_SYNC_WORD = 0x12;
 
+// Wi-Fi / OTA (manutenção)
+constexpr bool OTA_ENABLED = true;
+constexpr char WIFI_SSID[] = "RuralTech-Gateway";
+constexpr char WIFI_PASS[] = "ruraltechota";
+constexpr char OTA_HOSTNAME[] = "ruraltech-coleira";
+constexpr char OTA_PASSWORD[] = "ruraltechota";
+constexpr uint32_t OTA_CONNECT_TIMEOUT_MS = 12000;
+constexpr uint32_t OTA_WINDOW_MS = 300000;
+
 // Intervalos (ms)
 constexpr uint32_t NORMAL_INTERVAL_MS = 180000;
 constexpr uint32_t ALERT_INTERVAL_MS = 20000;
