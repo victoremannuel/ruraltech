@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -19,17 +22,43 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
   final _userEmailsCtrl = TextEditingController();
   final List<LatLng> _points = [];
   final LatLng _initialCenter = const LatLng(-23.0, -46.0);
+  bool _isSaving = false;
+  bool _didTimeout = false;
+
+  Future<void> _showMessage(String title, String message) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _userEmailsCtrl.dispose();
+    super.dispose();
+  }
 
   Future<void> _save() async {
+    if (_isSaving) return;
     if (_nameCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Informe o nome da propriedade.')),
-      );
+      _showMessage('Campo obrigatorio', 'Informe o nome da propriedade.');
       return;
     }
     if (_points.length < 3) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Desenhe ao menos 3 pontos no mapa.')),
+      _showMessage(
+        'Pontos insuficientes',
+        'Desenhe ao menos 3 pontos no mapa.',
       );
       return;
     }
@@ -45,21 +74,58 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
         .toList();
 
     final points = _points.map((p) => [p.latitude, p.longitude]).toList();
+    setState(() => _isSaving = true);
+    _didTimeout = false;
+    Timer? watchdog;
     try {
-      await context.read<FirebaseService>().addRuralProperty(
+      watchdog = Timer(const Duration(seconds: 16), () async {
+        if (!mounted || !_isSaving) return;
+        _didTimeout = true;
+        setState(() => _isSaving = false);
+        await _showMessage(
+          'Tempo limite',
+          'A gravacao nao respondeu. Verifique internet/firestore e tente novamente.',
+        );
+      });
+      await context
+          .read<FirebaseService>()
+          .addRuralProperty(
             name: _nameCtrl.text.trim(),
             points: points,
             creatorUid: uid,
             isAdmin: auth.isAdmin,
             userEmails: emails,
-          );
+          )
+          .timeout(const Duration(seconds: 15));
+      if (_didTimeout) return;
       if (!mounted) return;
-      Navigator.pop(context);
+      await _showMessage(
+        'Sucesso',
+        'Propriedade rural salva com sucesso.',
+      );
+      if (mounted) Navigator.pop(context);
+    } on FirebaseException catch (e) {
+      if (!mounted) return;
+      await _showMessage(
+        'Erro Firebase',
+        '${e.code}: ${e.message ?? 'Falha ao salvar a propriedade.'}',
+      );
+    } on TimeoutException catch (e) {
+      if (_didTimeout) return;
+      if (!mounted) return;
+      await _showMessage(
+        'Tempo limite',
+        e.message ?? 'A operacao excedeu o tempo limite.',
+      );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao salvar propriedade: $e')),
+      await _showMessage(
+        'Erro',
+        'Erro ao salvar propriedade: $e',
       );
+    } finally {
+      watchdog?.cancel();
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -145,7 +211,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
               children: [
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: _points.isEmpty
+                    onPressed: _isSaving || _points.isEmpty
                         ? null
                         : () => setState(() => _points.clear()),
                     child: const Text('Limpar'),
@@ -154,7 +220,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: _points.isEmpty
+                    onPressed: _isSaving || _points.isEmpty
                         ? null
                         : () => setState(() => _points.removeLast()),
                     child: const Text('Desfazer'),
@@ -163,8 +229,14 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: _save,
-                    child: const Text('Salvar'),
+                    onPressed: _isSaving ? null : _save,
+                    child: _isSaving
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Salvar'),
                   ),
                 ),
               ],

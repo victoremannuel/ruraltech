@@ -8,6 +8,7 @@ import 'screens/login_screen.dart';
 import 'services/auth_service.dart';
 import 'services/firebase_service.dart';
 import 'services/gateway_service.dart';
+import 'services/map_filter_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -63,6 +64,7 @@ class RuralTechApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AuthService()),
         Provider(create: (_) => FirebaseService()),
         ChangeNotifierProvider(create: (_) => GatewayService()),
+        ChangeNotifierProvider(create: (_) => MapFilterService()),
       ],
       child: MaterialApp(
         title: 'RuralTech',

@@ -9,30 +9,37 @@ service cloud.firestore {
       return request.auth.uid;
     }
 
+    function userRef() {
+      return /databases/$(database)/documents/users/$(uid());
+    }
+
     function userDoc() {
-      return get(/databases/$(database)/documents/users/$(uid()));
+      return get(userRef());
     }
 
     function isAdmin() {
       return signedIn() &&
-        exists(/databases/$(database)/documents/users/$(uid())) &&
+        exists(userRef()) &&
         userDoc().data.role == 'adm';
-    }
-
-    function isOwner(resourceData) {
-      return signedIn() && resourceData.ownerUid == uid();
     }
 
     function hasUserAccess(resourceData) {
       return signedIn() &&
         ('userUids' in resourceData) &&
-        (uid() in resourceData.userUids);
+        (userRef() in resourceData.userUids);
     }
 
-    function canAccessDevice(deviceId) {
+    function canAccessCollar(collarId) {
       return isAdmin() || (
-        exists(/databases/$(database)/documents/devices/$(deviceId)) &&
-        hasUserAccess(get(/databases/$(database)/documents/devices/$(deviceId)).data)
+        exists(/databases/$(database)/documents/collars/$(collarId)) &&
+        hasUserAccess(get(/databases/$(database)/documents/collars/$(collarId)).data)
+      );
+    }
+
+    function canAccessProperty(propertyId) {
+      return isAdmin() || (
+        exists(/databases/$(database)/documents/ruralProperties/$(propertyId)) &&
+        hasUserAccess(get(/databases/$(database)/documents/ruralProperties/$(propertyId)).data)
       );
     }
 
@@ -48,7 +55,7 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    match /devices/{deviceId} {
+    match /collars/{collarId} {
       allow read: if signedIn() && (isAdmin() || hasUserAccess(resource.data));
       allow create, update, delete: if isAdmin();
     }
@@ -64,49 +71,77 @@ service cloud.firestore {
         (
           isAdmin() ||
           (
-            request.resource.data.createdByUid == uid() &&
+            request.resource.data.createdByUid == userRef() &&
             ('userUids' in request.resource.data) &&
             request.resource.data.userUids.size() == 1 &&
-            uid() in request.resource.data.userUids
+            userRef() in request.resource.data.userUids
           )
         );
       allow update, delete: if isAdmin();
     }
 
+    match /areas/{areaId} {
+      allow read: if signedIn() && (
+        isAdmin() ||
+        (
+          'ruralPropertiesID' in resource.data &&
+          canAccessProperty(resource.data.ruralPropertiesID.id)
+        )
+      );
+      allow create: if signedIn() && (
+        isAdmin() ||
+        (
+          request.resource.data.ownerUid == userRef() &&
+          'ruralPropertiesID' in request.resource.data &&
+          canAccessProperty(request.resource.data.ruralPropertiesID.id)
+        )
+      );
+      allow update, delete: if isAdmin();
+    }
+
     match /fences/{docId} {
-      allow read: if signedIn() && (isAdmin() || isOwner(resource.data));
+      allow read: if signedIn() && (
+        isAdmin() ||
+        (resource.data.ownerUid == userRef())
+      );
       allow create, update: if signedIn() &&
         (
           isAdmin() ||
           (
-            request.resource.data.ownerUid == uid() &&
-            canAccessDevice(request.resource.data.deviceId)
+            request.resource.data.ownerUid == userRef() &&
+            canAccessCollar(request.resource.data.deviceId)
           )
         );
       allow delete: if isAdmin();
     }
 
     match /herdingPlans/{docId} {
-      allow read: if signedIn() && (isAdmin() || isOwner(resource.data));
+      allow read: if signedIn() && (
+        isAdmin() ||
+        (resource.data.ownerUid == userRef())
+      );
       allow create, update: if signedIn() &&
         (
           isAdmin() ||
           (
-            request.resource.data.ownerUid == uid() &&
-            canAccessDevice(request.resource.data.deviceId)
+            request.resource.data.ownerUid == userRef() &&
+            canAccessCollar(request.resource.data.deviceId)
           )
         );
       allow delete: if isAdmin();
     }
 
     match /events/{eventId} {
-      allow read: if signedIn() && (isAdmin() || isOwner(resource.data));
+      allow read: if signedIn() && (
+        isAdmin() ||
+        (resource.data.ownerUid == userRef())
+      );
       allow create: if signedIn() &&
         (
           isAdmin() ||
           (
-            request.resource.data.ownerUid == uid() &&
-            canAccessDevice(request.resource.data.deviceId)
+            request.resource.data.ownerUid == userRef() &&
+            canAccessCollar(request.resource.data.deviceId)
           )
         );
       allow update, delete: if isAdmin();

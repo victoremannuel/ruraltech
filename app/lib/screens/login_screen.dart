@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
 
@@ -12,6 +13,53 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _email = TextEditingController();
   final _pass = TextEditingController();
+  bool _loading = false;
+
+  String _authErrorMessage(Object e) {
+    if (e is FirebaseAuthException) {
+      switch (e.code) {
+        case 'invalid-email':
+          return 'Email invalido.';
+        case 'invalid-credential':
+          return 'Email ou senha invalidos.';
+        case 'user-not-found':
+          return 'Usuario nao encontrado.';
+        case 'wrong-password':
+          return 'Senha incorreta.';
+        case 'email-already-in-use':
+          return 'Este email ja esta em uso.';
+        case 'weak-password':
+          return 'Senha fraca. Use ao menos 6 caracteres.';
+        case 'too-many-requests':
+          return 'Muitas tentativas. Tente novamente em alguns minutos.';
+        default:
+          return e.message ?? 'Falha na autenticacao.';
+      }
+    }
+    return e.toString();
+  }
+
+  Future<void> _runAuth(Future<void> Function() action) async {
+    final email = _email.text.trim();
+    final pass = _pass.text;
+    if (email.isEmpty || pass.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Preencha email e senha.')),
+      );
+      return;
+    }
+    setState(() => _loading = true);
+    try {
+      await action();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_authErrorMessage(e))),
+      );
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -22,11 +70,32 @@ class _LoginScreenState extends State<LoginScreen> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            TextField(controller: _email, decoration: const InputDecoration(labelText: 'Email')),
-            TextField(controller: _pass, obscureText: true, decoration: const InputDecoration(labelText: 'Senha')),
+            TextField(
+                controller: _email,
+                decoration: const InputDecoration(labelText: 'Email')),
+            TextField(
+                controller: _pass,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: 'Senha')),
             const SizedBox(height: 16),
-            ElevatedButton(onPressed: () => auth.signIn(_email.text, _pass.text), child: const Text('Entrar')),
-            TextButton(onPressed: () => auth.signUp(_email.text, _pass.text), child: const Text('Criar conta')),
+            ElevatedButton(
+              onPressed: _loading
+                  ? null
+                  : () => _runAuth(() => auth.signIn(_email.text, _pass.text)),
+              child: _loading
+                  ? const SizedBox(
+                      height: 16,
+                      width: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Entrar'),
+            ),
+            TextButton(
+              onPressed: _loading
+                  ? null
+                  : () => _runAuth(() => auth.signUp(_email.text, _pass.text)),
+              child: const Text('Criar conta'),
+            ),
           ],
         ),
       ),

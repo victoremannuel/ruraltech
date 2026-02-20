@@ -51,12 +51,17 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<void> signIn(String email, String pass) async {
-    await _auth.signInWithEmailAndPassword(email: email, password: pass);
+    await _auth.signInWithEmailAndPassword(
+      email: email.trim().toLowerCase(),
+      password: pass,
+    );
   }
 
   Future<void> signUp(String email, String pass) async {
     final cred = await _auth.createUserWithEmailAndPassword(
-        email: email, password: pass);
+      email: email.trim().toLowerCase(),
+      password: pass,
+    );
     final u = cred.user;
     if (u != null) {
       await _db.collection('users').doc(u.uid).set({

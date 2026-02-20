@@ -244,6 +244,15 @@
       ]
     },
     {
+      "name": "intl",
+      "version": "0.20.2",
+      "dependencies": [
+        "clock",
+        "meta",
+        "path"
+      ]
+    },
+    {
       "name": "proj4dart",
       "version": "2.1.0",
       "dependencies": [
@@ -258,6 +267,18 @@
       "dependencies": [
         "collection"
       ]
+    },
+    {
+      "name": "logger",
+      "version": "2.6.2",
+      "dependencies": [
+        "meta"
+      ]
+    },
+    {
+      "name": "dart_earcut",
+      "version": "1.2.0",
+      "dependencies": []
     },
     {
       "name": "async",
@@ -492,11 +513,6 @@
       "dependencies": []
     },
     {
-      "name": "dart_earcut",
-      "version": "1.2.0",
-      "dependencies": []
-    },
-    {
       "name": "unicode",
       "version": "0.3.1",
       "dependencies": [
@@ -508,22 +524,6 @@
       "version": "1.0.1",
       "dependencies": [
         "meta"
-      ]
-    },
-    {
-      "name": "logger",
-      "version": "2.6.2",
-      "dependencies": [
-        "meta"
-      ]
-    },
-    {
-      "name": "intl",
-      "version": "0.20.2",
-      "dependencies": [
-        "clock",
-        "meta",
-        "path"
       ]
     }
   ],
