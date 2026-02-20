@@ -4,8 +4,16 @@ class DeviceModel {
   final String status;
   final double? lat;
   final double? lon;
+  final String? propertyId;
 
-  DeviceModel({required this.id, required this.name, required this.status, this.lat, this.lon});
+  DeviceModel({
+    required this.id,
+    required this.name,
+    required this.status,
+    this.lat,
+    this.lon,
+    this.propertyId,
+  });
 
   factory DeviceModel.fromMap(String id, Map<String, dynamic> m) => DeviceModel(
         id: id,
@@ -13,7 +21,14 @@ class DeviceModel {
         status: m['status'] ?? 'unknown',
         lat: (m['lat'] as num?)?.toDouble(),
         lon: (m['lon'] as num?)?.toDouble(),
+        propertyId: m['propertyId'] as String?,
       );
 
-  Map<String, dynamic> toMap() => {'name': name, 'status': status, 'lat': lat, 'lon': lon};
+  Map<String, dynamic> toMap() => {
+        'name': name,
+        'status': status,
+        'lat': lat,
+        'lon': lon,
+        'propertyId': propertyId,
+      };
 }

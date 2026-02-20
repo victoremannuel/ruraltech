@@ -68,9 +68,8 @@ class RuralTechApp extends StatelessWidget {
         title: 'RuralTech',
         theme: ThemeData(colorSchemeSeed: Colors.green, useMaterial3: true),
         home: Consumer<AuthService>(
-          builder: (_, auth, __) => auth.user == null
-              ? const LoginScreen()
-              : const DashboardScreen(),
+          builder: (_, auth, __) =>
+              auth.user == null ? const LoginScreen() : const HomeScreen(),
         ),
       ),
     );
