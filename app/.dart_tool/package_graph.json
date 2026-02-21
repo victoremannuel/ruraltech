@@ -13,6 +13,7 @@
         "firebase_core",
         "flutter",
         "flutter_map",
+        "geolocator",
         "http",
         "latlong2",
         "provider",
@@ -525,6 +526,78 @@
       "dependencies": [
         "meta"
       ]
+    },
+    {
+      "name": "geolocator",
+      "version": "13.0.4",
+      "dependencies": [
+        "flutter",
+        "geolocator_android",
+        "geolocator_apple",
+        "geolocator_platform_interface",
+        "geolocator_web",
+        "geolocator_windows"
+      ]
+    },
+    {
+      "name": "geolocator_windows",
+      "version": "0.2.5",
+      "dependencies": [
+        "flutter",
+        "geolocator_platform_interface"
+      ]
+    },
+    {
+      "name": "geolocator_web",
+      "version": "4.1.3",
+      "dependencies": [
+        "flutter",
+        "flutter_web_plugins",
+        "geolocator_platform_interface",
+        "web"
+      ]
+    },
+    {
+      "name": "geolocator_android",
+      "version": "4.6.2",
+      "dependencies": [
+        "flutter",
+        "geolocator_platform_interface",
+        "meta",
+        "uuid"
+      ]
+    },
+    {
+      "name": "geolocator_platform_interface",
+      "version": "4.2.6",
+      "dependencies": [
+        "flutter",
+        "meta",
+        "plugin_platform_interface",
+        "vector_math"
+      ]
+    },
+    {
+      "name": "geolocator_apple",
+      "version": "2.3.13",
+      "dependencies": [
+        "flutter",
+        "geolocator_platform_interface"
+      ]
+    },
+    {
+      "name": "uuid",
+      "version": "4.5.2",
+      "dependencies": [
+        "crypto",
+        "fixnum",
+        "meta"
+      ]
+    },
+    {
+      "name": "fixnum",
+      "version": "1.1.1",
+      "dependencies": []
     }
   ],
   "configVersion": 1

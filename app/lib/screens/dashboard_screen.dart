@@ -1,6 +1,10 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
@@ -12,6 +16,7 @@ import '../services/map_filter_service.dart';
 import 'area_editor_screen.dart';
 import 'events_screen.dart';
 import 'map_point_picker_screen.dart';
+import 'polygon_editor_screen.dart';
 import 'profile_screen.dart';
 import 'rural_property_editor_screen.dart';
 
@@ -23,7 +28,70 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  final MapController _mapController = MapController();
   int _refreshTick = 0;
+  StreamSubscription<Position>? _positionSub;
+  LatLng? _userPosition;
+  double _userHeading = 0;
+  String? _lastAuthKey;
+  String? _selectedAreaId;
+  String? _selectedPropertyId;
+  LatLng? _selectedPolygonAnchor;
+  List<LatLng> _selectedPolygonPoints = const [];
+  List<LatLng> _selectedPolygonBoundary = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _initUserLocation();
+  }
+
+  @override
+  void dispose() {
+    _positionSub?.cancel();
+    _mapController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _initUserLocation() async {
+    final enabled = await Geolocator.isLocationServiceEnabled();
+    if (!enabled) return;
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return;
+    }
+
+    try {
+      final current = await Geolocator.getCurrentPosition();
+      if (!mounted) return;
+      setState(() {
+        _userPosition = LatLng(current.latitude, current.longitude);
+        if (current.heading.isFinite && current.heading >= 0) {
+          _userHeading = current.heading;
+        }
+      });
+    } catch (_) {}
+
+    _positionSub?.cancel();
+    _positionSub = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 2,
+      ),
+    ).listen((pos) {
+      if (!mounted) return;
+      setState(() {
+        _userPosition = LatLng(pos.latitude, pos.longitude);
+        if (pos.heading.isFinite && pos.heading >= 0) {
+          _userHeading = pos.heading;
+        }
+      });
+    });
+  }
 
   LatLng? _toLatLng(dynamic value) {
     if (value is GeoPoint) return LatLng(value.latitude, value.longitude);
@@ -67,11 +135,106 @@ class _HomeScreenState extends State<HomeScreen> {
     return points;
   }
 
+  bool _isInsidePolygon(LatLng point, List<LatLng> polygon) {
+    if (polygon.length < 3) return false;
+    var inside = false;
+    for (var i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      final xi = polygon[i].longitude;
+      final yi = polygon[i].latitude;
+      final xj = polygon[j].longitude;
+      final yj = polygon[j].latitude;
+      final intersects = ((yi > point.latitude) != (yj > point.latitude)) &&
+          (point.longitude <
+              (xj - xi) * (point.latitude - yi) / ((yj - yi) + 1e-12) + xi);
+      if (intersects) inside = !inside;
+    }
+    return inside;
+  }
+
+  LatLng _centroid(List<LatLng> points) {
+    if (points.isEmpty) return const LatLng(-23, -46);
+    var lat = 0.0;
+    var lon = 0.0;
+    for (final p in points) {
+      lat += p.latitude;
+      lon += p.longitude;
+    }
+    return LatLng(lat / points.length, lon / points.length);
+  }
+
   void _refreshFromDatabase() {
     setState(() => _refreshTick++);
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Atualizando dados da Home...')),
     );
+  }
+
+  void _resetNorthUp() {
+    _mapController.rotate(0);
+  }
+
+  void _centerOnUser() {
+    final user = _userPosition;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Localizacao do dispositivo indisponivel.')),
+      );
+      return;
+    }
+    final zoom = _mapController.camera.zoom < 16 ? 16.0 : _mapController.camera.zoom;
+    _mapController.move(user, zoom);
+  }
+
+  Future<void> _openSelectedPolygonEditor(BuildContext context) async {
+    final fb = context.read<FirebaseService>();
+    final areaId = _selectedAreaId;
+    final propertyId = _selectedPropertyId;
+    if (areaId == null && propertyId == null) return;
+
+    if (areaId != null) {
+      final ok = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PolygonEditorScreen(
+            title: 'Editar area',
+            initialPoints: _selectedPolygonPoints,
+            boundary: _selectedPolygonBoundary,
+            onSave: (points) =>
+                fb.updateAreaPerimeter(id: areaId, perimeter: points),
+          ),
+        ),
+      );
+      if (ok == true && mounted) {
+        setState(() {
+          _selectedAreaId = null;
+          _selectedPolygonAnchor = null;
+          _selectedPolygonPoints = const [];
+          _selectedPolygonBoundary = const [];
+        });
+      }
+      return;
+    }
+
+    if (propertyId != null) {
+      final ok = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PolygonEditorScreen(
+            title: 'Editar propriedade',
+            initialPoints: _selectedPolygonPoints,
+            onSave: (points) =>
+                fb.updateRuralPropertyPolygon(id: propertyId, points: points),
+          ),
+        ),
+      );
+      if (ok == true && mounted) {
+        setState(() {
+          _selectedPropertyId = null;
+          _selectedPolygonAnchor = null;
+          _selectedPolygonPoints = const [];
+        });
+      }
+    }
   }
 
   Future<void> _showEditDeviceDialog(
@@ -748,6 +911,15 @@ class _HomeScreenState extends State<HomeScreen> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
+    final authKey = '$uid-${auth.role}';
+    if (_lastAuthKey != authKey) {
+      _lastAuthKey = authKey;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        context.read<MapFilterService>().clearAll();
+      });
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: Text('Home (${auth.isAdmin ? 'adm' : 'user'})'),
@@ -888,6 +1060,54 @@ class _HomeScreenState extends State<HomeScreen> {
                         }).whereType<Polygon>(),
                       ];
 
+                      void selectPolygonAt(LatLng tapPoint) {
+                        for (final a in filteredAreas) {
+                          final raw = (a['perimeter'] as List?) ?? const [];
+                          final pts =
+                              raw.map(_toLatLng).whereType<LatLng>().toList();
+                          if (pts.length < 3) continue;
+                          if (_isInsidePolygon(tapPoint, pts)) {
+                            final propertyId = (a['propertyId'] ?? '').toString();
+                            final property = allProperties.cast<Map<String, dynamic>?>().firstWhere(
+                                  (p) => p?['id'].toString() == propertyId,
+                                  orElse: () => null,
+                                );
+                            setState(() {
+                              _selectedAreaId = a['id'].toString();
+                              _selectedPropertyId = null;
+                              _selectedPolygonPoints = pts;
+                              _selectedPolygonBoundary =
+                                  _polygonFromProperty(property);
+                              _selectedPolygonAnchor = _centroid(pts);
+                            });
+                            return;
+                          }
+                        }
+                        for (final p in properties) {
+                          final raw = (p['points'] as List?) ?? const [];
+                          final pts =
+                              raw.map(_toLatLng).whereType<LatLng>().toList();
+                          if (pts.length < 3) continue;
+                          if (_isInsidePolygon(tapPoint, pts)) {
+                            setState(() {
+                              _selectedPropertyId = p['id'].toString();
+                              _selectedAreaId = null;
+                              _selectedPolygonPoints = pts;
+                              _selectedPolygonBoundary = const [];
+                              _selectedPolygonAnchor = _centroid(pts);
+                            });
+                            return;
+                          }
+                        }
+                        setState(() {
+                          _selectedPropertyId = null;
+                          _selectedAreaId = null;
+                          _selectedPolygonPoints = const [];
+                          _selectedPolygonBoundary = const [];
+                          _selectedPolygonAnchor = null;
+                        });
+                      }
+
                       final viewPoints =
                           _collectViewPoints(properties, filteredAreas, markers);
                       final center = viewPoints.isNotEmpty
@@ -913,27 +1133,92 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                           Expanded(
-                            child: FlutterMap(
-                              key: mapKey,
-                              options: MapOptions(
-                                initialCenter: center,
-                                initialZoom: 14,
-                                initialCameraFit: fitBounds == null
-                                    ? null
-                                    : CameraFit.bounds(
-                                        bounds: fitBounds,
-                                        padding: const EdgeInsets.all(40),
-                                      ),
-                              ),
+                            child: Stack(
                               children: [
-                                TileLayer(
-                                  urlTemplate:
-                                      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                                  userAgentPackageName:
-                                      'com.example.ruraltechApp',
+                                FlutterMap(
+                                  key: mapKey,
+                                  mapController: _mapController,
+                                  options: MapOptions(
+                                    initialCenter: center,
+                                    initialZoom: 14,
+                                    initialCameraFit: fitBounds == null
+                                        ? null
+                                        : CameraFit.bounds(
+                                            bounds: fitBounds,
+                                            padding: const EdgeInsets.all(40),
+                                          ),
+                                    onTap: (_, p) => selectPolygonAt(p),
+                                  ),
+                                  children: [
+                                    TileLayer(
+                                      urlTemplate:
+                                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                      userAgentPackageName:
+                                          'com.example.ruraltechApp',
+                                    ),
+                                    PolygonLayer(polygons: polygons),
+                                    MarkerLayer(markers: markers),
+                                    if (_userPosition != null)
+                                      MarkerLayer(
+                                        markers: [
+                                          Marker(
+                                            point: _userPosition!,
+                                            width: 42,
+                                            height: 42,
+                                            child: Transform.rotate(
+                                              angle:
+                                                  _userHeading * (math.pi / 180.0),
+                                              child: const Icon(
+                                                Icons.navigation,
+                                                color: Colors.blue,
+                                                size: 34,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    if (_selectedPolygonAnchor != null)
+                                      MarkerLayer(
+                                        markers: [
+                                          Marker(
+                                            point: LatLng(
+                                              _selectedPolygonAnchor!.latitude,
+                                              _selectedPolygonAnchor!.longitude +
+                                                  0.00025,
+                                            ),
+                                            width: 40,
+                                            height: 40,
+                                            child: FloatingActionButton.small(
+                                              heroTag: 'edit-polygon',
+                                              onPressed: () =>
+                                                  _openSelectedPolygonEditor(
+                                                      context),
+                                              child: const Icon(Icons.edit),
+                                            ),
+                                          ),
+                                        ],
+                                    ),
+                                  ],
                                 ),
-                                PolygonLayer(polygons: polygons),
-                                MarkerLayer(markers: markers),
+                                Positioned(
+                                  left: 12,
+                                  bottom: 12,
+                                  child: Column(
+                                    children: [
+                                      FloatingActionButton.small(
+                                        heroTag: 'north-up',
+                                        onPressed: _resetNorthUp,
+                                        child: const Icon(Icons.explore),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      FloatingActionButton.small(
+                                        heroTag: 'center-user',
+                                        onPressed: _centerOnUser,
+                                        child: const Icon(Icons.my_location),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               ],
                             ),
                           ),

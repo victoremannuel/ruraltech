@@ -116,6 +116,12 @@
       "languageVersion": "3.4"
     },
     {
+      "name": "fixnum",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/fixnum-1.1.1",
+      "packageUri": "lib/",
+      "languageVersion": "3.1"
+    },
+    {
       "name": "flutter",
       "rootUri": "file:///usr/local/share/flutter/packages/flutter",
       "packageUri": "lib/",
@@ -144,6 +150,42 @@
       "rootUri": "file:///usr/local/share/flutter/packages/flutter_web_plugins",
       "packageUri": "lib/",
       "languageVersion": "3.9"
+    },
+    {
+      "name": "geolocator",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/geolocator-13.0.4",
+      "packageUri": "lib/",
+      "languageVersion": "3.5"
+    },
+    {
+      "name": "geolocator_android",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/geolocator_android-4.6.2",
+      "packageUri": "lib/",
+      "languageVersion": "3.5"
+    },
+    {
+      "name": "geolocator_apple",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/geolocator_apple-2.3.13",
+      "packageUri": "lib/",
+      "languageVersion": "3.5"
+    },
+    {
+      "name": "geolocator_platform_interface",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/geolocator_platform_interface-4.2.6",
+      "packageUri": "lib/",
+      "languageVersion": "3.5"
+    },
+    {
+      "name": "geolocator_web",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/geolocator_web-4.1.3",
+      "packageUri": "lib/",
+      "languageVersion": "3.5"
+    },
+    {
+      "name": "geolocator_windows",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/geolocator_windows-0.2.5",
+      "packageUri": "lib/",
+      "languageVersion": "3.5"
     },
     {
       "name": "http",
@@ -318,6 +360,12 @@
       "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/unicode-0.3.1",
       "packageUri": "lib/",
       "languageVersion": "2.12"
+    },
+    {
+      "name": "uuid",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/uuid-4.5.2",
+      "packageUri": "lib/",
+      "languageVersion": "3.0"
     },
     {
       "name": "vector_math",

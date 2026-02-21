@@ -42,11 +42,6 @@ class FirebaseService {
     return _db.collection('ruralProperties').doc(id);
   }
 
-  bool _canAccessProperty(Map<String, dynamic> data, String uid, bool isAdmin) {
-    if (isAdmin) return true;
-    return _hasUserAccess(data['userUids'], uid);
-  }
-
   bool _hasUserAccess(dynamic rawUserRefs, String uid) {
     if (rawUserRefs is! List) return false;
     return rawUserRefs.any((e) => _idFromRefOrPath(e) == uid);
@@ -55,12 +50,20 @@ class FirebaseService {
   bool _isOwner(Map<String, dynamic> data, String uid) =>
       _idFromRefOrPath(data['ownerUid']) == uid;
 
-  Future<bool> _canAccessByPropertyId(
+  bool _canAccessPropertyData(Map<String, dynamic> data, String uid) {
+    final owner = _idFromRefOrPath(data['createdByUid']) == uid;
+    final linked = _hasUserAccess(data['userUids'], uid);
+    return owner || linked;
+  }
+
+  Future<bool> _canAccessPropertyById(
       String propertyId, String uid, bool isAdmin) async {
-    if (isAdmin || propertyId.isEmpty) return isAdmin;
+    if (isAdmin) return true;
+    if (propertyId.isEmpty) return false;
     final propSnap = await _db.collection('ruralProperties').doc(propertyId).get();
     if (!propSnap.exists) return false;
-    return _canAccessProperty(propSnap.data() ?? {}, uid, isAdmin);
+    final data = propSnap.data() ?? {};
+    return _canAccessPropertyData(data, uid);
   }
 
   double? _latFromPosition(Map<String, dynamic> m) {
@@ -91,20 +94,9 @@ class FirebaseService {
 
   Stream<List<DeviceModel>> streamDevices(
       {required String uid, required bool isAdmin}) {
-    return _db.collection('collars').snapshots().asyncMap((s) async {
-      final out = <DeviceModel>[];
-      for (final d in s.docs) {
-        final data = d.data();
-        final propertyId = _idFromRefOrPath(data['propertyId']);
-        final allowed = isAdmin ||
-            _hasUserAccess(data['userUids'], uid) ||
-            _isOwner(data, uid) ||
-            await _canAccessByPropertyId(propertyId, uid, isAdmin);
-        if (allowed) {
-          out.add(DeviceModel.fromMap(d.id, data));
-        }
-      }
-      return out;
+    return _db.collection('collars').snapshots().map((s) {
+      final docs = isAdmin ? s.docs : s.docs.where((d) => _isOwner(d.data(), uid));
+      return docs.map((d) => DeviceModel.fromMap(d.id, d.data())).toList();
     });
   }
 
@@ -115,10 +107,7 @@ class FirebaseService {
       for (final d in s.docs) {
         final data = d.data();
         final propertyId = _idFromRefOrPath(data['propertyId']);
-        final allowed = isAdmin ||
-            _hasUserAccess(data['userUids'], uid) ||
-            _isOwner(data, uid) ||
-            await _canAccessByPropertyId(propertyId, uid, isAdmin);
+        final allowed = isAdmin || await _canAccessPropertyById(propertyId, uid, isAdmin);
         if (allowed) {
           out.add({
             'id': d.id,
@@ -138,11 +127,7 @@ class FirebaseService {
     return _db.collection('ruralProperties').snapshots().map((s) {
       final docs = isAdmin
           ? s.docs
-          : s.docs.where(
-              (d) =>
-                  _hasUserAccess(d.data()['userUids'], uid) ||
-                  _idFromRefOrPath(d.data()['createdByUid']) == uid,
-            );
+          : s.docs.where((d) => _canAccessPropertyData(d.data(), uid));
       return docs
           .map(
             (d) => {
@@ -161,13 +146,7 @@ class FirebaseService {
       for (final d in s.docs) {
         final data = d.data();
         final propertyId = _idFromRefOrPath(data['ruralPropertiesID']);
-        bool allowed = isAdmin;
-        if (!allowed && propertyId.isNotEmpty) {
-          allowed = await _canAccessByPropertyId(propertyId, uid, isAdmin);
-        }
-        if (!allowed) {
-          allowed = _isOwner(data, uid);
-        }
+        final allowed = isAdmin || await _canAccessPropertyById(propertyId, uid, isAdmin);
         if (allowed) {
           out.add({
             'id': d.id,
@@ -185,11 +164,7 @@ class FirebaseService {
     final s = await _db.collection('ruralProperties').get();
     final docs = isAdmin
         ? s.docs
-        : s.docs.where(
-            (d) =>
-                _hasUserAccess(d.data()['userUids'], uid) ||
-                _idFromRefOrPath(d.data()['createdByUid']) == uid,
-          );
+        : s.docs.where((d) => _canAccessPropertyData(d.data(), uid));
     return docs.map((d) => {'id': d.id, ...d.data()}).toList();
   }
 
@@ -222,9 +197,10 @@ class FirebaseService {
     required bool isAdmin,
     List<String> userEmails = const [],
   }) async {
-    final linkedUsers = isAdmin
-        ? await _resolveUserRefsByEmails(userEmails)
-        : <DocumentReference<Map<String, dynamic>>>[_userRef(creatorUid)];
+    final linkedUsers = <DocumentReference<Map<String, dynamic>>>{
+      _userRef(creatorUid),
+      if (isAdmin) ...(await _resolveUserRefsByEmails(userEmails)),
+    }.toList();
     if (linkedUsers.isEmpty) {
       throw Exception('Informe ao menos um email de usuario valido.');
     }
@@ -251,22 +227,6 @@ class FirebaseService {
     });
   }
 
-  Future<List<DocumentReference<Map<String, dynamic>>>> _userRefsFromPropertyId(
-      String? propertyId) async {
-    if (propertyId == null || propertyId.trim().isEmpty) return const [];
-    final ref = _propertyRefOrNull(propertyId);
-    if (ref == null) return const [];
-    final snap = await ref.get();
-    if (!snap.exists) return const [];
-    final data = snap.data() ?? {};
-    final raw = (data['userUids'] as List?) ?? const [];
-    return raw
-        .map((e) => _userRef(e))
-        .where((r) => r.id.isNotEmpty)
-        .toSet()
-        .toList();
-  }
-
   Future<void> addDevice({
     required String ownerUid,
     required String name,
@@ -276,13 +236,8 @@ class FirebaseService {
     String? gatewayId,
     String? propertyId,
   }) async {
-    final propertyUsers = await _userRefsFromPropertyId(propertyId);
-    final userRefs = propertyUsers.isEmpty
-        ? <DocumentReference<Map<String, dynamic>>>[_userRef(ownerUid)]
-        : propertyUsers;
     await _db.collection('collars').add({
       'ownerUid': _userRef(ownerUid),
-      'userUids': userRefs,
       'name': name,
       'status': status,
       'position': [lat ?? 0, lon ?? 0],
@@ -303,13 +258,7 @@ class FirebaseService {
     double? lat,
     double? lon,
   }) async {
-    final propertyUsers = await _userRefsFromPropertyId(propertyId);
-    final userRefs = propertyUsers.isEmpty
-        ? <DocumentReference<Map<String, dynamic>>>[_userRef(ownerUid)]
-        : propertyUsers;
     await _db.collection('gateways').add({
-      'ownerUid': _userRef(ownerUid),
-      'userUids': userRefs,
       'name': name,
       'status': status,
       'host': host,
@@ -340,10 +289,8 @@ class FirebaseService {
 
     if (propertyId != null && propertyId.trim().isNotEmpty) {
       update['propertyId'] = _propertyRefOrNull(propertyId);
-      final users = await _userRefsFromPropertyId(propertyId);
-      if (users.isNotEmpty) {
-        update['userUids'] = users;
-      }
+    } else {
+      update['propertyId'] = null;
     }
 
     await _db.collection('collars').doc(id).set(update, SetOptions(merge: true));
@@ -368,13 +315,31 @@ class FirebaseService {
 
     if (propertyId != null && propertyId.trim().isNotEmpty) {
       update['propertyId'] = _propertyRefOrNull(propertyId);
-      final users = await _userRefsFromPropertyId(propertyId);
-      if (users.isNotEmpty) {
-        update['userUids'] = users;
-      }
+    } else {
+      update['propertyId'] = null;
     }
 
     await _db.collection('gateways').doc(id).set(update, SetOptions(merge: true));
+  }
+
+  Future<void> updateRuralPropertyPolygon({
+    required String id,
+    required List<List<double>> points,
+  }) async {
+    await _db.collection('ruralProperties').doc(id).set({
+      'points': _encodeLatLonPoints(points),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> updateAreaPerimeter({
+    required String id,
+    required List<List<double>> perimeter,
+  }) async {
+    await _db.collection('areas').doc(id).set({
+      'perimeter': _encodeLatLonPoints(perimeter),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
   }
 
   Future<void> saveFence(

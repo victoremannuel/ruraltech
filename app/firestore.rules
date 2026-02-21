@@ -23,6 +23,12 @@ service cloud.firestore {
         userDoc().data.role == 'adm';
     }
 
+    function isPropertyOwner(propertyId) {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/ruralProperties/$(propertyId)) &&
+        get(/databases/$(database)/documents/ruralProperties/$(propertyId)).data.createdByUid == userRef();
+    }
+
     function hasUserAccess(resourceData) {
       return signedIn() &&
         ('userUids' in resourceData) &&
@@ -32,14 +38,33 @@ service cloud.firestore {
     function canAccessCollar(collarId) {
       return isAdmin() || (
         exists(/databases/$(database)/documents/collars/$(collarId)) &&
-        hasUserAccess(get(/databases/$(database)/documents/collars/$(collarId)).data)
+        get(/databases/$(database)/documents/collars/$(collarId)).data.ownerUid == userRef()
       );
     }
 
     function canAccessProperty(propertyId) {
       return isAdmin() || (
         exists(/databases/$(database)/documents/ruralProperties/$(propertyId)) &&
-        hasUserAccess(get(/databases/$(database)/documents/ruralProperties/$(propertyId)).data)
+        (
+          isPropertyOwner(propertyId) ||
+          hasUserAccess(get(/databases/$(database)/documents/ruralProperties/$(propertyId)).data)
+        )
+      );
+    }
+
+    function canAccessGateway(gatewayData) {
+      return isAdmin() || (
+        ('propertyId' in gatewayData) &&
+        (gatewayData.propertyId != null) &&
+        canAccessProperty(gatewayData.propertyId.id)
+      );
+    }
+
+    function canAccessArea(areaData) {
+      return isAdmin() || (
+        ('ruralPropertiesID' in areaData) &&
+        (areaData.ruralPropertiesID != null) &&
+        canAccessProperty(areaData.ruralPropertiesID.id)
       );
     }
 
@@ -56,47 +81,55 @@ service cloud.firestore {
     }
 
     match /collars/{collarId} {
-      allow read: if signedIn() && (isAdmin() || hasUserAccess(resource.data));
-      allow create, update, delete: if isAdmin();
+      allow read: if signedIn() && (
+        isAdmin() ||
+        resource.data.ownerUid == userRef()
+      );
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || resource.data.ownerUid == userRef();
     }
 
     match /gateways/{gatewayId} {
-      allow read: if signedIn() && (isAdmin() || hasUserAccess(resource.data));
-      allow create, update, delete: if isAdmin();
+      allow read: if signedIn() && canAccessGateway(resource.data);
+      allow create, delete: if isAdmin();
+      allow update: if signedIn() && (
+        isAdmin() ||
+        canAccessGateway(resource.data)
+      );
     }
 
     match /ruralProperties/{propertyId} {
-      allow read: if signedIn() && (isAdmin() || hasUserAccess(resource.data));
+      allow read: if signedIn() && (
+        isAdmin() ||
+        resource.data.createdByUid == userRef() ||
+        hasUserAccess(resource.data)
+      );
       allow create: if signedIn() &&
         (
           isAdmin() ||
           (
             request.resource.data.createdByUid == userRef() &&
             ('userUids' in request.resource.data) &&
-            request.resource.data.userUids.size() == 1 &&
             userRef() in request.resource.data.userUids
           )
         );
-      allow update, delete: if isAdmin();
+      allow update, delete: if isAdmin() || resource.data.createdByUid == userRef();
     }
 
     match /areas/{areaId} {
-      allow read: if signedIn() && (
-        isAdmin() ||
-        (
-          'ruralPropertiesID' in resource.data &&
-          canAccessProperty(resource.data.ruralPropertiesID.id)
-        )
-      );
+      allow read: if signedIn() && canAccessArea(resource.data);
       allow create: if signedIn() && (
         isAdmin() ||
         (
-          request.resource.data.ownerUid == userRef() &&
           'ruralPropertiesID' in request.resource.data &&
+          request.resource.data.ruralPropertiesID != null &&
           canAccessProperty(request.resource.data.ruralPropertiesID.id)
         )
       );
-      allow update, delete: if isAdmin();
+      allow update, delete: if signedIn() && (
+        isAdmin() ||
+        canAccessArea(resource.data)
+      );
     }
 
     match /fences/{docId} {
