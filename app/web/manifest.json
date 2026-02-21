@@ -1,6 +1,6 @@
 {
-    "name": "ruraltech_app",
-    "short_name": "ruraltech_app",
+    "name": "RuralTech",
+    "short_name": "RuralTech",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
