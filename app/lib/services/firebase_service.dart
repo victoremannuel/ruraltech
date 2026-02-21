@@ -168,12 +168,25 @@ class FirebaseService {
     return docs.map((d) => {'id': d.id, ...d.data()}).toList();
   }
 
-  Future<List<DocumentReference<Map<String, dynamic>>>>
-      _resolveUserRefsByEmails(List<String> emails) async {
+  Future<List<DocumentReference<Map<String, dynamic>>>> _resolveAdminRefs() async {
+    final snap = await _db
+        .collection('users')
+        .where('role', isEqualTo: 'adm')
+        .get();
+    return snap.docs.map((d) => d.reference).toList();
+  }
+
+  Future<Map<String, DocumentReference<Map<String, dynamic>>>>
+      _resolveUserRefsByEmailsStrict(List<String> emails) async {
     final normalized = emails
         .map((e) => e.trim().toLowerCase())
         .where((e) => e.isNotEmpty)
         .toSet();
+    if (normalized.isEmpty) return {};
+
+    final found = <String, DocumentReference<Map<String, dynamic>>>{};
+
+    // Fast path: exact indexed lookup by email.
     final snapshots = await Future.wait(
       normalized.map(
         (email) => _db
@@ -183,11 +196,29 @@ class FirebaseService {
             .get(),
       ),
     );
-    final refs = snapshots
-        .where((snap) => snap.docs.isNotEmpty)
-        .map((snap) => snap.docs.first.reference)
-        .toList();
-    return refs;
+    for (final snap in snapshots) {
+      if (snap.docs.isEmpty) continue;
+      final doc = snap.docs.first;
+      final docEmail = (doc.data()['email'] as String?)?.trim().toLowerCase();
+      if (docEmail != null && docEmail.isNotEmpty) {
+        found[docEmail] = doc.reference;
+      }
+    }
+
+    // Fallback for legacy docs that may have non-normalized email values.
+    final missing = normalized.where((e) => !found.containsKey(e)).toSet();
+    if (missing.isNotEmpty) {
+      final allUsers = await _db.collection('users').get();
+      for (final doc in allUsers.docs) {
+        final rawEmail = (doc.data()['email'] as String?)?.trim().toLowerCase();
+        if (rawEmail == null || rawEmail.isEmpty) continue;
+        if (missing.contains(rawEmail)) {
+          found[rawEmail] = doc.reference;
+        }
+      }
+    }
+
+    return found;
   }
 
   Future<void> addRuralProperty({
@@ -197,10 +228,28 @@ class FirebaseService {
     required bool isAdmin,
     List<String> userEmails = const [],
   }) async {
-    final linkedUsers = <DocumentReference<Map<String, dynamic>>>{
-      _userRef(creatorUid),
-      if (isAdmin) ...(await _resolveUserRefsByEmails(userEmails)),
-    }.toList();
+    final linkedUsers = <DocumentReference<Map<String, dynamic>>>{_userRef(creatorUid)};
+
+    if (isAdmin) {
+      final resolvedByEmail = await _resolveUserRefsByEmailsStrict(userEmails);
+      final requestedEmails = userEmails
+          .map((e) => e.trim().toLowerCase())
+          .where((e) => e.isNotEmpty)
+          .toSet();
+      final missingEmails = requestedEmails
+          .where((e) => !resolvedByEmail.containsKey(e))
+          .toList();
+
+      if (missingEmails.isNotEmpty) {
+        throw Exception(
+          'Usuarios nao encontrados para os emails: ${missingEmails.join(', ')}',
+        );
+      }
+
+      linkedUsers.addAll(resolvedByEmail.values);
+      linkedUsers.addAll(await _resolveAdminRefs());
+    }
+
     if (linkedUsers.isEmpty) {
       throw Exception('Informe ao menos um email de usuario valido.');
     }
@@ -208,7 +257,7 @@ class FirebaseService {
     await _db.collection('ruralProperties').add({
       'name': name,
       'points': _encodeLatLonPoints(points),
-      'userUids': linkedUsers,
+      'userUids': linkedUsers.toList(),
       'createdByUid': _userRef(creatorUid),
       'updatedAt': FieldValue.serverTimestamp(),
     });
