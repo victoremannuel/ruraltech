@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/device_model.dart';
 
@@ -36,34 +38,34 @@ class FirebaseService {
   DocumentReference<Map<String, dynamic>> _userRef(dynamic value) =>
       _db.collection('users').doc(_idFromRefOrPath(value));
 
+  String _userPath(String uid) => '/users/$uid';
+
   DocumentReference<Map<String, dynamic>>? _propertyRefOrNull(dynamic value) {
     final id = _idFromRefOrPath(value);
     if (id.isEmpty) return null;
     return _db.collection('ruralProperties').doc(id);
   }
 
-  bool _hasUserAccess(dynamic rawUserRefs, String uid) {
-    if (rawUserRefs is! List) return false;
-    return rawUserRefs.any((e) => _idFromRefOrPath(e) == uid);
-  }
+  Future<List<DocumentReference<Map<String, dynamic>>>> _linkedUsersForProperty(
+      String propertyId) async {
+    final id = _idFromRefOrPath(propertyId);
+    if (id.isEmpty) return const [];
+    final snap = await _db.collection('ruralProperties').doc(id).get();
+    if (!snap.exists) return const [];
+    final data = snap.data() ?? {};
+    final out = <DocumentReference<Map<String, dynamic>>>{};
 
-  bool _isOwner(Map<String, dynamic> data, String uid) =>
-      _idFromRefOrPath(data['ownerUid']) == uid;
+    final createdById = _idFromRefOrPath(data['createdByUid']);
+    if (createdById.isNotEmpty) out.add(_userRef(createdById));
 
-  bool _canAccessPropertyData(Map<String, dynamic> data, String uid) {
-    final owner = _idFromRefOrPath(data['createdByUid']) == uid;
-    final linked = _hasUserAccess(data['userUids'], uid);
-    return owner || linked;
-  }
-
-  Future<bool> _canAccessPropertyById(
-      String propertyId, String uid, bool isAdmin) async {
-    if (isAdmin) return true;
-    if (propertyId.isEmpty) return false;
-    final propSnap = await _db.collection('ruralProperties').doc(propertyId).get();
-    if (!propSnap.exists) return false;
-    final data = propSnap.data() ?? {};
-    return _canAccessPropertyData(data, uid);
+    final rawUsers = data['userUids'];
+    if (rawUsers is List) {
+      for (final u in rawUsers) {
+        final userId = _idFromRefOrPath(u);
+        if (userId.isNotEmpty) out.add(_userRef(userId));
+      }
+    }
+    return out.toList();
   }
 
   double? _latFromPosition(Map<String, dynamic> m) {
@@ -94,85 +96,353 @@ class FirebaseService {
 
   Stream<List<DeviceModel>> streamDevices(
       {required String uid, required bool isAdmin}) {
-    return _db.collection('collars').snapshots().map((s) {
-      final docs = isAdmin ? s.docs : s.docs.where((d) => _isOwner(d.data(), uid));
-      return docs.map((d) => DeviceModel.fromMap(d.id, d.data())).toList();
+    if (isAdmin) {
+      return _db.collection('collars').snapshots().map(
+            (s) =>
+                s.docs.map((d) => DeviceModel.fromMap(d.id, d.data())).toList(),
+          );
+    }
+
+    final userRef = _userRef(uid);
+    final userPath = _userPath(uid);
+    final q1 = _db.collection('collars').where('ownerUid', isEqualTo: userRef);
+    final q2 = _db.collection('collars').where('ownerUid', isEqualTo: userPath);
+    final q3 = _db.collection('collars').where('ownerUid', isEqualTo: uid);
+
+    return Stream.multi((controller) {
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> d1 = const [];
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> d2 = const [];
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> d3 = const [];
+      void emit() {
+        final byId = <String, DeviceModel>{};
+        for (final d in [...d1, ...d2, ...d3]) {
+          byId[d.id] = DeviceModel.fromMap(d.id, d.data());
+        }
+        controller.add(byId.values.toList());
+      }
+
+      final s1 = q1.snapshots().listen((snap) {
+        d1 = snap.docs;
+        emit();
+      }, onError: controller.addError);
+      final s2 = q2.snapshots().listen((snap) {
+        d2 = snap.docs;
+        emit();
+      }, onError: controller.addError);
+      final s3 = q3.snapshots().listen((snap) {
+        d3 = snap.docs;
+        emit();
+      }, onError: controller.addError);
+
+      controller.onCancel = () async {
+        await s1.cancel();
+        await s2.cancel();
+        await s3.cancel();
+      };
     });
   }
 
   Stream<List<Map<String, dynamic>>> streamGateways(
       {required String uid, required bool isAdmin}) {
-    return _db.collection('gateways').snapshots().asyncMap((s) async {
-      final out = <Map<String, dynamic>>[];
-      for (final d in s.docs) {
-        final data = d.data();
-        final propertyId = _idFromRefOrPath(data['propertyId']);
-        final allowed = isAdmin || await _canAccessPropertyById(propertyId, uid, isAdmin);
-        if (allowed) {
-          out.add({
+    if (isAdmin) {
+      return _db.collection('gateways').snapshots().map((s) {
+        return s.docs.map((d) {
+          final data = d.data();
+          return {
             'id': d.id,
             ...data,
             'lat': _latFromPosition(data),
             'lon': _lonFromPosition(data),
-            'propertyId': propertyId,
-          });
+            'propertyId': _idFromRefOrPath(data['propertyId']),
+          };
+        }).toList();
+      });
+    }
+
+    final userRef = _userRef(uid);
+    final userPath = '/users/$uid';
+    final q1 =
+        _db.collection('gateways').where('userUids', arrayContains: userRef);
+    final q2 =
+        _db.collection('gateways').where('userUids', arrayContains: userPath);
+    final q3 = _db.collection('gateways').where('userUids', arrayContains: uid);
+
+    return Stream.multi((controller) {
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> d1 = const [];
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> d2 = const [];
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> d3 = const [];
+
+      void emit() {
+        final byId = <String, Map<String, dynamic>>{};
+        for (final d in [...d1, ...d2, ...d3]) {
+          final data = d.data();
+          byId[d.id] = {
+            'id': d.id,
+            ...data,
+            'lat': _latFromPosition(data),
+            'lon': _lonFromPosition(data),
+            'propertyId': _idFromRefOrPath(data['propertyId']),
+          };
         }
+        controller.add(byId.values.toList());
       }
-      return out;
+
+      void onQueryError(Object error, StackTrace stackTrace) {
+        if (error is FirebaseException && error.code == 'permission-denied') {
+          return;
+        }
+        controller.addError(error, stackTrace);
+      }
+
+      final s1 = q1.snapshots().listen((snap) {
+        d1 = snap.docs;
+        emit();
+      }, onError: onQueryError);
+      final s2 = q2.snapshots().listen((snap) {
+        d2 = snap.docs;
+        emit();
+      }, onError: onQueryError);
+      final s3 = q3.snapshots().listen((snap) {
+        d3 = snap.docs;
+        emit();
+      }, onError: onQueryError);
+
+      controller.onCancel = () async {
+        await s1.cancel();
+        await s2.cancel();
+        await s3.cancel();
+      };
     });
   }
 
   Stream<List<Map<String, dynamic>>> streamRuralProperties(
       {required String uid, required bool isAdmin}) {
-    return _db.collection('ruralProperties').snapshots().map((s) {
-      final docs = isAdmin
-          ? s.docs
-          : s.docs.where((d) => _canAccessPropertyData(d.data(), uid));
-      return docs
-          .map(
-            (d) => {
-              'id': d.id,
-              ...d.data(),
-            },
-          )
-          .toList();
+    if (isAdmin) {
+      return _db.collection('ruralProperties').snapshots().map(
+            (s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList(),
+          );
+    }
+
+    final userRef = _userRef(uid);
+    final userPath = _userPath(uid);
+    final ownerQueryRef = _db
+        .collection('ruralProperties')
+        .where('createdByUid', isEqualTo: userRef);
+    final ownerQueryPath = _db
+        .collection('ruralProperties')
+        .where('createdByUid', isEqualTo: userPath);
+    final ownerQueryUid =
+        _db.collection('ruralProperties').where('createdByUid', isEqualTo: uid);
+    final linkedQueryRef = _db
+        .collection('ruralProperties')
+        .where('userUids', arrayContains: userRef);
+    final linkedQueryPath = _db
+        .collection('ruralProperties')
+        .where('userUids', arrayContains: userPath);
+    final linkedQueryUid =
+        _db.collection('ruralProperties').where('userUids', arrayContains: uid);
+
+    return Stream.multi((controller) {
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> ownerDocsRef = const [];
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> ownerDocsPath =
+          const [];
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> ownerDocsUid = const [];
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> linkedDocsRef =
+          const [];
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> linkedDocsPath =
+          const [];
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> linkedDocsUid =
+          const [];
+
+      void emit() {
+        final byId = <String, Map<String, dynamic>>{};
+        for (final d in [
+          ...ownerDocsRef,
+          ...ownerDocsPath,
+          ...ownerDocsUid,
+          ...linkedDocsRef,
+          ...linkedDocsPath,
+          ...linkedDocsUid,
+        ]) {
+          byId[d.id] = {'id': d.id, ...d.data()};
+        }
+        controller.add(byId.values.toList());
+      }
+
+      final sub1 = ownerQueryRef.snapshots().listen(
+        (snap) {
+          ownerDocsRef = snap.docs;
+          emit();
+        },
+        onError: controller.addError,
+      );
+      final sub2 = ownerQueryPath.snapshots().listen(
+        (snap) {
+          ownerDocsPath = snap.docs;
+          emit();
+        },
+        onError: controller.addError,
+      );
+      final sub3 = ownerQueryUid.snapshots().listen(
+        (snap) {
+          ownerDocsUid = snap.docs;
+          emit();
+        },
+        onError: controller.addError,
+      );
+      final sub4 = linkedQueryRef.snapshots().listen(
+        (snap) {
+          linkedDocsRef = snap.docs;
+          emit();
+        },
+        onError: controller.addError,
+      );
+      final sub5 = linkedQueryPath.snapshots().listen(
+        (snap) {
+          linkedDocsPath = snap.docs;
+          emit();
+        },
+        onError: controller.addError,
+      );
+      final sub6 = linkedQueryUid.snapshots().listen(
+        (snap) {
+          linkedDocsUid = snap.docs;
+          emit();
+        },
+        onError: controller.addError,
+      );
+
+      controller.onCancel = () async {
+        await sub1.cancel();
+        await sub2.cancel();
+        await sub3.cancel();
+        await sub4.cancel();
+        await sub5.cancel();
+        await sub6.cancel();
+      };
     });
   }
 
   Stream<List<Map<String, dynamic>>> streamAreas(
       {required String uid, required bool isAdmin}) {
-    return _db.collection('areas').snapshots().asyncMap((s) async {
-      final out = <Map<String, dynamic>>[];
-      for (final d in s.docs) {
-        final data = d.data();
-        final propertyId = _idFromRefOrPath(data['ruralPropertiesID']);
-        final allowed = isAdmin || await _canAccessPropertyById(propertyId, uid, isAdmin);
-        if (allowed) {
-          out.add({
+    if (isAdmin) {
+      return _db.collection('areas').snapshots().map((s) {
+        return s.docs
+            .map((d) => {
+                  'id': d.id,
+                  ...d.data(),
+                  'propertyId': _idFromRefOrPath(d.data()['ruralPropertiesID']),
+                })
+            .toList();
+      });
+    }
+
+    final userRef = _userRef(uid);
+    final userPath = '/users/$uid';
+    final q1 =
+        _db.collection('areas').where('userUids', arrayContains: userRef);
+    final q2 =
+        _db.collection('areas').where('userUids', arrayContains: userPath);
+    final q3 = _db.collection('areas').where('userUids', arrayContains: uid);
+
+    return Stream.multi((controller) {
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> d1 = const [];
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> d2 = const [];
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> d3 = const [];
+
+      void emit() {
+        final byId = <String, Map<String, dynamic>>{};
+        for (final d in [...d1, ...d2, ...d3]) {
+          final data = d.data();
+          byId[d.id] = {
             'id': d.id,
             ...data,
-            'propertyId': propertyId,
-          });
+            'propertyId': _idFromRefOrPath(data['ruralPropertiesID']),
+          };
         }
+        controller.add(byId.values.toList());
       }
-      return out;
+
+      void onQueryError(Object error, StackTrace stackTrace) {
+        if (error is FirebaseException && error.code == 'permission-denied') {
+          return;
+        }
+        controller.addError(error, stackTrace);
+      }
+
+      final s1 = q1.snapshots().listen((snap) {
+        d1 = snap.docs;
+        emit();
+      }, onError: onQueryError);
+      final s2 = q2.snapshots().listen((snap) {
+        d2 = snap.docs;
+        emit();
+      }, onError: onQueryError);
+      final s3 = q3.snapshots().listen((snap) {
+        d3 = snap.docs;
+        emit();
+      }, onError: onQueryError);
+
+      controller.onCancel = () async {
+        await s1.cancel();
+        await s2.cancel();
+        await s3.cancel();
+      };
     });
   }
 
   Future<List<Map<String, dynamic>>> getRuralProperties(
       {required String uid, required bool isAdmin}) async {
-    final s = await _db.collection('ruralProperties').get();
-    final docs = isAdmin
-        ? s.docs
-        : s.docs.where((d) => _canAccessPropertyData(d.data(), uid));
-    return docs.map((d) => {'id': d.id, ...d.data()}).toList();
+    if (isAdmin) {
+      final s = await _db.collection('ruralProperties').get();
+      return s.docs.map((d) => {'id': d.id, ...d.data()}).toList();
+    }
+
+    final userRef = _userRef(uid);
+    final userPath = _userPath(uid);
+    final ownerRef = await _db
+        .collection('ruralProperties')
+        .where('createdByUid', isEqualTo: userRef)
+        .get();
+    final ownerPath = await _db
+        .collection('ruralProperties')
+        .where('createdByUid', isEqualTo: userPath)
+        .get();
+    final ownerUid = await _db
+        .collection('ruralProperties')
+        .where('createdByUid', isEqualTo: uid)
+        .get();
+    final linkedRef = await _db
+        .collection('ruralProperties')
+        .where('userUids', arrayContains: userRef)
+        .get();
+    final linkedPath = await _db
+        .collection('ruralProperties')
+        .where('userUids', arrayContains: userPath)
+        .get();
+    final linkedUid = await _db
+        .collection('ruralProperties')
+        .where('userUids', arrayContains: uid)
+        .get();
+
+    final byId = <String, Map<String, dynamic>>{};
+    for (final d in [
+      ...ownerRef.docs,
+      ...ownerPath.docs,
+      ...ownerUid.docs,
+      ...linkedRef.docs,
+      ...linkedPath.docs,
+      ...linkedUid.docs,
+    ]) {
+      byId[d.id] = {'id': d.id, ...d.data()};
+    }
+    return byId.values.toList();
   }
 
-  Future<List<DocumentReference<Map<String, dynamic>>>> _resolveAdminRefs() async {
-    final snap = await _db
-        .collection('users')
-        .where('role', isEqualTo: 'adm')
-        .get();
+  Future<List<DocumentReference<Map<String, dynamic>>>>
+      _resolveAdminRefs() async {
+    final snap =
+        await _db.collection('users').where('role', isEqualTo: 'adm').get();
     return snap.docs.map((d) => d.reference).toList();
   }
 
@@ -228,7 +498,9 @@ class FirebaseService {
     required bool isAdmin,
     List<String> userEmails = const [],
   }) async {
-    final linkedUsers = <DocumentReference<Map<String, dynamic>>>{_userRef(creatorUid)};
+    final linkedUsers = <DocumentReference<Map<String, dynamic>>>{
+      _userRef(creatorUid)
+    };
 
     if (isAdmin) {
       final resolvedByEmail = await _resolveUserRefsByEmailsStrict(userEmails);
@@ -268,9 +540,11 @@ class FirebaseService {
     required String ruralPropertyId,
     required List<List<double>> perimeter,
   }) async {
+    final linkedUsers = await _linkedUsersForProperty(ruralPropertyId);
     await _db.collection('areas').add({
       'ownerUid': _userRef(ownerUid),
       'ruralPropertiesID': _propertyRefOrNull(ruralPropertyId),
+      'userUids': linkedUsers,
       'perimeter': _encodeLatLonPoints(perimeter),
       'updatedAt': FieldValue.serverTimestamp(),
     });
@@ -307,14 +581,33 @@ class FirebaseService {
     double? lat,
     double? lon,
   }) async {
+    final linkedUsers = propertyId == null
+        ? const <DocumentReference<Map<String, dynamic>>>[]
+        : await _linkedUsersForProperty(propertyId);
     await _db.collection('gateways').add({
+      'ownerUid': _userRef(ownerUid),
       'name': name,
       'status': status,
       'host': host,
       'propertyId': _propertyRefOrNull(propertyId),
+      'userUids': linkedUsers,
       'position': [lat ?? 0, lon ?? 0],
       'updatedAt': FieldValue.serverTimestamp(),
     });
+  }
+
+  Future<List<Map<String, String>>> getUserOptions() async {
+    final snap = await _db.collection('users').get();
+    final users = snap.docs.map((d) {
+      final data = d.data();
+      final email = (data['email'] as String?)?.trim().toLowerCase();
+      return <String, String>{
+        'uid': d.id,
+        'email': (email == null || email.isEmpty) ? d.id : email,
+      };
+    }).toList();
+    users.sort((a, b) => a['email']!.compareTo(b['email']!));
+    return users;
   }
 
   Future<void> updateDevice({
@@ -323,12 +616,14 @@ class FirebaseService {
     required String status,
     required double lat,
     required double lon,
+    required String ownerUid,
     String? gatewayId,
     String? propertyId,
   }) async {
     final update = <String, dynamic>{
       'name': name,
       'status': status,
+      'ownerUid': _userRef(ownerUid),
       'position': [lat, lon],
       'gatewayId': gatewayId == null || gatewayId.trim().isEmpty
           ? null
@@ -342,7 +637,10 @@ class FirebaseService {
       update['propertyId'] = null;
     }
 
-    await _db.collection('collars').doc(id).set(update, SetOptions(merge: true));
+    await _db
+        .collection('collars')
+        .doc(id)
+        .set(update, SetOptions(merge: true));
   }
 
   Future<void> updateGateway({
@@ -354,11 +652,16 @@ class FirebaseService {
     String? host,
     String? propertyId,
   }) async {
+    List<DocumentReference<Map<String, dynamic>>> linkedUsers = const [];
+    if (propertyId != null && propertyId.trim().isNotEmpty) {
+      linkedUsers = await _linkedUsersForProperty(propertyId);
+    }
     final update = <String, dynamic>{
       'name': name,
       'status': status,
       'host': host,
       'position': [lat, lon],
+      'userUids': linkedUsers,
       'updatedAt': FieldValue.serverTimestamp(),
     };
 
@@ -368,7 +671,10 @@ class FirebaseService {
       update['propertyId'] = null;
     }
 
-    await _db.collection('gateways').doc(id).set(update, SetOptions(merge: true));
+    await _db
+        .collection('gateways')
+        .doc(id)
+        .set(update, SetOptions(merge: true));
   }
 
   Future<void> updateRuralPropertyPolygon({
@@ -389,6 +695,77 @@ class FirebaseService {
       'perimeter': _encodeLatLonPoints(perimeter),
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+  }
+
+  Future<void> backfillLegacyAccessForAreasAndGateways() async {
+    final props = await _db.collection('ruralProperties').get();
+    final propUsers = <String, List<DocumentReference<Map<String, dynamic>>>>{};
+    for (final p in props.docs) {
+      final data = p.data();
+      final set = <DocumentReference<Map<String, dynamic>>>{};
+      final createdById = _idFromRefOrPath(data['createdByUid']);
+      if (createdById.isNotEmpty) set.add(_userRef(createdById));
+      final users = data['userUids'];
+      if (users is List) {
+        for (final u in users) {
+          final uid = _idFromRefOrPath(u);
+          if (uid.isNotEmpty) set.add(_userRef(uid));
+        }
+      }
+      propUsers[p.id] = set.toList();
+    }
+
+    Future<void> patchCollection(
+      String collection,
+      String propertyField,
+      bool includeOwner,
+    ) async {
+      final snap = await _db.collection(collection).get();
+      if (snap.docs.isEmpty) return;
+      WriteBatch batch = _db.batch();
+      var opCount = 0;
+
+      Future<void> flush() async {
+        if (opCount == 0) return;
+        await batch.commit();
+        batch = _db.batch();
+        opCount = 0;
+      }
+
+      for (final d in snap.docs) {
+        final data = d.data();
+        final propertyId = _idFromRefOrPath(data[propertyField]);
+        if (propertyId.isEmpty) continue;
+        final linked = [
+          ...(propUsers[propertyId] ??
+              const <DocumentReference<Map<String, dynamic>>>[])
+        ];
+        if (includeOwner) {
+          final ownerId = _idFromRefOrPath(data['ownerUid']);
+          if (ownerId.isNotEmpty) linked.add(_userRef(ownerId));
+        }
+        final unique = <String, DocumentReference<Map<String, dynamic>>>{};
+        for (final r in linked) {
+          unique[r.id] = r;
+        }
+        batch.set(
+            d.reference,
+            {
+              'userUids': unique.values.toList(),
+              propertyField: _propertyRefOrNull(propertyId),
+              'updatedAt': FieldValue.serverTimestamp(),
+            },
+            SetOptions(merge: true));
+        opCount++;
+        if (opCount >= 400) {
+          await flush();
+        }
+      }
+      await flush();
+    }
+
+    await patchCollection('areas', 'ruralPropertiesID', true);
+    await patchCollection('gateways', 'propertyId', true);
   }
 
   Future<void> saveFence(

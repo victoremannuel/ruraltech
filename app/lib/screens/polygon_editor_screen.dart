@@ -3,6 +3,8 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'dart:math' as math;
 
+import '../utils/polygon_metrics.dart';
+
 class PolygonEditorScreen extends StatefulWidget {
   const PolygonEditorScreen({
     super.key,
@@ -25,6 +27,8 @@ class _PolygonEditorScreenState extends State<PolygonEditorScreen> {
   late final List<LatLng> _points = List<LatLng>.from(widget.initialPoints);
   final MapController _mapController = MapController();
   int? _selectedPointIndex;
+  int? _draggingPointIndex;
+  Offset? _dragScreenOffset;
   bool _saving = false;
 
   bool _isInsidePolygon(LatLng point, List<LatLng> polygon) {
@@ -83,11 +87,47 @@ class _PolygonEditorScreenState extends State<PolygonEditorScreen> {
     return bestDist <= threshold ? bestIndex : null;
   }
 
+  void _startDraggingPoint(int index) {
+    final point = _points[index];
+    final screen = _mapController.camera.latLngToScreenPoint(point);
+    setState(() {
+      _selectedPointIndex = index;
+      _draggingPointIndex = index;
+      _dragScreenOffset = Offset(screen.x, screen.y);
+    });
+  }
+
+  void _updateDraggingPoint(int index, Offset delta) {
+    if (_draggingPointIndex != index || _dragScreenOffset == null) return;
+    final nextOffset = Offset(
+      _dragScreenOffset!.dx + delta.dx,
+      _dragScreenOffset!.dy + delta.dy,
+    );
+    final nextPoint = _mapController.camera.offsetToCrs(nextOffset);
+    final mustStayInside = widget.boundary.length >= 3;
+    if (mustStayInside && !_isInsidePolygon(nextPoint, widget.boundary)) {
+      return;
+    }
+
+    setState(() {
+      _dragScreenOffset = nextOffset;
+      _points[index] = nextPoint;
+    });
+  }
+
+  void _endDraggingPoint() {
+    setState(() {
+      _draggingPointIndex = null;
+      _dragScreenOffset = null;
+    });
+  }
+
   Future<void> _save() async {
     if (_saving) return;
     if (_points.length < 3) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('O poligono precisa de pelo menos 3 pontos.')),
+        const SnackBar(
+            content: Text('O poligono precisa de pelo menos 3 pontos.')),
       );
       return;
     }
@@ -133,7 +173,8 @@ class _PolygonEditorScreenState extends State<PolygonEditorScreen> {
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Toque em um ponto para mover, ou no perimetro para inserir.'),
+        content:
+            Text('Toque em um ponto para mover, ou no perimetro para inserir.'),
       ),
     );
   }
@@ -159,7 +200,7 @@ class _PolygonEditorScreenState extends State<PolygonEditorScreen> {
             padding: const EdgeInsets.all(12),
             color: Colors.green.withValues(alpha: 0.08),
             child: const Text(
-              'Toque em um ponto para selecionar e depois no mapa para mover. '
+              'Toque no ponto vermelho e arraste para mover. '
               'Toque no perimetro para inserir novo ponto.',
             ),
           ),
@@ -167,9 +208,17 @@ class _PolygonEditorScreenState extends State<PolygonEditorScreen> {
             child: FlutterMap(
               mapController: _mapController,
               options: MapOptions(
-                initialCenter: _points.isNotEmpty ? _points.first : const LatLng(-23, -46),
+                initialCenter:
+                    _points.isNotEmpty ? _points.first : const LatLng(-23, -46),
                 initialZoom: 15,
                 initialCameraFit: fit,
+                interactionOptions: InteractionOptions(
+                  flags: _draggingPointIndex == null
+                      ? InteractiveFlag.all
+                      : InteractiveFlag.all &
+                          ~InteractiveFlag.drag &
+                          ~InteractiveFlag.flingAnimation,
+                ),
                 onTap: (_, p) => _onMapTap(p),
               ),
               children: [
@@ -207,13 +256,19 @@ class _PolygonEditorScreenState extends State<PolygonEditorScreen> {
                           child: GestureDetector(
                             onTap: () =>
                                 setState(() => _selectedPointIndex = entry.key),
+                            onPanStart: (_) => _startDraggingPoint(entry.key),
+                            onPanUpdate: (details) =>
+                                _updateDraggingPoint(entry.key, details.delta),
+                            onPanEnd: (_) => _endDraggingPoint(),
+                            onPanCancel: _endDraggingPoint,
                             child: Container(
                               decoration: BoxDecoration(
                                 color: _selectedPointIndex == entry.key
                                     ? Colors.red
                                     : Colors.teal.shade700,
                                 shape: BoxShape.circle,
-                                border: Border.all(color: Colors.white, width: 2),
+                                border:
+                                    Border.all(color: Colors.white, width: 2),
                               ),
                             ),
                           ),
@@ -222,6 +277,15 @@ class _PolygonEditorScreenState extends State<PolygonEditorScreen> {
                       .toList(),
                 ),
               ],
+            ),
+          ),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            color: Colors.green.withValues(alpha: 0.08),
+            child: Text(
+              'Area da edicao: ${PolygonMetrics.areaTextInline(_points)}',
+              textAlign: TextAlign.center,
             ),
           ),
           Padding(

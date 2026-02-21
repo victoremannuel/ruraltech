@@ -36,8 +36,14 @@ Receber LoRa da coleira, expor REST+WebSocket para o app, logar em microSD com h
 4. Compile/upload.
 
 ## Atualização de firmware via Wi-Fi (OTA)
-- OTA já vem habilitado no firmware (`config.h`).
+- OTA/Wi-Fi já vem habilitado continuamente por padrão (`config.h`).
 - Conecte seu PC no AP do gateway: `RuralTech-Gateway` / `ruraltechota`.
 - No Arduino IDE, selecione a porta de rede do dispositivo `ruraltech-gateway`.
 - Faça upload normalmente; quando solicitado, use a senha OTA: `ruraltechota`.
 - Endpoint útil: `GET /status` mostra `ota=true` e IP do AP.
+
+## Chave remota Wi-Fi/OTA
+- Via WebSocket/API ou LoRa, envie `SET_PARAMS` com payload:
+  - `{"target":"all","wifi_ota_enabled":false}` -> gateway e coleiras em LoRa-only.
+  - `{"target":"all","wifi_ota_enabled":true}` -> reativa Wi-Fi/OTA e watchdog.
+- Targets aceitos: `all`, `gateway`, `collars`/`collar`.

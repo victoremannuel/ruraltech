@@ -47,6 +47,10 @@ constexpr char OTA_HOSTNAME[] = "ruraltech-coleira";
 constexpr char OTA_PASSWORD[] = "ruraltechota";
 constexpr uint32_t OTA_CONNECT_TIMEOUT_MS = 12000;
 constexpr uint32_t OTA_WINDOW_MS = 300000;
+constexpr bool OTA_AP_FALLBACK_ENABLED = true;
+constexpr bool OTA_FORCE_AP_ONLY = true;
+constexpr char OTA_AP_SSID[] = "RuralTech-Coleira-OTA";
+constexpr char OTA_AP_PASS[] = "ruraltechota";
 
 // Intervalos (ms)
 constexpr uint32_t NORMAL_INTERVAL_MS = 180000;

@@ -45,18 +45,51 @@ class _ProfileScreenState extends State<ProfileScreen> {
       body: StreamBuilder<List<Map<String, dynamic>>>(
         stream: fb.streamRuralProperties(uid: uid, isAdmin: auth.isAdmin),
         builder: (context, propSnap) {
+          if (propSnap.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text('Erro ao carregar propriedades: ${propSnap.error}'),
+              ),
+            );
+          }
           final properties = propSnap.data ?? const [];
           return StreamBuilder<List<DeviceModel>>(
             stream: fb.streamDevices(uid: uid, isAdmin: auth.isAdmin),
             builder: (context, deviceSnap) {
+              if (deviceSnap.hasError) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text('Erro ao carregar coleiras: ${deviceSnap.error}'),
+                  ),
+                );
+              }
               final devices = deviceSnap.data ?? const <DeviceModel>[];
               return StreamBuilder<List<Map<String, dynamic>>>(
                 stream: fb.streamAreas(uid: uid, isAdmin: auth.isAdmin),
                 builder: (context, areaSnap) {
+                  if (areaSnap.hasError) {
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text('Erro ao carregar areas: ${areaSnap.error}'),
+                      ),
+                    );
+                  }
                   final areas = areaSnap.data ?? const [];
                   return StreamBuilder<List<Map<String, dynamic>>>(
                     stream: fb.streamGateways(uid: uid, isAdmin: auth.isAdmin),
                     builder: (context, gatewaySnap) {
+                      if (gatewaySnap.hasError) {
+                        return Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Text(
+                                'Erro ao carregar gateways: ${gatewaySnap.error}'),
+                          ),
+                        );
+                      }
                       final gateways = gatewaySnap.data ?? const [];
 
                       return ListView(

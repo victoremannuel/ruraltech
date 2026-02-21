@@ -13,6 +13,7 @@ import '../services/auth_service.dart';
 import '../services/firebase_service.dart';
 import '../services/gateway_service.dart';
 import '../services/map_filter_service.dart';
+import '../utils/polygon_metrics.dart';
 import 'area_editor_screen.dart';
 import 'events_screen.dart';
 import 'map_point_picker_screen.dart';
@@ -34,6 +35,7 @@ class _HomeScreenState extends State<HomeScreen> {
   LatLng? _userPosition;
   double _userHeading = 0;
   String? _lastAuthKey;
+  bool _ranLegacyBackfill = false;
   String? _selectedAreaId;
   String? _selectedPropertyId;
   LatLng? _selectedPolygonAnchor;
@@ -177,11 +179,13 @@ class _HomeScreenState extends State<HomeScreen> {
     final user = _userPosition;
     if (user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Localizacao do dispositivo indisponivel.')),
+        const SnackBar(
+            content: Text('Localizacao do dispositivo indisponivel.')),
       );
       return;
     }
-    final zoom = _mapController.camera.zoom < 16 ? 16.0 : _mapController.camera.zoom;
+    final zoom =
+        _mapController.camera.zoom < 16 ? 16.0 : _mapController.camera.zoom;
     _mapController.move(user, zoom);
   }
 
@@ -246,11 +250,28 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final properties =
         await fb.getRuralProperties(uid: uid, isAdmin: auth.isAdmin);
+    final users = auth.isAdmin
+        ? await fb.getUserOptions()
+        : const <Map<String, String>>[];
     if (!context.mounted) return;
     String? propertyId = device.propertyId;
+    String? ownerUid = device.ownerUid;
     LatLng? selectedPosition = (device.lat != null && device.lon != null)
         ? LatLng(device.lat!, device.lon!)
         : null;
+    final ownerOptions = users
+        .where((u) => (u['uid'] ?? '').isNotEmpty)
+        .map((u) => Map<String, String>.from(u))
+        .toList();
+    if (ownerUid == null || ownerUid.isEmpty) {
+      ownerUid = ownerOptions.isNotEmpty ? ownerOptions.first['uid'] : uid;
+    }
+    if (ownerUid != null && ownerOptions.every((u) => u['uid'] != ownerUid)) {
+      ownerOptions.insert(0, {
+        'uid': ownerUid,
+        'email': ownerUid,
+      });
+    }
 
     final nameCtrl = TextEditingController(text: device.name);
     final statusCtrl = TextEditingController(text: device.status);
@@ -282,6 +303,30 @@ class _HomeScreenState extends State<HomeScreen> {
                     decoration:
                         const InputDecoration(labelText: 'Propriedade rural'),
                   ),
+                  if (ownerOptions.isEmpty)
+                    TextFormField(
+                      initialValue: ownerUid ?? uid,
+                      readOnly: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Usuario dono (email)',
+                      ),
+                    )
+                  else
+                    DropdownButtonFormField<String>(
+                      initialValue: ownerUid,
+                      items: ownerOptions
+                          .map(
+                            (u) => DropdownMenuItem<String>(
+                              value: u['uid'],
+                              child: Text(u['email'] ?? u['uid'] ?? ''),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (v) => setState(() => ownerUid = v),
+                      decoration: const InputDecoration(
+                        labelText: 'Usuario dono (email)',
+                      ),
+                    ),
                   TextFormField(
                     controller: nameCtrl,
                     decoration:
@@ -311,12 +356,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     trailing: TextButton(
                       onPressed: () async {
-                        final selectedProperty = properties
-                            .cast<Map<String, dynamic>?>()
-                            .firstWhere(
-                              (p) => p?['id'].toString() == propertyId,
-                              orElse: () => null,
-                            );
+                        final selectedProperty =
+                            properties.cast<Map<String, dynamic>?>().firstWhere(
+                                  (p) => p?['id'].toString() == propertyId,
+                                  orElse: () => null,
+                                );
                         final picked = await Navigator.push<LatLng>(
                           context,
                           MaterialPageRoute(
@@ -353,6 +397,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   status: statusCtrl.text.trim(),
                   lat: selectedPosition!.latitude,
                   lon: selectedPosition!.longitude,
+                  ownerUid: ownerUid ?? uid,
                   gatewayId: gatewayCtrl.text.trim().isEmpty
                       ? null
                       : gatewayCtrl.text.trim(),
@@ -386,10 +431,12 @@ class _HomeScreenState extends State<HomeScreen> {
           )
         : null;
 
-    final nameCtrl = TextEditingController(text: (gateway['name'] ?? '').toString());
+    final nameCtrl =
+        TextEditingController(text: (gateway['name'] ?? '').toString());
     final statusCtrl =
         TextEditingController(text: (gateway['status'] ?? 'active').toString());
-    final hostCtrl = TextEditingController(text: (gateway['host'] ?? '').toString());
+    final hostCtrl =
+        TextEditingController(text: (gateway['host'] ?? '').toString());
     final formKey = GlobalKey<FormState>();
 
     await showDialog<void>(
@@ -446,12 +493,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     trailing: TextButton(
                       onPressed: () async {
-                        final selectedProperty = properties
-                            .cast<Map<String, dynamic>?>()
-                            .firstWhere(
-                              (p) => p?['id'].toString() == propertyId,
-                              orElse: () => null,
-                            );
+                        final selectedProperty =
+                            properties.cast<Map<String, dynamic>?>().firstWhere(
+                                  (p) => p?['id'].toString() == propertyId,
+                                  orElse: () => null,
+                                );
                         final picked = await Navigator.push<LatLng>(
                           context,
                           MaterialPageRoute(
@@ -486,7 +532,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   id: gateway['id'].toString(),
                   name: nameCtrl.text.trim(),
                   status: statusCtrl.text.trim(),
-                  host: hostCtrl.text.trim().isEmpty ? null : hostCtrl.text.trim(),
+                  host: hostCtrl.text.trim().isEmpty
+                      ? null
+                      : hostCtrl.text.trim(),
                   propertyId: propertyId,
                   lat: selectedPosition!.latitude,
                   lon: selectedPosition!.longitude,
@@ -581,12 +629,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     trailing: TextButton(
                       onPressed: () async {
-                        final selectedProperty = properties
-                            .cast<Map<String, dynamic>?>()
-                            .firstWhere(
-                              (p) => p?['id'].toString() == propertyId,
-                              orElse: () => null,
-                            );
+                        final selectedProperty =
+                            properties.cast<Map<String, dynamic>?>().firstWhere(
+                                  (p) => p?['id'].toString() == propertyId,
+                                  orElse: () => null,
+                                );
                         final picked = await Navigator.push<LatLng>(
                           context,
                           MaterialPageRoute(
@@ -718,12 +765,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     trailing: TextButton(
                       onPressed: () async {
-                        final selectedProperty = properties
-                            .cast<Map<String, dynamic>?>()
-                            .firstWhere(
-                              (p) => p?['id'].toString() == propertyId,
-                              orElse: () => null,
-                            );
+                        final selectedProperty =
+                            properties.cast<Map<String, dynamic>?>().firstWhere(
+                                  (p) => p?['id'].toString() == propertyId,
+                                  orElse: () => null,
+                                );
                         final picked = await Navigator.push<LatLng>(
                           context,
                           MaterialPageRoute(
@@ -914,9 +960,22 @@ class _HomeScreenState extends State<HomeScreen> {
     final authKey = '$uid-${auth.role}';
     if (_lastAuthKey != authKey) {
       _lastAuthKey = authKey;
+      _ranLegacyBackfill = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         context.read<MapFilterService>().clearAll();
+      });
+    }
+
+    if (auth.isAdmin && !_ranLegacyBackfill) {
+      _ranLegacyBackfill = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        try {
+          await fb.backfillLegacyAccessForAreasAndGateways();
+        } catch (_) {
+          // Best effort migration for legacy documents.
+        }
       });
     }
 
@@ -940,18 +999,53 @@ class _HomeScreenState extends State<HomeScreen> {
         key: ValueKey('props-$uid-${auth.role}-$_refreshTick'),
         stream: fb.streamRuralProperties(uid: uid, isAdmin: auth.isAdmin),
         builder: (context, propsSnap) {
+          if (propsSnap.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child:
+                    Text('Erro ao carregar propriedades: ${propsSnap.error}'),
+              ),
+            );
+          }
           return StreamBuilder<List<Map<String, dynamic>>>(
             key: ValueKey('areas-$uid-${auth.role}-$_refreshTick'),
             stream: fb.streamAreas(uid: uid, isAdmin: auth.isAdmin),
             builder: (context, areasSnap) {
+              if (areasSnap.hasError) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text('Erro ao carregar areas: ${areasSnap.error}'),
+                  ),
+                );
+              }
               return StreamBuilder<List<DeviceModel>>(
                 key: ValueKey('devices-$uid-${auth.role}-$_refreshTick'),
                 stream: fb.streamDevices(uid: uid, isAdmin: auth.isAdmin),
                 builder: (context, devicesSnap) {
+                  if (devicesSnap.hasError) {
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(
+                            'Erro ao carregar coleiras: ${devicesSnap.error}'),
+                      ),
+                    );
+                  }
                   return StreamBuilder<List<Map<String, dynamic>>>(
                     key: ValueKey('gws-$uid-${auth.role}-$_refreshTick'),
                     stream: fb.streamGateways(uid: uid, isAdmin: auth.isAdmin),
                     builder: (context, gatewaySnap) {
+                      if (gatewaySnap.hasError) {
+                        return Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Text(
+                                'Erro ao carregar gateways: ${gatewaySnap.error}'),
+                          ),
+                        );
+                      }
                       final allProperties = propsSnap.data ?? const [];
                       final allAreas = areasSnap.data ?? const [];
                       final allDevices =
@@ -1000,7 +1094,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                 width: 40,
                                 height: 40,
                                 child: GestureDetector(
-                                  onTap: () => _showEditDeviceDialog(context, d),
+                                  onTap: () =>
+                                      _showEditDeviceDialog(context, d),
                                   child: const Icon(
                                     Icons.pets,
                                     color: Colors.red,
@@ -1020,7 +1115,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                 width: 40,
                                 height: 40,
                                 child: GestureDetector(
-                                  onTap: () => _showEditGatewayDialog(context, g),
+                                  onTap: () =>
+                                      _showEditGatewayDialog(context, g),
                                   child: const Icon(
                                     Icons.wifi,
                                     color: Colors.blue,
@@ -1031,34 +1127,106 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                       ];
 
-                      final polygons = <Polygon>[
-                        ...filteredAreas.map((a) {
-                          final raw = (a['perimeter'] as List?) ?? const [];
-                          final latLngs =
-                              raw.map(_toLatLng).whereType<LatLng>().toList();
-                          if (latLngs.length < 3) return null;
-                          return Polygon(
+                      final polygons = <Polygon>[];
+                      final areaLabelMarkers = <Marker>[];
+                      for (final a in filteredAreas) {
+                        final raw = (a['perimeter'] as List?) ?? const [];
+                        final latLngs =
+                            raw.map(_toLatLng).whereType<LatLng>().toList();
+                        if (latLngs.length < 3) continue;
+                        polygons.add(
+                          Polygon(
                             points: latLngs,
                             color: Colors.teal.withValues(alpha: 0.22),
                             borderColor: Colors.teal,
                             borderStrokeWidth: 3,
-                          );
-                        }).whereType<Polygon>(),
-                        ...properties.map((p) {
-                          final points = (p['points'] as List?) ?? const [];
-                          final latLngs = points
-                              .map(_toLatLng)
-                              .whereType<LatLng>()
-                              .toList();
-                          if (latLngs.length < 3) return null;
-                          return Polygon(
+                          ),
+                        );
+                        final placement =
+                            PolygonMetrics.labelPlacement(latLngs);
+                        areaLabelMarkers.add(
+                          Marker(
+                            point: placement.anchor,
+                            width: 126,
+                            height: 48,
+                            child: IgnorePointer(
+                              child: Container(
+                                alignment: Alignment.center,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.58),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                    color: Colors.black12,
+                                    width: 0.6,
+                                  ),
+                                ),
+                                child: Text(
+                                  PolygonMetrics.areaTextMultiline(latLngs),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    fontSize: 9.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }
+                      for (final p in properties) {
+                        final points = (p['points'] as List?) ?? const [];
+                        final latLngs =
+                            points.map(_toLatLng).whereType<LatLng>().toList();
+                        if (latLngs.length < 3) continue;
+                        polygons.add(
+                          Polygon(
                             points: latLngs,
                             color: Colors.orange.withValues(alpha: 0.25),
                             borderColor: Colors.orange.shade700,
                             borderStrokeWidth: 3,
-                          );
-                        }).whereType<Polygon>(),
-                      ];
+                          ),
+                        );
+                        final placement =
+                            PolygonMetrics.labelPlacement(latLngs);
+                        areaLabelMarkers.add(
+                          Marker(
+                            point: placement.anchor,
+                            width: 126,
+                            height: 48,
+                            child: IgnorePointer(
+                              child: Container(
+                                alignment: Alignment.center,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.58),
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                    color: Colors.black12,
+                                    width: 0.6,
+                                  ),
+                                ),
+                                child: Text(
+                                  PolygonMetrics.areaTextMultiline(latLngs),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    fontSize: 9.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }
 
                       void selectPolygonAt(LatLng tapPoint) {
                         for (final a in filteredAreas) {
@@ -1067,8 +1235,11 @@ class _HomeScreenState extends State<HomeScreen> {
                               raw.map(_toLatLng).whereType<LatLng>().toList();
                           if (pts.length < 3) continue;
                           if (_isInsidePolygon(tapPoint, pts)) {
-                            final propertyId = (a['propertyId'] ?? '').toString();
-                            final property = allProperties.cast<Map<String, dynamic>?>().firstWhere(
+                            final propertyId =
+                                (a['propertyId'] ?? '').toString();
+                            final property = allProperties
+                                .cast<Map<String, dynamic>?>()
+                                .firstWhere(
                                   (p) => p?['id'].toString() == propertyId,
                                   orElse: () => null,
                                 );
@@ -1108,8 +1279,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         });
                       }
 
-                      final viewPoints =
-                          _collectViewPoints(properties, filteredAreas, markers);
+                      final viewPoints = _collectViewPoints(
+                          properties, filteredAreas, markers);
                       final center = viewPoints.isNotEmpty
                           ? viewPoints.first
                           : const LatLng(-23.0, -46.0);
@@ -1157,6 +1328,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                           'com.example.ruraltechApp',
                                     ),
                                     PolygonLayer(polygons: polygons),
+                                    MarkerLayer(markers: areaLabelMarkers),
                                     MarkerLayer(markers: markers),
                                     if (_userPosition != null)
                                       MarkerLayer(
@@ -1166,8 +1338,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                             width: 42,
                                             height: 42,
                                             child: Transform.rotate(
-                                              angle:
-                                                  _userHeading * (math.pi / 180.0),
+                                              angle: _userHeading *
+                                                  (math.pi / 180.0),
                                               child: const Icon(
                                                 Icons.navigation,
                                                 color: Colors.blue,
@@ -1183,7 +1355,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                           Marker(
                                             point: LatLng(
                                               _selectedPolygonAnchor!.latitude,
-                                              _selectedPolygonAnchor!.longitude +
+                                              _selectedPolygonAnchor!
+                                                      .longitude +
                                                   0.00025,
                                             ),
                                             width: 40,
@@ -1197,7 +1370,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                             ),
                                           ),
                                         ],
-                                    ),
+                                      ),
                                   ],
                                 ),
                                 Positioned(

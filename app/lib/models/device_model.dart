@@ -6,6 +6,7 @@ class DeviceModel {
   final String status;
   final double? lat;
   final double? lon;
+  final String? ownerUid;
   final String? propertyId;
 
   DeviceModel({
@@ -14,6 +15,7 @@ class DeviceModel {
     required this.status,
     this.lat,
     this.lon,
+    this.ownerUid,
     this.propertyId,
   });
 
@@ -43,6 +45,18 @@ class DeviceModel {
           }
           return (m['lon'] as num?)?.toDouble();
         })(),
+        ownerUid: (() {
+          final owner = m['ownerUid'];
+          if (owner is DocumentReference) return owner.id;
+          if (owner is String) {
+            final raw = owner.trim();
+            if (raw.isEmpty) return null;
+            if (!raw.contains('/')) return raw;
+            final parts = raw.split('/').where((e) => e.isNotEmpty).toList();
+            return parts.isEmpty ? raw : parts.last;
+          }
+          return null;
+        })(),
         propertyId: (() {
           final prop = m['propertyId'];
           if (prop is DocumentReference) return prop.id;
@@ -62,6 +76,7 @@ class DeviceModel {
         'status': status,
         'lat': lat,
         'lon': lon,
+        'ownerUid': ownerUid,
         'propertyId': propertyId,
       };
 }
