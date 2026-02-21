@@ -68,35 +68,55 @@ class _LoginScreenState extends State<LoginScreen> {
       appBar: AppBar(title: const Text('RuralTech Login')),
       body: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            TextField(
-                controller: _email,
-                decoration: const InputDecoration(labelText: 'Email')),
-            TextField(
-                controller: _pass,
-                obscureText: true,
-                decoration: const InputDecoration(labelText: 'Senha')),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _loading
-                  ? null
-                  : () => _runAuth(() => auth.signIn(_email.text, _pass.text)),
-              child: _loading
-                  ? const SizedBox(
-                      height: 16,
-                      width: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('Entrar'),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Image.asset(
+                  'assets/branding/logotipo.png',
+                  width: 260,
+                ),
+                const SizedBox(height: 18),
+                TextField(
+                  controller: _email,
+                  decoration: const InputDecoration(labelText: 'Email'),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _pass,
+                  obscureText: true,
+                  decoration: const InputDecoration(labelText: 'Senha'),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _loading
+                        ? null
+                        : () => _runAuth(
+                              () => auth.signIn(_email.text, _pass.text),
+                            ),
+                    child: _loading
+                        ? const SizedBox(
+                            height: 16,
+                            width: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Entrar'),
+                  ),
+                ),
+                TextButton(
+                  onPressed: _loading
+                      ? null
+                      : () =>
+                          _runAuth(() => auth.signUp(_email.text, _pass.text)),
+                  child: const Text('Criar conta'),
+                ),
+              ],
             ),
-            TextButton(
-              onPressed: _loading
-                  ? null
-                  : () => _runAuth(() => auth.signUp(_email.text, _pass.text)),
-              child: const Text('Criar conta'),
-            ),
-          ],
+          ),
         ),
       ),
     );
