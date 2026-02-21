@@ -26,6 +26,8 @@ firebase deploy --only firestore:rules --project <seu_project_id>
 
 ## Executar em Debug
 
+`debug` é o padrão do `flutter run`.
+
 ### iOS (simulador)
 ```bash
 flutter devices
@@ -62,6 +64,39 @@ flutter run -d windows
 ### Linux
 ```bash
 flutter run -d linux
+```
+
+## Executar em Profile
+
+### iOS (simulador ou físico)
+```bash
+flutter run --profile -d "iPhone 16e"
+flutter run --profile -d "VEST"
+```
+
+### Android
+```bash
+flutter run --profile -d <android_device_id>
+```
+
+### Web (Chrome)
+```bash
+flutter run --profile -d chrome
+```
+
+### macOS
+```bash
+flutter run --profile -d macos
+```
+
+### Windows
+```bash
+flutter run --profile -d windows
+```
+
+### Linux
+```bash
+flutter run --profile -d linux
 ```
 
 ## Executar em Release
