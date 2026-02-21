@@ -10,14 +10,20 @@ import '../services/firebase_service.dart';
 import '../services/gateway_service.dart';
 import '../services/map_filter_service.dart';
 import 'area_editor_screen.dart';
-import 'device_details_screen.dart';
 import 'events_screen.dart';
 import 'map_point_picker_screen.dart';
 import 'profile_screen.dart';
 import 'rural_property_editor_screen.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  int _refreshTick = 0;
 
   LatLng? _toLatLng(dynamic value) {
     if (value is GeoPoint) return LatLng(value.latitude, value.longitude);
@@ -59,6 +65,277 @@ class HomeScreen extends StatelessWidget {
     }
     points.addAll(markers.map((m) => m.point));
     return points;
+  }
+
+  void _refreshFromDatabase() {
+    setState(() => _refreshTick++);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Atualizando dados da Home...')),
+    );
+  }
+
+  Future<void> _showEditDeviceDialog(
+      BuildContext context, DeviceModel device) async {
+    final auth = context.read<AuthService>();
+    final fb = context.read<FirebaseService>();
+    final uid = auth.user?.uid;
+    if (uid == null) return;
+
+    final properties =
+        await fb.getRuralProperties(uid: uid, isAdmin: auth.isAdmin);
+    if (!context.mounted) return;
+    String? propertyId = device.propertyId;
+    LatLng? selectedPosition = (device.lat != null && device.lon != null)
+        ? LatLng(device.lat!, device.lon!)
+        : null;
+
+    final nameCtrl = TextEditingController(text: device.name);
+    final statusCtrl = TextEditingController(text: device.status);
+    final gatewayCtrl = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
+    await showDialog<void>(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Editar coleira'),
+          content: Form(
+            key: formKey,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: propertyId,
+                    items: properties
+                        .map(
+                          (p) => DropdownMenuItem<String>(
+                            value: p['id'].toString(),
+                            child: Text((p['name'] ?? p['id']).toString()),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (v) => setState(() => propertyId = v),
+                    decoration:
+                        const InputDecoration(labelText: 'Propriedade rural'),
+                  ),
+                  TextFormField(
+                    controller: nameCtrl,
+                    decoration:
+                        const InputDecoration(labelText: 'Nome da coleira'),
+                    validator: (v) => (v == null || v.trim().isEmpty)
+                        ? 'Informe o nome'
+                        : null,
+                  ),
+                  TextFormField(
+                    controller: statusCtrl,
+                    decoration: const InputDecoration(labelText: 'Status'),
+                  ),
+                  TextFormField(
+                    controller: gatewayCtrl,
+                    decoration: const InputDecoration(
+                        labelText: 'Gateway ID (opcional)'),
+                  ),
+                  const SizedBox(height: 8),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.location_on),
+                    title: const Text('Posicao da coleira'),
+                    subtitle: Text(
+                      selectedPosition == null
+                          ? 'Nenhuma posicao selecionada'
+                          : '${selectedPosition!.latitude.toStringAsFixed(6)}, ${selectedPosition!.longitude.toStringAsFixed(6)}',
+                    ),
+                    trailing: TextButton(
+                      onPressed: () async {
+                        final selectedProperty = properties
+                            .cast<Map<String, dynamic>?>()
+                            .firstWhere(
+                              (p) => p?['id'].toString() == propertyId,
+                              orElse: () => null,
+                            );
+                        final picked = await Navigator.push<LatLng>(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => MapPointPickerScreen(
+                              initial: selectedPosition,
+                              propertyPolygon:
+                                  _polygonFromProperty(selectedProperty),
+                            ),
+                          ),
+                        );
+                        if (picked != null) {
+                          setState(() => selectedPosition = picked);
+                        }
+                      },
+                      child: const Text('Selecionar'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                if (!formKey.currentState!.validate()) return;
+                if (selectedPosition == null) return;
+                await fb.updateDevice(
+                  id: device.id,
+                  name: nameCtrl.text.trim(),
+                  status: statusCtrl.text.trim(),
+                  lat: selectedPosition!.latitude,
+                  lon: selectedPosition!.longitude,
+                  gatewayId: gatewayCtrl.text.trim().isEmpty
+                      ? null
+                      : gatewayCtrl.text.trim(),
+                  propertyId: propertyId,
+                );
+                if (context.mounted) Navigator.pop(context);
+              },
+              child: const Text('Salvar'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showEditGatewayDialog(
+      BuildContext context, Map<String, dynamic> gateway) async {
+    final auth = context.read<AuthService>();
+    final fb = context.read<FirebaseService>();
+    final uid = auth.user?.uid;
+    if (uid == null) return;
+
+    final properties =
+        await fb.getRuralProperties(uid: uid, isAdmin: auth.isAdmin);
+    if (!context.mounted) return;
+    String? propertyId = gateway['propertyId']?.toString();
+    LatLng? selectedPosition = (gateway['lat'] is num && gateway['lon'] is num)
+        ? LatLng(
+            (gateway['lat'] as num).toDouble(),
+            (gateway['lon'] as num).toDouble(),
+          )
+        : null;
+
+    final nameCtrl = TextEditingController(text: (gateway['name'] ?? '').toString());
+    final statusCtrl =
+        TextEditingController(text: (gateway['status'] ?? 'active').toString());
+    final hostCtrl = TextEditingController(text: (gateway['host'] ?? '').toString());
+    final formKey = GlobalKey<FormState>();
+
+    await showDialog<void>(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Editar gateway'),
+          content: Form(
+            key: formKey,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: propertyId,
+                    items: properties
+                        .map(
+                          (p) => DropdownMenuItem<String>(
+                            value: p['id'].toString(),
+                            child: Text((p['name'] ?? p['id']).toString()),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (v) => setState(() => propertyId = v),
+                    decoration:
+                        const InputDecoration(labelText: 'Propriedade rural'),
+                  ),
+                  TextFormField(
+                    controller: nameCtrl,
+                    decoration:
+                        const InputDecoration(labelText: 'Nome do gateway'),
+                    validator: (v) => (v == null || v.trim().isEmpty)
+                        ? 'Informe o nome'
+                        : null,
+                  ),
+                  TextFormField(
+                    controller: statusCtrl,
+                    decoration: const InputDecoration(labelText: 'Status'),
+                  ),
+                  TextFormField(
+                    controller: hostCtrl,
+                    decoration:
+                        const InputDecoration(labelText: 'Host (opcional)'),
+                  ),
+                  const SizedBox(height: 8),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.location_on),
+                    title: const Text('Posicao do gateway'),
+                    subtitle: Text(
+                      selectedPosition == null
+                          ? 'Nenhuma posicao selecionada'
+                          : '${selectedPosition!.latitude.toStringAsFixed(6)}, ${selectedPosition!.longitude.toStringAsFixed(6)}',
+                    ),
+                    trailing: TextButton(
+                      onPressed: () async {
+                        final selectedProperty = properties
+                            .cast<Map<String, dynamic>?>()
+                            .firstWhere(
+                              (p) => p?['id'].toString() == propertyId,
+                              orElse: () => null,
+                            );
+                        final picked = await Navigator.push<LatLng>(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => MapPointPickerScreen(
+                              initial: selectedPosition,
+                              propertyPolygon:
+                                  _polygonFromProperty(selectedProperty),
+                            ),
+                          ),
+                        );
+                        if (picked != null) {
+                          setState(() => selectedPosition = picked);
+                        }
+                      },
+                      child: const Text('Selecionar'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                if (!formKey.currentState!.validate()) return;
+                if (selectedPosition == null) return;
+                await fb.updateGateway(
+                  id: gateway['id'].toString(),
+                  name: nameCtrl.text.trim(),
+                  status: statusCtrl.text.trim(),
+                  host: hostCtrl.text.trim().isEmpty ? null : hostCtrl.text.trim(),
+                  propertyId: propertyId,
+                  lat: selectedPosition!.latitude,
+                  lon: selectedPosition!.longitude,
+                );
+                if (context.mounted) Navigator.pop(context);
+              },
+              child: const Text('Salvar'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _showAddDeviceDialog(BuildContext context) async {
@@ -477,11 +754,9 @@ class HomeScreen extends StatelessWidget {
         actions: [
           IconButton(icon: const Icon(Icons.wifi), onPressed: gateway.connect),
           IconButton(
-            icon: const Icon(Icons.list),
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const EventsScreen()),
-            ),
+            icon: const Icon(Icons.refresh),
+            onPressed: _refreshFromDatabase,
+            tooltip: 'Atualizar',
           ),
           IconButton(
             icon: const Icon(Icons.logout),
@@ -490,15 +765,19 @@ class HomeScreen extends StatelessWidget {
         ],
       ),
       body: StreamBuilder<List<Map<String, dynamic>>>(
+        key: ValueKey('props-$uid-${auth.role}-$_refreshTick'),
         stream: fb.streamRuralProperties(uid: uid, isAdmin: auth.isAdmin),
         builder: (context, propsSnap) {
           return StreamBuilder<List<Map<String, dynamic>>>(
+            key: ValueKey('areas-$uid-${auth.role}-$_refreshTick'),
             stream: fb.streamAreas(uid: uid, isAdmin: auth.isAdmin),
             builder: (context, areasSnap) {
               return StreamBuilder<List<DeviceModel>>(
+                key: ValueKey('devices-$uid-${auth.role}-$_refreshTick'),
                 stream: fb.streamDevices(uid: uid, isAdmin: auth.isAdmin),
                 builder: (context, devicesSnap) {
                   return StreamBuilder<List<Map<String, dynamic>>>(
+                    key: ValueKey('gws-$uid-${auth.role}-$_refreshTick'),
                     stream: fb.streamGateways(uid: uid, isAdmin: auth.isAdmin),
                     builder: (context, gatewaySnap) {
                       final allProperties = propsSnap.data ?? const [];
@@ -549,13 +828,7 @@ class HomeScreen extends StatelessWidget {
                                 width: 40,
                                 height: 40,
                                 child: GestureDetector(
-                                  onTap: () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) =>
-                                          DeviceDetailsScreen(device: d),
-                                    ),
-                                  ),
+                                  onTap: () => _showEditDeviceDialog(context, d),
                                   child: const Icon(
                                     Icons.pets,
                                     color: Colors.red,
@@ -574,10 +847,13 @@ class HomeScreen extends StatelessWidget {
                                 ),
                                 width: 40,
                                 height: 40,
-                                child: const Icon(
-                                  Icons.wifi,
-                                  color: Colors.blue,
-                                  size: 30,
+                                child: GestureDetector(
+                                  onTap: () => _showEditGatewayDialog(context, g),
+                                  child: const Icon(
+                                    Icons.wifi,
+                                    color: Colors.blue,
+                                    size: 30,
+                                  ),
                                 ),
                               ),
                             ),
@@ -621,7 +897,7 @@ class HomeScreen extends StatelessWidget {
                           ? LatLngBounds.fromPoints(viewPoints)
                           : null;
                       final mapKey = ValueKey<String>(
-                        'home-${filters.revision}-${properties.length}-${filteredAreas.length}-${markers.length}',
+                        'home-${filters.revision}-${properties.length}-${filteredAreas.length}-${markers.length}-$_refreshTick',
                       );
 
                       return Column(
@@ -678,6 +954,14 @@ class HomeScreen extends StatelessWidget {
               icon: const Icon(Icons.add_circle_outline),
               tooltip: 'Acoes',
               onPressed: () => _openPlusActions(context),
+            ),
+            IconButton(
+              icon: const Icon(Icons.notifications_outlined),
+              tooltip: 'Telemetria',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const EventsScreen()),
+              ),
             ),
             const Spacer(),
             IconButton(

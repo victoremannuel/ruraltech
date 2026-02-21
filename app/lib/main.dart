@@ -68,7 +68,26 @@ class RuralTechApp extends StatelessWidget {
       ],
       child: MaterialApp(
         title: 'RuralTech',
-        theme: ThemeData(colorSchemeSeed: Colors.green, useMaterial3: true),
+        theme: ThemeData(
+          useMaterial3: true,
+          scaffoldBackgroundColor: Colors.white,
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color(0xFF4F8A5B),
+            brightness: Brightness.light,
+          ).copyWith(
+            surface: Colors.white,
+            onSurface: const Color(0xFF1F2F22),
+          ),
+          appBarTheme: const AppBarTheme(
+            backgroundColor: Color(0xFFE9F3EB),
+            foregroundColor: Color(0xFF1F2F22),
+            surfaceTintColor: Colors.transparent,
+          ),
+          cardTheme: const CardThemeData(
+            color: Colors.white,
+            surfaceTintColor: Colors.transparent,
+          ),
+        ),
         home: Consumer<AuthService>(
           builder: (_, auth, __) =>
               auth.user == null ? const LoginScreen() : const HomeScreen(),

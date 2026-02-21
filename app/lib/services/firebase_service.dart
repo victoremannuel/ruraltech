@@ -319,6 +319,64 @@ class FirebaseService {
     });
   }
 
+  Future<void> updateDevice({
+    required String id,
+    required String name,
+    required String status,
+    required double lat,
+    required double lon,
+    String? gatewayId,
+    String? propertyId,
+  }) async {
+    final update = <String, dynamic>{
+      'name': name,
+      'status': status,
+      'position': [lat, lon],
+      'gatewayId': gatewayId == null || gatewayId.trim().isEmpty
+          ? null
+          : _db.collection('gateways').doc(_idFromRefOrPath(gatewayId)),
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+
+    if (propertyId != null && propertyId.trim().isNotEmpty) {
+      update['propertyId'] = _propertyRefOrNull(propertyId);
+      final users = await _userRefsFromPropertyId(propertyId);
+      if (users.isNotEmpty) {
+        update['userUids'] = users;
+      }
+    }
+
+    await _db.collection('collars').doc(id).set(update, SetOptions(merge: true));
+  }
+
+  Future<void> updateGateway({
+    required String id,
+    required String name,
+    required String status,
+    required double lat,
+    required double lon,
+    String? host,
+    String? propertyId,
+  }) async {
+    final update = <String, dynamic>{
+      'name': name,
+      'status': status,
+      'host': host,
+      'position': [lat, lon],
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+
+    if (propertyId != null && propertyId.trim().isNotEmpty) {
+      update['propertyId'] = _propertyRefOrNull(propertyId);
+      final users = await _userRefsFromPropertyId(propertyId);
+      if (users.isNotEmpty) {
+        update['userUids'] = users;
+      }
+    }
+
+    await _db.collection('gateways').doc(id).set(update, SetOptions(merge: true));
+  }
+
   Future<void> saveFence(
       String deviceId, String ownerUid, List<List<double>> points) {
     return _db.collection('fences').doc(deviceId).set({
