@@ -52,6 +52,17 @@ class FirebaseService {
     return rawUserRefs.any((e) => _idFromRefOrPath(e) == uid);
   }
 
+  bool _isOwner(Map<String, dynamic> data, String uid) =>
+      _idFromRefOrPath(data['ownerUid']) == uid;
+
+  Future<bool> _canAccessByPropertyId(
+      String propertyId, String uid, bool isAdmin) async {
+    if (isAdmin || propertyId.isEmpty) return isAdmin;
+    final propSnap = await _db.collection('ruralProperties').doc(propertyId).get();
+    if (!propSnap.exists) return false;
+    return _canAccessProperty(propSnap.data() ?? {}, uid, isAdmin);
+  }
+
   double? _latFromPosition(Map<String, dynamic> m) {
     final pos = m['position'];
     if (pos is GeoPoint) return pos.latitude;
@@ -80,30 +91,45 @@ class FirebaseService {
 
   Stream<List<DeviceModel>> streamDevices(
       {required String uid, required bool isAdmin}) {
-    return _db.collection('collars').snapshots().map((s) {
-      final docs = isAdmin
-          ? s.docs
-          : s.docs.where((d) => _hasUserAccess(d.data()['userUids'], uid));
-      return docs.map((d) => DeviceModel.fromMap(d.id, d.data())).toList();
+    return _db.collection('collars').snapshots().asyncMap((s) async {
+      final out = <DeviceModel>[];
+      for (final d in s.docs) {
+        final data = d.data();
+        final propertyId = _idFromRefOrPath(data['propertyId']);
+        final allowed = isAdmin ||
+            _hasUserAccess(data['userUids'], uid) ||
+            _isOwner(data, uid) ||
+            await _canAccessByPropertyId(propertyId, uid, isAdmin);
+        if (allowed) {
+          out.add(DeviceModel.fromMap(d.id, data));
+        }
+      }
+      return out;
     });
   }
 
   Stream<List<Map<String, dynamic>>> streamGateways(
       {required String uid, required bool isAdmin}) {
-    return _db.collection('gateways').snapshots().map((s) {
-      final docs = isAdmin
-          ? s.docs
-          : s.docs.where((d) => _hasUserAccess(d.data()['userUids'], uid));
-      return docs.map((d) {
+    return _db.collection('gateways').snapshots().asyncMap((s) async {
+      final out = <Map<String, dynamic>>[];
+      for (final d in s.docs) {
         final data = d.data();
-        return {
-          'id': d.id,
-          ...data,
-          'lat': _latFromPosition(data),
-          'lon': _lonFromPosition(data),
-          'propertyId': _idFromRefOrPath(data['propertyId']),
-        };
-      }).toList();
+        final propertyId = _idFromRefOrPath(data['propertyId']);
+        final allowed = isAdmin ||
+            _hasUserAccess(data['userUids'], uid) ||
+            _isOwner(data, uid) ||
+            await _canAccessByPropertyId(propertyId, uid, isAdmin);
+        if (allowed) {
+          out.add({
+            'id': d.id,
+            ...data,
+            'lat': _latFromPosition(data),
+            'lon': _lonFromPosition(data),
+            'propertyId': propertyId,
+          });
+        }
+      }
+      return out;
     });
   }
 
@@ -112,7 +138,11 @@ class FirebaseService {
     return _db.collection('ruralProperties').snapshots().map((s) {
       final docs = isAdmin
           ? s.docs
-          : s.docs.where((d) => _hasUserAccess(d.data()['userUids'], uid));
+          : s.docs.where(
+              (d) =>
+                  _hasUserAccess(d.data()['userUids'], uid) ||
+                  _idFromRefOrPath(d.data()['createdByUid']) == uid,
+            );
       return docs
           .map(
             (d) => {
@@ -133,11 +163,10 @@ class FirebaseService {
         final propertyId = _idFromRefOrPath(data['ruralPropertiesID']);
         bool allowed = isAdmin;
         if (!allowed && propertyId.isNotEmpty) {
-          final propSnap =
-              await _db.collection('ruralProperties').doc(propertyId).get();
-          if (propSnap.exists) {
-            allowed = _canAccessProperty(propSnap.data() ?? {}, uid, isAdmin);
-          }
+          allowed = await _canAccessByPropertyId(propertyId, uid, isAdmin);
+        }
+        if (!allowed) {
+          allowed = _isOwner(data, uid);
         }
         if (allowed) {
           out.add({
@@ -156,7 +185,11 @@ class FirebaseService {
     final s = await _db.collection('ruralProperties').get();
     final docs = isAdmin
         ? s.docs
-        : s.docs.where((d) => _hasUserAccess(d.data()['userUids'], uid));
+        : s.docs.where(
+            (d) =>
+                _hasUserAccess(d.data()['userUids'], uid) ||
+                _idFromRefOrPath(d.data()['createdByUid']) == uid,
+          );
     return docs.map((d) => {'id': d.id, ...d.data()}).toList();
   }
 

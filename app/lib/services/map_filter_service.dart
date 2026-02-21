@@ -5,11 +5,13 @@ class MapFilterService extends ChangeNotifier {
   final Set<String> _areaIds = {};
   final Set<String> _collarIds = {};
   final Set<String> _gatewayIds = {};
+  int _revision = 0;
 
   Set<String> get propertyIds => _propertyIds;
   Set<String> get areaIds => _areaIds;
   Set<String> get collarIds => _collarIds;
   Set<String> get gatewayIds => _gatewayIds;
+  int get revision => _revision;
 
   bool get hasAnyFilter =>
       _propertyIds.isNotEmpty ||
@@ -63,6 +65,29 @@ class MapFilterService extends ChangeNotifier {
     _areaIds.clear();
     _collarIds.clear();
     _gatewayIds.clear();
+    _revision++;
+    notifyListeners();
+  }
+
+  void applySelections({
+    required Set<String> propertyIds,
+    required Set<String> areaIds,
+    required Set<String> collarIds,
+    required Set<String> gatewayIds,
+  }) {
+    _propertyIds
+      ..clear()
+      ..addAll(propertyIds);
+    _areaIds
+      ..clear()
+      ..addAll(areaIds);
+    _collarIds
+      ..clear()
+      ..addAll(collarIds);
+    _gatewayIds
+      ..clear()
+      ..addAll(gatewayIds);
+    _revision++;
     notifyListeners();
   }
 }

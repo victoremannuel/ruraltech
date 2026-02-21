@@ -18,6 +18,64 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
   String? _selectedPropertyId;
   bool _loadingProperties = true;
   List<Map<String, dynamic>> _properties = const [];
+  final MapController _mapController = MapController();
+  bool _fittedToProperty = false;
+
+  LatLng? _toLatLng(dynamic value) {
+    if (value is LatLng) return value;
+    if (value is List && value.length >= 2) {
+      final lat = value[0];
+      final lon = value[1];
+      if (lat is num && lon is num) return LatLng(lat.toDouble(), lon.toDouble());
+    }
+    if (value is Map) {
+      final lat = value['lat'] ?? value['latitude'];
+      final lon = value['lon'] ?? value['lng'] ?? value['longitude'];
+      if (lat is num && lon is num) return LatLng(lat.toDouble(), lon.toDouble());
+    }
+    return null;
+  }
+
+  List<LatLng> get _selectedPropertyPolygon {
+    if (_selectedPropertyId == null) return const [];
+    final property = _properties.cast<Map<String, dynamic>?>().firstWhere(
+          (p) => p?['id'].toString() == _selectedPropertyId,
+          orElse: () => null,
+        );
+    if (property == null) return const [];
+    final raw = (property['points'] as List?) ?? const [];
+    return raw.map(_toLatLng).whereType<LatLng>().toList();
+  }
+
+  bool _isPointInsidePolygon(LatLng point, List<LatLng> polygon) {
+    if (polygon.length < 3) return false;
+    var inside = false;
+    for (var i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      final xi = polygon[i].longitude;
+      final yi = polygon[i].latitude;
+      final xj = polygon[j].longitude;
+      final yj = polygon[j].latitude;
+      final intersects = ((yi > point.latitude) != (yj > point.latitude)) &&
+          (point.longitude <
+              (xj - xi) * (point.latitude - yi) / ((yj - yi) + 1e-12) + xi);
+      if (intersects) inside = !inside;
+    }
+    return inside;
+  }
+
+  void _fitToSelectedProperty() {
+    if (_fittedToProperty || _selectedPropertyPolygon.length < 3) return;
+    _fittedToProperty = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _mapController.fitCamera(
+        CameraFit.bounds(
+          bounds: LatLngBounds.fromPoints(_selectedPropertyPolygon),
+          padding: const EdgeInsets.all(42),
+        ),
+      );
+    });
+  }
 
   @override
   void initState() {
@@ -38,6 +96,7 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
       _selectedPropertyId =
           props.isNotEmpty ? props.first['id'].toString() : null;
       _loadingProperties = false;
+      _fittedToProperty = false;
     });
   }
 
@@ -87,7 +146,10 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
                           ),
                         )
                         .toList(),
-                    onChanged: (v) => setState(() => _selectedPropertyId = v),
+                    onChanged: (v) => setState(() {
+                      _selectedPropertyId = v;
+                      _fittedToProperty = false;
+                    }),
                     decoration: const InputDecoration(
                       labelText: 'Propriedade rural',
                     ),
@@ -101,11 +163,28 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
                 'Toque para desenhar o poligono (${_points.length} pontos)'),
           ),
           Expanded(
-            child: FlutterMap(
+            child: Builder(builder: (context) {
+              _fitToSelectedProperty();
+              return FlutterMap(
+              mapController: _mapController,
               options: MapOptions(
                 initialCenter: const LatLng(-23.0, -46.0),
                 initialZoom: 15,
-                onTap: (_, p) => setState(() => _points.add(p)),
+                onTap: (_, p) {
+                  final propertyPolygon = _selectedPropertyPolygon;
+                  if (propertyPolygon.length < 3) return;
+                  if (!_isPointInsidePolygon(p, propertyPolygon)) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'Ponto fora do perimetro da propriedade selecionada.',
+                        ),
+                      ),
+                    );
+                    return;
+                  }
+                  setState(() => _points.add(p));
+                },
               ),
               children: [
                 TileLayer(
@@ -114,6 +193,13 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
                 ),
                 PolygonLayer(
                   polygons: [
+                    if (_selectedPropertyPolygon.length >= 3)
+                      Polygon(
+                        points: _selectedPropertyPolygon,
+                        color: Colors.orange.withValues(alpha: 0.2),
+                        borderColor: Colors.orange.shade700,
+                        borderStrokeWidth: 3,
+                      ),
                     if (_points.length >= 3)
                       Polygon(
                         points: _points,
@@ -142,7 +228,8 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
                       .toList(),
                 ),
               ],
-            ),
+            );
+            }),
           ),
           Padding(
             padding: const EdgeInsets.all(12),

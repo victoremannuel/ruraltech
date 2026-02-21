@@ -6,8 +6,28 @@ import '../services/auth_service.dart';
 import '../services/firebase_service.dart';
 import '../services/map_filter_service.dart';
 
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  final Set<String> _selectedPropertyIds = {};
+  final Set<String> _selectedAreaIds = {};
+  final Set<String> _selectedCollarIds = {};
+  final Set<String> _selectedGatewayIds = {};
+  bool _initializedFromFilters = false;
+
+  void _initFromFilters(MapFilterService filters) {
+    if (_initializedFromFilters) return;
+    _selectedPropertyIds.addAll(filters.propertyIds);
+    _selectedAreaIds.addAll(filters.areaIds);
+    _selectedCollarIds.addAll(filters.collarIds);
+    _selectedGatewayIds.addAll(filters.gatewayIds);
+    _initializedFromFilters = true;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -18,6 +38,7 @@ class ProfileScreen extends StatelessWidget {
     if (uid == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
+    _initFromFilters(filters);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Perfil')),
@@ -25,24 +46,18 @@ class ProfileScreen extends StatelessWidget {
         stream: fb.streamRuralProperties(uid: uid, isAdmin: auth.isAdmin),
         builder: (context, propSnap) {
           final properties = propSnap.data ?? const [];
-
           return StreamBuilder<List<DeviceModel>>(
             stream: fb.streamDevices(uid: uid, isAdmin: auth.isAdmin),
             builder: (context, deviceSnap) {
               final devices = deviceSnap.data ?? const <DeviceModel>[];
-              final deviceCount = devices.length;
-
               return StreamBuilder<List<Map<String, dynamic>>>(
                 stream: fb.streamAreas(uid: uid, isAdmin: auth.isAdmin),
                 builder: (context, areaSnap) {
                   final areas = areaSnap.data ?? const [];
-                  final areaCount = areas.length;
-
                   return StreamBuilder<List<Map<String, dynamic>>>(
                     stream: fb.streamGateways(uid: uid, isAdmin: auth.isAdmin),
                     builder: (context, gatewaySnap) {
                       final gateways = gatewaySnap.data ?? const [];
-                      final gatewayCount = gateways.length;
 
                       return ListView(
                         padding: const EdgeInsets.all(16),
@@ -61,22 +76,26 @@ class ProfileScreen extends StatelessWidget {
                               title:
                                   const Text('Selecionar propriedades no mapa'),
                               subtitle: Text(
-                                filters.propertyIds.isEmpty
+                                _selectedPropertyIds.isEmpty
                                     ? 'Todas visiveis (${properties.length})'
-                                    : '${filters.propertyIds.length} selecionada(s)',
+                                    : '${_selectedPropertyIds.length} selecionada(s)',
                               ),
                               children: properties
                                   .map(
                                     (p) => CheckboxListTile(
-                                      value: filters.isPropertySelected(
-                                          p['id'].toString()),
+                                      value: _selectedPropertyIds
+                                          .contains(p['id'].toString()),
                                       title: Text(
                                         (p['name'] ?? p['id']).toString(),
                                       ),
-                                      onChanged: (v) => filters.toggleProperty(
-                                        p['id'].toString(),
-                                        v ?? false,
-                                      ),
+                                      onChanged: (v) => setState(() {
+                                        final id = p['id'].toString();
+                                        if (v ?? false) {
+                                          _selectedPropertyIds.add(id);
+                                        } else {
+                                          _selectedPropertyIds.remove(id);
+                                        }
+                                      }),
                                     ),
                                   )
                                   .toList(),
@@ -87,25 +106,29 @@ class ProfileScreen extends StatelessWidget {
                               leading: const Icon(Icons.polyline),
                               title: const Text('Selecionar areas no mapa'),
                               subtitle: Text(
-                                filters.areaIds.isEmpty
-                                    ? 'Todas visiveis ($areaCount)'
-                                    : '${filters.areaIds.length} selecionada(s)',
+                                _selectedAreaIds.isEmpty
+                                    ? 'Todas visiveis (${areas.length})'
+                                    : '${_selectedAreaIds.length} selecionada(s)',
                               ),
                               children: areas
                                   .map(
                                     (a) => CheckboxListTile(
-                                      value: filters
-                                          .isAreaSelected(a['id'].toString()),
+                                      value: _selectedAreaIds
+                                          .contains(a['id'].toString()),
                                       title: Text(
                                         'Area ${a['id'].toString().substring(0, 6)}',
                                       ),
                                       subtitle: Text(
                                         'Prop: ${(a['propertyId'] ?? '-').toString()}',
                                       ),
-                                      onChanged: (v) => filters.toggleArea(
-                                        a['id'].toString(),
-                                        v ?? false,
-                                      ),
+                                      onChanged: (v) => setState(() {
+                                        final id = a['id'].toString();
+                                        if (v ?? false) {
+                                          _selectedAreaIds.add(id);
+                                        } else {
+                                          _selectedAreaIds.remove(id);
+                                        }
+                                      }),
                                     ),
                                   )
                                   .toList(),
@@ -116,18 +139,23 @@ class ProfileScreen extends StatelessWidget {
                               leading: const Icon(Icons.pets),
                               title: const Text('Selecionar coleiras no mapa'),
                               subtitle: Text(
-                                filters.collarIds.isEmpty
-                                    ? 'Todas visiveis ($deviceCount)'
-                                    : '${filters.collarIds.length} selecionada(s)',
+                                _selectedCollarIds.isEmpty
+                                    ? 'Todas visiveis (${devices.length})'
+                                    : '${_selectedCollarIds.length} selecionada(s)',
                               ),
                               children: devices
                                   .map(
                                     (d) => CheckboxListTile(
-                                      value: filters.isCollarSelected(d.id),
+                                      value: _selectedCollarIds.contains(d.id),
                                       title: Text(d.name),
                                       subtitle: Text(d.id),
-                                      onChanged: (v) => filters.toggleCollar(
-                                          d.id, v ?? false),
+                                      onChanged: (v) => setState(() {
+                                        if (v ?? false) {
+                                          _selectedCollarIds.add(d.id);
+                                        } else {
+                                          _selectedCollarIds.remove(d.id);
+                                        }
+                                      }),
                                     ),
                                   )
                                   .toList(),
@@ -138,37 +166,63 @@ class ProfileScreen extends StatelessWidget {
                               leading: const Icon(Icons.wifi),
                               title: const Text('Selecionar gateways no mapa'),
                               subtitle: Text(
-                                filters.gatewayIds.isEmpty
-                                    ? 'Todos visiveis ($gatewayCount)'
-                                    : '${filters.gatewayIds.length} selecionado(s)',
+                                _selectedGatewayIds.isEmpty
+                                    ? 'Todos visiveis (${gateways.length})'
+                                    : '${_selectedGatewayIds.length} selecionado(s)',
                               ),
                               children: gateways
                                   .map(
                                     (g) => CheckboxListTile(
-                                      value: filters.isGatewaySelected(
-                                          g['id'].toString()),
+                                      value: _selectedGatewayIds
+                                          .contains(g['id'].toString()),
                                       title: Text(
                                           (g['name'] ?? g['id']).toString()),
                                       subtitle: Text(g['id'].toString()),
-                                      onChanged: (v) => filters.toggleGateway(
-                                        g['id'].toString(),
-                                        v ?? false,
-                                      ),
+                                      onChanged: (v) => setState(() {
+                                        final id = g['id'].toString();
+                                        if (v ?? false) {
+                                          _selectedGatewayIds.add(id);
+                                        } else {
+                                          _selectedGatewayIds.remove(id);
+                                        }
+                                      }),
                                     ),
                                   )
                                   .toList(),
                             ),
                           ),
+                          const SizedBox(height: 8),
+                          ElevatedButton.icon(
+                            onPressed: () {
+                              filters.applySelections(
+                                propertyIds: _selectedPropertyIds,
+                                areaIds: _selectedAreaIds,
+                                collarIds: _selectedCollarIds,
+                                gatewayIds: _selectedGatewayIds,
+                              );
+                              Navigator.pop(context);
+                            },
+                            icon: const Icon(Icons.filter_alt),
+                            label: const Text('Filtrar'),
+                          ),
                           const SizedBox(height: 6),
                           OutlinedButton.icon(
-                            onPressed:
-                                filters.hasAnyFilter ? filters.clearAll : null,
+                            onPressed: () {
+                              setState(() {
+                                _selectedPropertyIds.clear();
+                                _selectedAreaIds.clear();
+                                _selectedCollarIds.clear();
+                                _selectedGatewayIds.clear();
+                              });
+                              filters.clearAll();
+                              Navigator.pop(context);
+                            },
                             icon: const Icon(Icons.filter_alt_off),
-                            label: const Text('Limpar filtros da Home'),
+                            label: const Text('Limpar filtros'),
                           ),
                           const SizedBox(height: 10),
                           const Text(
-                            'Esses filtros controlam em tempo real o que aparece no mapa da Home.',
+                            'Selecione os itens e toque em "Filtrar na Home" para aplicar.',
                           ),
                         ],
                       );

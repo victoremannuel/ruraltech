@@ -3,9 +3,14 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 class MapPointPickerScreen extends StatefulWidget {
-  const MapPointPickerScreen({super.key, this.initial});
+  const MapPointPickerScreen({
+    super.key,
+    this.initial,
+    this.propertyPolygon = const [],
+  });
 
   final LatLng? initial;
+  final List<LatLng> propertyPolygon;
 
   @override
   State<MapPointPickerScreen> createState() => _MapPointPickerScreenState();
@@ -13,6 +18,8 @@ class MapPointPickerScreen extends StatefulWidget {
 
 class _MapPointPickerScreenState extends State<MapPointPickerScreen> {
   LatLng? _selected;
+  final MapController _mapController = MapController();
+  bool _fitted = false;
 
   @override
   void initState() {
@@ -20,8 +27,24 @@ class _MapPointPickerScreenState extends State<MapPointPickerScreen> {
     _selected = widget.initial;
   }
 
+  void _fitToProperty() {
+    if (_fitted || widget.propertyPolygon.length < 3) return;
+    _fitted = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final bounds = LatLngBounds.fromPoints(widget.propertyPolygon);
+      _mapController.fitCamera(
+        CameraFit.bounds(
+          bounds: bounds,
+          padding: const EdgeInsets.all(48),
+        ),
+      );
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    _fitToProperty();
     final center = _selected ?? const LatLng(-23.0, -46.0);
     return Scaffold(
       appBar: AppBar(title: const Text('Selecionar posicao')),
@@ -35,6 +58,7 @@ class _MapPointPickerScreenState extends State<MapPointPickerScreen> {
           ),
           Expanded(
             child: FlutterMap(
+              mapController: _mapController,
               options: MapOptions(
                 initialCenter: center,
                 initialZoom: 15,
@@ -44,6 +68,17 @@ class _MapPointPickerScreenState extends State<MapPointPickerScreen> {
                 TileLayer(
                   urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                   userAgentPackageName: 'com.example.ruraltechApp',
+                ),
+                PolygonLayer(
+                  polygons: [
+                    if (widget.propertyPolygon.length >= 3)
+                      Polygon(
+                        points: widget.propertyPolygon,
+                        color: Colors.orange.withValues(alpha: 0.22),
+                        borderColor: Colors.orange.shade700,
+                        borderStrokeWidth: 3,
+                      ),
+                  ],
                 ),
                 MarkerLayer(
                   markers: [

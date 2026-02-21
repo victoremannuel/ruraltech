@@ -37,6 +37,30 @@ class HomeScreen extends StatelessWidget {
     return null;
   }
 
+  List<LatLng> _polygonFromProperty(Map<String, dynamic>? p) {
+    if (p == null) return const [];
+    final points = (p['points'] as List?) ?? const [];
+    return points.map(_toLatLng).whereType<LatLng>().toList();
+  }
+
+  List<LatLng> _collectViewPoints(
+    List<Map<String, dynamic>> properties,
+    List<Map<String, dynamic>> areas,
+    List<Marker> markers,
+  ) {
+    final points = <LatLng>[];
+    for (final p in properties) {
+      final raw = (p['points'] as List?) ?? const [];
+      points.addAll(raw.map(_toLatLng).whereType<LatLng>());
+    }
+    for (final a in areas) {
+      final raw = (a['perimeter'] as List?) ?? const [];
+      points.addAll(raw.map(_toLatLng).whereType<LatLng>());
+    }
+    points.addAll(markers.map((m) => m.point));
+    return points;
+  }
+
   Future<void> _showAddDeviceDialog(BuildContext context) async {
     final auth = context.read<AuthService>();
     final fb = context.read<FirebaseService>();
@@ -117,11 +141,20 @@ class HomeScreen extends StatelessWidget {
                     ),
                     trailing: TextButton(
                       onPressed: () async {
+                        final selectedProperty = properties
+                            .cast<Map<String, dynamic>?>()
+                            .firstWhere(
+                              (p) => p?['id'].toString() == propertyId,
+                              orElse: () => null,
+                            );
                         final picked = await Navigator.push<LatLng>(
                           context,
                           MaterialPageRoute(
-                            builder: (_) =>
-                                MapPointPickerScreen(initial: selectedPosition),
+                            builder: (_) => MapPointPickerScreen(
+                              initial: selectedPosition,
+                              propertyPolygon:
+                                  _polygonFromProperty(selectedProperty),
+                            ),
                           ),
                         );
                         if (picked != null) {
@@ -245,11 +278,20 @@ class HomeScreen extends StatelessWidget {
                     ),
                     trailing: TextButton(
                       onPressed: () async {
+                        final selectedProperty = properties
+                            .cast<Map<String, dynamic>?>()
+                            .firstWhere(
+                              (p) => p?['id'].toString() == propertyId,
+                              orElse: () => null,
+                            );
                         final picked = await Navigator.push<LatLng>(
                           context,
                           MaterialPageRoute(
-                            builder: (_) =>
-                                MapPointPickerScreen(initial: selectedPosition),
+                            builder: (_) => MapPointPickerScreen(
+                              initial: selectedPosition,
+                              propertyPolygon:
+                                  _polygonFromProperty(selectedProperty),
+                            ),
                           ),
                         );
                         if (picked != null) {
@@ -504,8 +546,8 @@ class HomeScreen extends StatelessWidget {
                             .map(
                               (d) => Marker(
                                 point: LatLng(d.lat!, d.lon!),
-                                width: 36,
-                                height: 36,
+                                width: 40,
+                                height: 40,
                                 child: GestureDetector(
                                   onTap: () => Navigator.push(
                                     context,
@@ -517,7 +559,7 @@ class HomeScreen extends StatelessWidget {
                                   child: const Icon(
                                     Icons.pets,
                                     color: Colors.red,
-                                    size: 28,
+                                    size: 30,
                                   ),
                                 ),
                               ),
@@ -530,12 +572,12 @@ class HomeScreen extends StatelessWidget {
                                   (g['lat'] as num).toDouble(),
                                   (g['lon'] as num).toDouble(),
                                 ),
-                                width: 34,
-                                height: 34,
+                                width: 40,
+                                height: 40,
                                 child: const Icon(
                                   Icons.wifi,
                                   color: Colors.blue,
-                                  size: 26,
+                                  size: 30,
                                 ),
                               ),
                             ),
@@ -570,9 +612,17 @@ class HomeScreen extends StatelessWidget {
                         }).whereType<Polygon>(),
                       ];
 
-                      final center = markers.isNotEmpty
-                          ? markers.first.point
+                      final viewPoints =
+                          _collectViewPoints(properties, filteredAreas, markers);
+                      final center = viewPoints.isNotEmpty
+                          ? viewPoints.first
                           : const LatLng(-23.0, -46.0);
+                      final fitBounds = viewPoints.length >= 2
+                          ? LatLngBounds.fromPoints(viewPoints)
+                          : null;
+                      final mapKey = ValueKey<String>(
+                        'home-${filters.revision}-${properties.length}-${filteredAreas.length}-${markers.length}',
+                      );
 
                       return Column(
                         children: [
@@ -588,9 +638,16 @@ class HomeScreen extends StatelessWidget {
                           ),
                           Expanded(
                             child: FlutterMap(
+                              key: mapKey,
                               options: MapOptions(
                                 initialCenter: center,
                                 initialZoom: 14,
+                                initialCameraFit: fitBounds == null
+                                    ? null
+                                    : CameraFit.bounds(
+                                        bounds: fitBounds,
+                                        padding: const EdgeInsets.all(40),
+                                      ),
                               ),
                               children: [
                                 TileLayer(
