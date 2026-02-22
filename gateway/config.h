@@ -26,6 +26,7 @@ constexpr char AP_PASS[] = "ruraltechota";
 constexpr bool OTA_ENABLED = true;
 constexpr char OTA_HOSTNAME[] = "ruraltech-gateway";
 constexpr char OTA_PASSWORD[] = "ruraltechota";
+constexpr uint32_t OTA_HANDSHAKE_TIMEOUT_MS = 120000;
 
 // BLE discovery for app onboarding
 constexpr bool BLE_PRESENCE_ENABLED = true;

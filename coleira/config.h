@@ -48,6 +48,7 @@ constexpr char OTA_HOSTNAME[] = "ruraltech-coleira";
 constexpr char OTA_PASSWORD[] = "ruraltechota";
 constexpr uint32_t OTA_CONNECT_TIMEOUT_MS = 12000;
 constexpr uint32_t OTA_ARDUINO_TIMEOUT_MS = 60000;
+constexpr uint32_t OTA_HANDSHAKE_TIMEOUT_MS = 120000;
 constexpr uint32_t OTA_WINDOW_MS = 300000;
 constexpr bool OTA_AP_FALLBACK_ENABLED = true;
 constexpr bool OTA_FORCE_AP_ONLY = true;

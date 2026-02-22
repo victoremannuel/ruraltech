@@ -19,6 +19,7 @@
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
 #include <esp_system.h>
+#include <esp_ota_ops.h>
 #if __has_include(<esp_idf_version.h>)
 #include <esp_idf_version.h>
 #endif
@@ -46,6 +47,31 @@ bool wifiApRunning = false;
 uint32_t wifiRecoveryAttemptAtMs = 0;
 uint8_t wifiRecoveryAttemptCount = 0;
 static void setWatchdogEnabled(bool enabled);
+
+static const char* otaErrorText(ota_error_t error) {
+  switch (error) {
+    case OTA_AUTH_ERROR: return "auth";
+    case OTA_BEGIN_ERROR: return "begin";
+    case OTA_CONNECT_ERROR: return "connect";
+    case OTA_RECEIVE_ERROR: return "receive";
+    case OTA_END_ERROR: return "end";
+    default: return "unknown";
+  }
+}
+
+static void logOtaPartitionInfo(const char* context) {
+  const esp_partition_t* running = esp_ota_get_running_partition();
+  const esp_partition_t* next = esp_ota_get_next_update_partition(NULL);
+  LOGI("OTA particoes (%s): running=%s size=0x%lx next=%s size=0x%lx",
+       context ? context : "-",
+       running ? running->label : "null",
+       running ? (unsigned long)running->size : 0UL,
+       next ? next->label : "null",
+       next ? (unsigned long)next->size : 0UL);
+  if (!next) {
+    LOGE("OTA sem particao de update. Grave 1x via USB com Partition Scheme OTA (min_spiffs).");
+  }
+}
 
 static String compactIdentifier(const String& raw) {
   String out;
@@ -102,7 +128,7 @@ static void setupOta() {
   if (!wifiOtaEnabled || !cfg::OTA_ENABLED) return;
   ArduinoOTA.setHostname(cfg::OTA_HOSTNAME);
   ArduinoOTA.setPort(3232);
-  ArduinoOTA.setTimeout(20000);
+  ArduinoOTA.setTimeout(cfg::OTA_HANDSHAKE_TIMEOUT_MS);
   ArduinoOTA.setPassword(cfg::OTA_PASSWORD);
   ArduinoOTA.onStart([]() {
     otaUploadInProgress = true;
@@ -126,9 +152,11 @@ static void setupOta() {
   ArduinoOTA.onError([](ota_error_t error) {
     otaUploadInProgress = false;
     if (wifiOtaEnabled) setWatchdogEnabled(true);
-    LOGE("OTA erro=%u", (unsigned int)error);
+    LOGE("OTA erro=%u (%s)", (unsigned int)error, otaErrorText(error));
+    logOtaPartitionInfo("erro");
   });
   ArduinoOTA.begin();
+  logOtaPartitionInfo("inicio");
   LOGI("OTA ativo hostname=%s", cfg::OTA_HOSTNAME);
 }
 
@@ -181,6 +209,7 @@ static bool wifiApClientConnected() {
 
 static bool shouldBlePresenceBeEnabled() {
   if (!wifiOtaEnabled) return false;
+  if (wifiApRunning) return false;
   if (otaUploadInProgress) return false;
   if (wifiApClientConnected()) return false;
   return true;
@@ -546,8 +575,14 @@ void setup() {
 
 void loop() {
   ensureWifiOtaServices();
+  const bool apClientConnected = wifiApClientConnected();
   if (wifiOtaEnabled && cfg::OTA_ENABLED) {
     ArduinoOTA.handle();
+    if (watchdogTaskRegistered) esp_task_wdt_reset();
+    if (otaUploadInProgress || apClientConnected) {
+      delay(2);
+      return;
+    }
   }
   if (cfg::BLE_PRESENCE_ENABLED) {
     const bool bleEnabled = shouldBlePresenceBeEnabled();
@@ -556,10 +591,6 @@ void loop() {
     if (bleEnabled) blePresence.loop();
   }
   if (watchdogTaskRegistered) esp_task_wdt_reset();
-  if (wifiOtaEnabled && otaUploadInProgress) {
-    delay(2);
-    return;
-  }
   if (wifiOtaEnabled && WiFi.getMode() != WIFI_OFF) api.loop();
 
   LoRaFrame rx;
