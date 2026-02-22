@@ -8,7 +8,6 @@
 
 #include <BLEAdvertising.h>
 #include <BLEDevice.h>
-#include <BLEServer.h>
 #include <BLEUtils.h>
 
 namespace {
@@ -42,19 +41,9 @@ bool BlePresence::begin(
   serviceUuid_ = serviceUuid ? String(serviceUuid) : String();
 
   BLEDevice::init(advName_.c_str());
-  BLEServer* server = BLEDevice::createServer();
-  BLEService* service = server->createService(
-      serviceUuid_.isEmpty() ? "7f920001-0a26-4d09-a606-0cfef4f9a1f0"
-                             : serviceUuid_.c_str());
-  BLECharacteristic* characteristic = service->createCharacteristic(
-      "7f920002-0a26-4d09-a606-0cfef4f9a1f0", BLECharacteristic::PROPERTY_READ);
-
-  String info = String("{\"id\":\"") + id_ + "\",\"kind\":" + (int)kind_ + "}";
-  characteristic->setValue((uint8_t*)info.c_str(), info.length());
-  service->start();
-
+  BLEAdvertising* adv = BLEDevice::getAdvertising();
   if (!serviceUuid_.isEmpty()) {
-    BLEDevice::getAdvertising()->addServiceUUID(serviceUuid_.c_str());
+    adv->addServiceUUID(serviceUuid_.c_str());
   }
 
   started_ = true;
