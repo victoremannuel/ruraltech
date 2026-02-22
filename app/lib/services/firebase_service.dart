@@ -157,6 +157,7 @@ class FirebaseService {
             'wifi_ota_enabled': data['wifi_ota_enabled'] is bool
                 ? data['wifi_ota_enabled']
                 : true,
+            'is_matrix': data['is_matrix'] is bool ? data['is_matrix'] : false,
           };
         }).toList();
       });
@@ -188,6 +189,7 @@ class FirebaseService {
             'wifi_ota_enabled': data['wifi_ota_enabled'] is bool
                 ? data['wifi_ota_enabled']
                 : true,
+            'is_matrix': data['is_matrix'] is bool ? data['is_matrix'] : false,
           };
         }
         controller.add(byId.values.toList());
@@ -569,12 +571,19 @@ class FirebaseService {
     final normalizedDeviceId = deviceId == null || deviceId.trim().isEmpty
         ? null
         : _idFromRefOrPath(deviceId);
+    final position = (lat != null && lon != null) ? [lat, lon] : null;
+
+    final collection = _db.collection('collars');
+    final docRef = normalizedDeviceId == null
+        ? collection.doc()
+        : collection.doc(normalizedDeviceId);
+    final persistedDeviceId = normalizedDeviceId ?? docRef.id;
     final payload = {
       'ownerUid': _userRef(ownerUid),
       'name': name,
       'status': status,
-      'deviceId': normalizedDeviceId,
-      'position': [lat ?? 0, lon ?? 0],
+      'deviceId': persistedDeviceId,
+      'position': position,
       'gatewayId': gatewayId == null || gatewayId.trim().isEmpty
           ? null
           : _db.collection('gateways').doc(_idFromRefOrPath(gatewayId)),
@@ -582,21 +591,14 @@ class FirebaseService {
       'wifi_ota_enabled': true,
       'updatedAt': FieldValue.serverTimestamp(),
     };
-
-    if (normalizedDeviceId == null) {
-      await _db.collection('collars').add(payload);
-    } else {
-      await _db
-          .collection('collars')
-          .doc(normalizedDeviceId)
-          .set(payload, SetOptions(merge: true));
-    }
+    await docRef.set(payload, SetOptions(merge: true));
   }
 
   Future<void> addGateway({
     required String ownerUid,
     required String name,
     required String status,
+    bool isMatrix = false,
     String? gatewayId,
     String? host,
     String? propertyId,
@@ -609,6 +611,7 @@ class FirebaseService {
     final normalizedGatewayId = gatewayId == null || gatewayId.trim().isEmpty
         ? null
         : _idFromRefOrPath(gatewayId);
+    final position = (lat != null && lon != null) ? [lat, lon] : null;
     final payload = {
       'ownerUid': _userRef(ownerUid),
       'name': name,
@@ -618,7 +621,8 @@ class FirebaseService {
       'propertyId': _propertyRefOrNull(propertyId),
       'userUids': linkedUsers,
       'wifi_ota_enabled': true,
-      'position': [lat ?? 0, lon ?? 0],
+      'position': position,
+      'is_matrix': isMatrix,
       'updatedAt': FieldValue.serverTimestamp(),
     };
 
@@ -690,6 +694,7 @@ class FirebaseService {
     required String status,
     required double lat,
     required double lon,
+    bool? isMatrix,
     String? host,
     String? propertyId,
     bool? wifiOtaEnabled,
@@ -709,6 +714,9 @@ class FirebaseService {
     };
     if (wifiOtaEnabled != null) {
       update['wifi_ota_enabled'] = wifiOtaEnabled;
+    }
+    if (isMatrix != null) {
+      update['is_matrix'] = isMatrix;
     }
 
     if (propertyId != null && propertyId.trim().isNotEmpty) {

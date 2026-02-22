@@ -221,6 +221,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   bool _isLikelyMatrixGateway(Map<String, dynamic> gateway) {
+    final explicit = gateway['is_matrix'] ?? gateway['isMatrix'];
+    if (explicit is bool) return explicit;
+
     final kind = (gateway['kind'] ?? '').toString().toLowerCase();
     if (kind == 'gateway_matrix' || kind == 'matrix') return true;
 
@@ -578,7 +581,7 @@ class _HomeScreenState extends State<HomeScreen> {
     bool wifiOtaEnabled = gateway['wifi_ota_enabled'] is bool
         ? gateway['wifi_ota_enabled'] as bool
         : true;
-    final isMatrix = _isLikelyMatrixGateway(gateway);
+    bool isMatrix = _isLikelyMatrixGateway(gateway);
     final formKey = GlobalKey<FormState>();
 
     await showDialog<void>(
@@ -623,6 +626,22 @@ class _HomeScreenState extends State<HomeScreen> {
                     decoration:
                         const InputDecoration(labelText: 'Host (opcional)'),
                   ),
+                  if (auth.isAdmin)
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: isMatrix,
+                      onChanged: (v) => setState(() => isMatrix = v),
+                      title: const Text('Gateway matriz'),
+                      subtitle: const Text(
+                        'Ative para identificar este gateway como matriz.',
+                      ),
+                    )
+                  else
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Tipo de gateway'),
+                      subtitle: Text(isMatrix ? 'Matriz' : 'Comum'),
+                    ),
                   const SizedBox(height: 8),
                   if (auth.isAdmin)
                     SwitchListTile(
@@ -728,6 +747,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   lat: selectedPosition!.latitude,
                   lon: selectedPosition!.longitude,
                   wifiOtaEnabled: wifiOtaEnabled,
+                  isMatrix: isMatrix,
                 );
                 if (auth.isAdmin && modeChanged) {
                   final host = hostCtrl.text.trim();
@@ -780,29 +800,82 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final properties =
         await fb.getRuralProperties(uid: uid, isAdmin: auth.isAdmin);
+    final users = auth.isAdmin
+        ? await fb.getUserOptions()
+        : const <Map<String, String>>[];
     if (!context.mounted) return;
     String? propertyId =
         properties.isNotEmpty ? properties.first['id'].toString() : null;
     LatLng? selectedPosition;
     String? selectedDetectedDeviceId;
+    final ownerOptions = users
+        .where((u) => (u['uid'] ?? '').isNotEmpty)
+        .map((u) => Map<String, String>.from(u))
+        .toList();
+    Map<String, String>? findOwnerByEmailOrUid(String raw) {
+      final key = raw.trim().toLowerCase();
+      if (key.isEmpty) return null;
+      for (final u in ownerOptions) {
+        final email = (u['email'] ?? '').trim().toLowerCase();
+        final ownerUid = (u['uid'] ?? '').trim().toLowerCase();
+        if (email == key || ownerUid == key) return u;
+      }
+      return null;
+    }
 
-    final ownerCtrl = TextEditingController(text: uid);
-    final deviceIdCtrl = TextEditingController();
+    final Map<String, String> selectedOwner = auth.isAdmin
+        ? ownerOptions.firstWhere(
+            (u) => (u['uid'] ?? '') == uid,
+            orElse: () => ownerOptions.isNotEmpty ? ownerOptions.first : {},
+          )
+        : {
+            'uid': uid,
+            'email': ((auth.user?.email ?? '').trim().isNotEmpty)
+                ? auth.user!.email!.trim().toLowerCase()
+                : uid,
+          };
+    String? selectedOwnerUid = (selectedOwner['uid'] ?? '').trim().isEmpty
+        ? uid
+        : selectedOwner['uid'];
+    final ownerCtrl = TextEditingController(
+      text: (selectedOwner['email'] ?? selectedOwnerUid ?? uid),
+    );
     final nameCtrl = TextEditingController();
     final statusCtrl = TextEditingController(text: 'active');
-    final gatewayCtrl = TextEditingController();
     final formKey = GlobalKey<FormState>();
 
+    List<Map<String, String>> filteredOwnerOptions() {
+      if (!auth.isAdmin) return const [];
+      final query = ownerCtrl.text.trim().toLowerCase();
+      final iterable = query.isEmpty
+          ? ownerOptions
+          : ownerOptions.where(
+              (u) => (u['email'] ?? '').trim().toLowerCase().contains(query),
+            );
+      return iterable.take(8).toList();
+    }
+
+    void selectOwner(Map<String, String> owner) {
+      selectedOwnerUid = owner['uid'];
+      ownerCtrl.text = (owner['email'] ?? owner['uid'] ?? '').trim();
+      ownerCtrl.selection =
+          TextSelection.collapsed(offset: ownerCtrl.text.length);
+    }
+
     String mergeSource(String? current, String next) {
-      if (current == null || current.isEmpty) return next;
-      if (current == next) return current;
-      final parts = current.split('+');
-      if (parts.contains(next)) return current;
-      if ((current == 'lora' && next == 'ble') ||
-          (current == 'ble' && next == 'lora')) {
-        return 'lora+ble';
+      final out = <String>{};
+      if (current != null && current.isNotEmpty) {
+        out.addAll(
+          current.split('+').map((s) => s.trim()).where((s) => s.isNotEmpty),
+        );
       }
-      return '$current+$next';
+      out.add(next);
+      final ordered = <String>[];
+      for (final preferred in const ['wifi', 'ble']) {
+        if (out.remove(preferred)) ordered.add(preferred);
+      }
+      ordered.addAll(out);
+      return ordered.join('+');
     }
 
     List<Map<String, dynamic>> mergedDiscoveredCollars() {
@@ -814,7 +887,7 @@ class _HomeScreenState extends State<HomeScreen> {
         byId[id] = {
           ...lora,
           'device_id_str': id,
-          'source_type': 'lora',
+          'source_type': 'wifi',
         };
       }
 
@@ -854,8 +927,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
     String collarSourceLabel(Map<String, dynamic> d) {
       final source = (d['source_type'] ?? '').toString();
-      if (source == 'lora+ble' || source == 'ble+lora') return 'LoRa+BLE';
-      if (source == 'lora') return 'LoRa';
+      if (source == 'wifi+ble' || source == 'ble+wifi') return 'Wi-Fi+BLE';
+      if (source == 'wifi') return 'Wi-Fi';
       if (source == 'ble') return 'BLE';
       return source;
     }
@@ -864,13 +937,6 @@ class _HomeScreenState extends State<HomeScreen> {
       final detectedId = detected['device_id_str']?.toString();
       if (detectedId == null || detectedId.isEmpty) return;
       selectedDetectedDeviceId = detectedId;
-      if (deviceIdCtrl.text.trim().isEmpty ||
-          deviceIdCtrl.text.trim() == selectedDetectedDeviceId) {
-        deviceIdCtrl.text = detectedId;
-      }
-      if (deviceIdCtrl.text.trim().isEmpty) {
-        deviceIdCtrl.text = detectedId;
-      }
       if (nameCtrl.text.trim().isEmpty ||
           nameCtrl.text.startsWith('Coleira ')) {
         final suggested = detected['name']?.toString().trim();
@@ -886,11 +952,6 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
 
-    final initiallyDiscovered = mergedDiscoveredCollars();
-    if (initiallyDiscovered.isNotEmpty) {
-      applyDetectedCollar(initiallyDiscovered.first);
-    }
-
     await showDialog<void>(
       context: context,
       builder: (_) => StatefulBuilder(
@@ -898,18 +959,7 @@ class _HomeScreenState extends State<HomeScreen> {
           animation: Listenable.merge([gatewayService, bleService]),
           builder: (context, _) {
             final discoveredCollars = mergedDiscoveredCollars();
-            final hasSelectedDetected = selectedDetectedDeviceId != null &&
-                discoveredCollars.any(
-                  (d) =>
-                      d['device_id_str']?.toString() ==
-                      selectedDetectedDeviceId,
-                );
-            if (!hasSelectedDetected && discoveredCollars.isNotEmpty) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (!context.mounted) return;
-                setState(() => applyDetectedCollar(discoveredCollars.first));
-              });
-            }
+            final ownerMatches = filteredOwnerOptions();
 
             return AlertDialog(
               title: const Text('Incluir coleira'),
@@ -921,12 +971,60 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       TextFormField(
                         controller: ownerCtrl,
-                        decoration:
-                            const InputDecoration(labelText: 'UID dono'),
-                        validator: (v) => (v == null || v.trim().isEmpty)
-                            ? 'Informe o UID do usuario'
+                        readOnly: !auth.isAdmin,
+                        decoration: const InputDecoration(
+                          labelText: 'Dono da coleira (email)',
+                        ),
+                        onChanged: auth.isAdmin
+                            ? (_) => setState(() {
+                                  final exact =
+                                      findOwnerByEmailOrUid(ownerCtrl.text);
+                                  selectedOwnerUid = exact?['uid'];
+                                })
                             : null,
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) {
+                            return 'Informe o email do dono';
+                          }
+                          if (!auth.isAdmin) return null;
+                          final exact = findOwnerByEmailOrUid(v);
+                          if (exact == null) {
+                            return 'Selecione um email valido da lista';
+                          }
+                          selectedOwnerUid = exact['uid'];
+                          return null;
+                        },
                       ),
+                      if (auth.isAdmin && ownerMatches.isNotEmpty)
+                        DropdownButtonFormField<String>(
+                          initialValue: ownerMatches.any(
+                            (u) => (u['uid'] ?? '') == selectedOwnerUid,
+                          )
+                              ? selectedOwnerUid
+                              : null,
+                          items: ownerMatches
+                              .map(
+                                (u) => DropdownMenuItem<String>(
+                                  value: u['uid'],
+                                  child: Text(u['email'] ?? u['uid'] ?? ''),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (v) => setState(() {
+                            if (v == null) return;
+                            final owner = ownerMatches
+                                .cast<Map<String, String>?>()
+                                .firstWhere(
+                                  (u) => u?['uid'] == v,
+                                  orElse: () => null,
+                                );
+                            if (owner == null) return;
+                            selectOwner(owner);
+                          }),
+                          decoration: const InputDecoration(
+                            labelText: 'Selecionar email encontrado',
+                          ),
+                        ),
                       DropdownButtonFormField<String>(
                         initialValue: propertyId,
                         items: properties
@@ -948,12 +1046,12 @@ class _HomeScreenState extends State<HomeScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text(
-                              'Descoberta da coleira (Bluetooth/Wi-Fi OTA)',
+                              'Vinculacao da coleira (Bluetooth/Wi-Fi)',
                             ),
                             const SizedBox(height: 4),
                             const Text(
-                              'Use Bluetooth para associar a coleira ao cadastro atual. '
-                              'Se estiver em Wi-Fi OTA, preencha manualmente os campos se necessario.',
+                              'Opcional: vincule a coleira detectada por Bluetooth ou via Wi-Fi (gateway conectado). '
+                              'Se preferir, apenas selecione o ponto no mapa manualmente.',
                               style: TextStyle(fontSize: 12),
                             ),
                             const SizedBox(height: 8),
@@ -974,7 +1072,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                             const SizedBox(height: 8),
                             const Text(
-                              'LoRa via gateway (opcional)',
+                              'Wi-Fi (gateway conectado)',
                               style: TextStyle(fontWeight: FontWeight.w600),
                             ),
                             const SizedBox(height: 4),
@@ -985,8 +1083,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               children: [
                                 Text(
                                   gatewayService.isConnected
-                                      ? 'Gateway LoRa conectado'
-                                      : 'Gateway LoRa desconectado',
+                                      ? 'Gateway conectado via Wi-Fi'
+                                      : 'Gateway desconectado',
                                   style: const TextStyle(fontSize: 12),
                                 ),
                                 OutlinedButton.icon(
@@ -998,8 +1096,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                   ),
                                   label: Text(
                                     gatewayService.isConnected
-                                        ? 'Atualizar via LoRa'
-                                        : 'Conectar gateway LoRa',
+                                        ? 'Atualizar deteccao via Wi-Fi'
+                                        : 'Conectar gateway via Wi-Fi',
                                   ),
                                 ),
                               ],
@@ -1018,69 +1116,59 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                         ),
-                      if (discoveredCollars.isNotEmpty)
-                        DropdownButtonFormField<String>(
-                          initialValue: hasSelectedDetected
-                              ? selectedDetectedDeviceId
-                              : discoveredCollars.first['device_id_str']
-                                  ?.toString(),
-                          items: discoveredCollars
-                              .map(
-                                (d) => DropdownMenuItem<String>(
-                                  value: d['device_id_str']?.toString(),
-                                  child: Text(
-                                    () {
-                                      final extras = <String>[];
-                                      final src = collarSourceLabel(d);
-                                      if (src.isNotEmpty) extras.add(src);
-                                      if (d['lat'] is num && d['lon'] is num) {
-                                        extras.add('GPS');
-                                      }
-                                      if (extras.isEmpty) {
-                                        return 'Coleira ${d['device_id_str']}';
-                                      }
-                                      return 'Coleira ${d['device_id_str']} (${extras.join(', ')})';
-                                    }(),
-                                  ),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (v) => setState(() {
-                            if (v == null) return;
-                            final detected = discoveredCollars
-                                .cast<Map<String, dynamic>?>()
-                                .firstWhere(
-                                  (d) => d?['device_id_str']?.toString() == v,
-                                  orElse: () => null,
-                                );
-                            if (detected == null) return;
-                            applyDetectedCollar(detected);
-                          }),
-                          decoration: const InputDecoration(
-                            labelText: 'Coleira detectada (Bluetooth/LoRa)',
+                      DropdownButtonFormField<String>(
+                        initialValue: selectedDetectedDeviceId ?? '',
+                        items: <DropdownMenuItem<String>>[
+                          const DropdownMenuItem<String>(
+                            value: '',
+                            child:
+                                Text('Nao vincular agora (usar mapa manual)'),
                           ),
-                        )
-                      else
+                          ...discoveredCollars.map(
+                            (d) => DropdownMenuItem<String>(
+                              value: d['device_id_str']?.toString() ?? '',
+                              child: Text(
+                                () {
+                                  final extras = <String>[];
+                                  final src = collarSourceLabel(d);
+                                  if (src.isNotEmpty) extras.add(src);
+                                  if (d['lat'] is num && d['lon'] is num) {
+                                    extras.add('GPS');
+                                  }
+                                  if (extras.isEmpty) {
+                                    return 'Coleira ${d['device_id_str']}';
+                                  }
+                                  return 'Coleira ${d['device_id_str']} (${extras.join(', ')})';
+                                }(),
+                              ),
+                            ),
+                          ),
+                        ],
+                        onChanged: (v) => setState(() {
+                          if (v == null || v.isEmpty) {
+                            selectedDetectedDeviceId = null;
+                            return;
+                          }
+                          final detected = discoveredCollars
+                              .cast<Map<String, dynamic>?>()
+                              .firstWhere(
+                                (d) => d?['device_id_str']?.toString() == v,
+                                orElse: () => null,
+                              );
+                          if (detected == null) return;
+                          applyDetectedCollar(detected);
+                        }),
+                        decoration: const InputDecoration(
+                          labelText: 'Coleira detectada (Bluetooth/Wi-Fi)',
+                        ),
+                      ),
+                      if (discoveredCollars.isEmpty)
                         const Padding(
                           padding: EdgeInsets.only(top: 6, bottom: 2),
                           child: Text(
-                            'Nenhuma coleira detectada ainda. Use Bluetooth ou, opcionalmente, conecte o gateway para receber LoRa.',
+                            'Nenhuma coleira detectada ainda. Continue no modo manual ou tente Bluetooth/Wi-Fi.',
                           ),
                         ),
-                      TextFormField(
-                        controller: deviceIdCtrl,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                            labelText: 'ID da coleira (LoRa)'),
-                        validator: (v) {
-                          final raw = (v ?? '').trim();
-                          if (raw.isEmpty) return 'Informe o ID da coleira';
-                          if (int.tryParse(raw) == null) {
-                            return 'ID deve ser numerico';
-                          }
-                          return null;
-                        },
-                      ),
                       TextFormField(
                         controller: nameCtrl,
                         decoration:
@@ -1092,11 +1180,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       TextFormField(
                         controller: statusCtrl,
                         decoration: const InputDecoration(labelText: 'Status'),
-                      ),
-                      TextFormField(
-                        controller: gatewayCtrl,
-                        decoration: const InputDecoration(
-                            labelText: 'Gateway ID (opcional)'),
                       ),
                       const SizedBox(height: 8),
                       ListTile(
@@ -1133,6 +1216,14 @@ class _HomeScreenState extends State<HomeScreen> {
                           child: const Text('Selecionar'),
                         ),
                       ),
+                      const SizedBox(height: 4),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Obrigatorio escolher uma opcao: ponto manual no mapa ou vinculacao por Bluetooth/Wi-Fi.',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -1145,17 +1236,50 @@ class _HomeScreenState extends State<HomeScreen> {
                 ElevatedButton(
                   onPressed: () async {
                     if (!formKey.currentState!.validate()) return;
-                    if (selectedPosition == null) return;
+                    if (auth.isAdmin) {
+                      final owner = findOwnerByEmailOrUid(ownerCtrl.text);
+                      if (owner == null) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Selecione um email valido para o dono da coleira.',
+                              ),
+                            ),
+                          );
+                        }
+                        return;
+                      }
+                      selectedOwnerUid = owner['uid'];
+                    }
+
+                    final hasBinding = selectedDetectedDeviceId != null &&
+                        selectedDetectedDeviceId!.trim().isNotEmpty;
+                    final hasManualPosition = selectedPosition != null;
+                    if (!hasBinding && !hasManualPosition) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Selecione ponto no mapa ou vincule uma coleira detectada (Bluetooth/Wi-Fi).',
+                            ),
+                          ),
+                        );
+                      }
+                      return;
+                    }
+
                     await fb.addDevice(
-                      ownerUid: ownerCtrl.text.trim(),
+                      ownerUid: selectedOwnerUid ?? uid,
                       name: nameCtrl.text.trim(),
                       status: statusCtrl.text.trim(),
-                      deviceId: deviceIdCtrl.text.trim(),
-                      lat: selectedPosition!.latitude,
-                      lon: selectedPosition!.longitude,
-                      gatewayId: gatewayCtrl.text.trim().isEmpty
-                          ? null
-                          : gatewayCtrl.text.trim(),
+                      deviceId:
+                          hasBinding ? selectedDetectedDeviceId!.trim() : null,
+                      lat:
+                          hasManualPosition ? selectedPosition!.latitude : null,
+                      lon: hasManualPosition
+                          ? selectedPosition!.longitude
+                          : null,
                       propertyId: propertyId,
                     );
                     if (context.mounted) Navigator.pop(context);
@@ -1184,6 +1308,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final properties =
         await fb.getRuralProperties(uid: uid, isAdmin: auth.isAdmin);
+    final users = auth.isAdmin
+        ? await fb.getUserOptions()
+        : const <Map<String, String>>[];
     if (!context.mounted) return;
     String? propertyId =
         properties.isNotEmpty ? properties.first['id'].toString() : null;
@@ -1197,14 +1324,63 @@ class _HomeScreenState extends State<HomeScreen> {
         ? networkDiscoveredGateways.first['gateway_id']?.toString()
         : null;
     bool scanningNearbyGateways = false;
+    final ownerOptions = users
+        .where((u) => (u['uid'] ?? '').isNotEmpty)
+        .map((u) => Map<String, String>.from(u))
+        .toList();
+    Map<String, String>? findOwnerByEmailOrUid(String raw) {
+      final key = raw.trim().toLowerCase();
+      if (key.isEmpty) return null;
+      for (final u in ownerOptions) {
+        final email = (u['email'] ?? '').trim().toLowerCase();
+        final ownerUid = (u['uid'] ?? '').trim().toLowerCase();
+        if (email == key || ownerUid == key) return u;
+      }
+      return null;
+    }
 
-    final ownerCtrl = TextEditingController(text: uid);
+    final Map<String, String> selectedOwner = auth.isAdmin
+        ? ownerOptions.firstWhere(
+            (u) => (u['uid'] ?? '') == uid,
+            orElse: () => ownerOptions.isNotEmpty ? ownerOptions.first : {},
+          )
+        : {
+            'uid': uid,
+            'email': ((auth.user?.email ?? '').trim().isNotEmpty)
+                ? auth.user!.email!.trim().toLowerCase()
+                : uid,
+          };
+    String? selectedOwnerUid = (selectedOwner['uid'] ?? '').trim().isEmpty
+        ? uid
+        : selectedOwner['uid'];
+    final ownerCtrl = TextEditingController(
+      text: (selectedOwner['email'] ?? selectedOwnerUid ?? uid),
+    );
     final gatewayIdCtrl =
         TextEditingController(text: selectedDetectedGatewayId ?? '');
     final nameCtrl = TextEditingController();
     final statusCtrl = TextEditingController(text: 'active');
     final hostCtrl = TextEditingController(text: 'ws://192.168.4.1:81');
+    bool isMatrix = false;
     final formKey = GlobalKey<FormState>();
+
+    List<Map<String, String>> filteredOwnerOptions() {
+      if (!auth.isAdmin) return const [];
+      final query = ownerCtrl.text.trim().toLowerCase();
+      final iterable = query.isEmpty
+          ? ownerOptions
+          : ownerOptions.where(
+              (u) => (u['email'] ?? '').trim().toLowerCase().contains(query),
+            );
+      return iterable.take(8).toList();
+    }
+
+    void selectOwner(Map<String, String> owner) {
+      selectedOwnerUid = owner['uid'];
+      ownerCtrl.text = (owner['email'] ?? owner['uid'] ?? '').trim();
+      ownerCtrl.selection =
+          TextSelection.collapsed(offset: ownerCtrl.text.length);
+    }
 
     String mergeSource(String? current, String next) {
       if (current == null || current.isEmpty) return next;
@@ -1295,6 +1471,17 @@ class _HomeScreenState extends State<HomeScreen> {
       if (nameCtrl.text.trim().isEmpty || nameCtrl.text.startsWith('Gateway')) {
         nameCtrl.text = detected['name']?.toString() ?? 'Gateway $gatewayId';
       }
+      final explicit = detected['is_matrix'] ?? detected['isMatrix'];
+      if (explicit is bool) {
+        isMatrix = explicit;
+      } else {
+        final kind = (detected['kind'] ?? '').toString().toLowerCase();
+        if (kind == 'gateway_matrix' ||
+            kind == 'matrix' ||
+            gatewayId.toUpperCase().startsWith('RT-M-')) {
+          isMatrix = true;
+        }
+      }
     }
 
     final initiallyDiscovered = mergedDiscoveredGateways();
@@ -1309,17 +1496,7 @@ class _HomeScreenState extends State<HomeScreen> {
           animation: Listenable.merge([gatewayService, bleService]),
           builder: (context, _) {
             final discoveredGateways = mergedDiscoveredGateways();
-            final hasSelectedDetected = selectedDetectedGatewayId != null &&
-                discoveredGateways.any(
-                  (g) =>
-                      g['gateway_id']?.toString() == selectedDetectedGatewayId,
-                );
-            if (!hasSelectedDetected && discoveredGateways.isNotEmpty) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (!context.mounted) return;
-                setState(() => applyDetectedGateway(discoveredGateways.first));
-              });
-            }
+            final ownerMatches = filteredOwnerOptions();
 
             return AlertDialog(
               title: const Text('Incluir gateway'),
@@ -1331,12 +1508,60 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       TextFormField(
                         controller: ownerCtrl,
-                        decoration:
-                            const InputDecoration(labelText: 'UID dono'),
-                        validator: (v) => (v == null || v.trim().isEmpty)
-                            ? 'Informe o UID do usuario'
+                        readOnly: !auth.isAdmin,
+                        decoration: const InputDecoration(
+                          labelText: 'Dono do gateway (email)',
+                        ),
+                        onChanged: auth.isAdmin
+                            ? (_) => setState(() {
+                                  final exact =
+                                      findOwnerByEmailOrUid(ownerCtrl.text);
+                                  selectedOwnerUid = exact?['uid'];
+                                })
                             : null,
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) {
+                            return 'Informe o email do dono';
+                          }
+                          if (!auth.isAdmin) return null;
+                          final exact = findOwnerByEmailOrUid(v);
+                          if (exact == null) {
+                            return 'Selecione um email valido da lista';
+                          }
+                          selectedOwnerUid = exact['uid'];
+                          return null;
+                        },
                       ),
+                      if (auth.isAdmin && ownerMatches.isNotEmpty)
+                        DropdownButtonFormField<String>(
+                          initialValue: ownerMatches.any(
+                            (u) => (u['uid'] ?? '') == selectedOwnerUid,
+                          )
+                              ? selectedOwnerUid
+                              : null,
+                          items: ownerMatches
+                              .map(
+                                (u) => DropdownMenuItem<String>(
+                                  value: u['uid'],
+                                  child: Text(u['email'] ?? u['uid'] ?? ''),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (v) => setState(() {
+                            if (v == null) return;
+                            final owner = ownerMatches
+                                .cast<Map<String, String>?>()
+                                .firstWhere(
+                                  (u) => u?['uid'] == v,
+                                  orElse: () => null,
+                                );
+                            if (owner == null) return;
+                            selectOwner(owner);
+                          }),
+                          decoration: const InputDecoration(
+                            labelText: 'Selecionar email encontrado',
+                          ),
+                        ),
                       DropdownButtonFormField<String>(
                         initialValue: propertyId,
                         items: properties
@@ -1469,54 +1694,58 @@ class _HomeScreenState extends State<HomeScreen> {
                           ],
                         ),
                       ),
-                      if (discoveredGateways.isNotEmpty)
-                        DropdownButtonFormField<String>(
-                          initialValue: hasSelectedDetected
-                              ? selectedDetectedGatewayId
-                              : discoveredGateways.first['gateway_id']
-                                  ?.toString(),
-                          items: discoveredGateways
-                              .map(
-                                (g) => DropdownMenuItem<String>(
-                                  value: g['gateway_id']?.toString(),
-                                  child: Text(
-                                    () {
-                                      final extras = <String>[];
-                                      final src = gatewaySourceLabel(g);
-                                      if (src.isNotEmpty) extras.add(src);
-                                      final ip = g['ip']?.toString();
-                                      if (ip != null && ip.isNotEmpty) {
-                                        extras.add(ip);
-                                      }
-                                      if (extras.isEmpty) {
-                                        return '${g['name'] ?? 'Gateway'}';
-                                      }
-                                      return '${g['name'] ?? 'Gateway'} (${extras.join(', ')})';
-                                    }(),
-                                  ),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (v) => setState(() {
-                            if (v == null) return;
-                            final detected = discoveredGateways
-                                .cast<Map<String, dynamic>?>()
-                                .firstWhere(
-                                  (g) => g?['gateway_id']?.toString() == v,
-                                  orElse: () => null,
-                                );
-                            if (detected == null) return;
-                            applyDetectedGateway(detected);
-                          }),
-                          decoration: const InputDecoration(
-                            labelText: 'Gateway detectado',
+                      DropdownButtonFormField<String>(
+                        initialValue: selectedDetectedGatewayId ?? '',
+                        items: <DropdownMenuItem<String>>[
+                          const DropdownMenuItem<String>(
+                            value: '',
+                            child:
+                                Text('Nao vincular agora (usar mapa manual)'),
                           ),
-                        )
-                      else
+                          ...discoveredGateways.map(
+                            (g) => DropdownMenuItem<String>(
+                              value: g['gateway_id']?.toString() ?? '',
+                              child: Text(
+                                () {
+                                  final extras = <String>[];
+                                  final src = gatewaySourceLabel(g);
+                                  if (src.isNotEmpty) extras.add(src);
+                                  final ip = g['ip']?.toString();
+                                  if (ip != null && ip.isNotEmpty) {
+                                    extras.add(ip);
+                                  }
+                                  if (extras.isEmpty) {
+                                    return '${g['name'] ?? 'Gateway'}';
+                                  }
+                                  return '${g['name'] ?? 'Gateway'} (${extras.join(', ')})';
+                                }(),
+                              ),
+                            ),
+                          ),
+                        ],
+                        onChanged: (v) => setState(() {
+                          if (v == null || v.isEmpty) {
+                            selectedDetectedGatewayId = null;
+                            return;
+                          }
+                          final detected = discoveredGateways
+                              .cast<Map<String, dynamic>?>()
+                              .firstWhere(
+                                (g) => g?['gateway_id']?.toString() == v,
+                                orElse: () => null,
+                              );
+                          if (detected == null) return;
+                          applyDetectedGateway(detected);
+                        }),
+                        decoration: const InputDecoration(
+                          labelText: 'Gateway detectado (Wi-Fi/Bluetooth)',
+                        ),
+                      ),
+                      if (discoveredGateways.isEmpty)
                         const Padding(
                           padding: EdgeInsets.only(top: 6, bottom: 2),
                           child: Text(
-                            'Nenhum gateway detectado ainda. Use rede local, Bluetooth ou informe o ID manualmente.',
+                            'Nenhum gateway detectado ainda. Continue no modo manual ou tente Wi-Fi/Bluetooth.',
                           ),
                         ),
                       TextFormField(
@@ -1544,6 +1773,22 @@ class _HomeScreenState extends State<HomeScreen> {
                         decoration:
                             const InputDecoration(labelText: 'Host (opcional)'),
                       ),
+                      if (auth.isAdmin)
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          value: isMatrix,
+                          onChanged: (v) => setState(() => isMatrix = v),
+                          title: const Text('Gateway matriz'),
+                          subtitle: const Text(
+                            'Ative para cadastrar este gateway como matriz.',
+                          ),
+                        )
+                      else
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('Tipo de gateway'),
+                          subtitle: Text(isMatrix ? 'Matriz' : 'Comum'),
+                        ),
                       const SizedBox(height: 8),
                       ListTile(
                         contentPadding: EdgeInsets.zero,
@@ -1579,6 +1824,14 @@ class _HomeScreenState extends State<HomeScreen> {
                           child: const Text('Selecionar'),
                         ),
                       ),
+                      const SizedBox(height: 4),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Obrigatorio escolher uma opcao: ponto manual no mapa ou vinculacao por Wi-Fi/Bluetooth.',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -1591,18 +1844,54 @@ class _HomeScreenState extends State<HomeScreen> {
                 ElevatedButton(
                   onPressed: () async {
                     if (!formKey.currentState!.validate()) return;
-                    if (selectedPosition == null) return;
+                    final hasBinding = selectedDetectedGatewayId != null &&
+                        selectedDetectedGatewayId!.trim().isNotEmpty;
+                    final hasManualPosition = selectedPosition != null;
+                    if (!hasBinding && !hasManualPosition) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Selecione ponto no mapa ou vincule um gateway detectado (Wi-Fi/Bluetooth).',
+                            ),
+                          ),
+                        );
+                      }
+                      return;
+                    }
+                    if (auth.isAdmin) {
+                      final owner = findOwnerByEmailOrUid(ownerCtrl.text);
+                      if (owner == null) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Selecione um email valido para o dono do gateway.',
+                              ),
+                            ),
+                          );
+                        }
+                        return;
+                      }
+                      selectedOwnerUid = owner['uid'];
+                    }
                     await fb.addGateway(
-                      ownerUid: ownerCtrl.text.trim(),
+                      ownerUid: selectedOwnerUid ?? uid,
                       name: nameCtrl.text.trim(),
                       status: statusCtrl.text.trim(),
-                      gatewayId: gatewayIdCtrl.text.trim(),
+                      isMatrix: isMatrix,
+                      gatewayId: hasBinding
+                          ? selectedDetectedGatewayId!.trim()
+                          : gatewayIdCtrl.text.trim(),
                       host: hostCtrl.text.trim().isEmpty
                           ? null
                           : hostCtrl.text.trim(),
                       propertyId: propertyId,
-                      lat: selectedPosition!.latitude,
-                      lon: selectedPosition!.longitude,
+                      lat:
+                          hasManualPosition ? selectedPosition!.latitude : null,
+                      lon: hasManualPosition
+                          ? selectedPosition!.longitude
+                          : null,
                     );
                     if (context.mounted) Navigator.pop(context);
                   },
