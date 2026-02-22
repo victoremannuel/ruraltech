@@ -18,6 +18,7 @@
 #include <SPI.h>
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
+#include <esp_system.h>
 #if __has_include(<esp_idf_version.h>)
 #include <esp_idf_version.h>
 #endif
@@ -41,6 +42,9 @@ uint32_t seqDown = 1;
 bool wifiOtaEnabled = cfg::OTA_ENABLED;
 bool watchdogTaskRegistered = false;
 bool otaUploadInProgress = false;
+bool wifiApRunning = false;
+uint32_t wifiRecoveryAttemptAtMs = 0;
+uint8_t wifiRecoveryAttemptCount = 0;
 static void setWatchdogEnabled(bool enabled);
 
 static String compactIdentifier(const String& raw) {
@@ -69,11 +73,29 @@ static String gatewayAdvName(const String& nodeId) {
   return String(cfg::BLE_DEVICE_PREFIX) + "-" + suffix;
 }
 
-static void setupWiFi() {
+static String gatewayApSsid() {
+  String suffix = gatewayNodeId();
+  if (suffix.length() > 6) suffix = suffix.substring(suffix.length() - 6);
+  String ssid = String(cfg::AP_SSID) + "-" + suffix;
+  if (ssid.length() > 31) ssid = ssid.substring(0, 31);
+  return ssid;
+}
+
+static bool setupWiFi() {
   WiFi.mode(WIFI_AP_STA);
   WiFi.setSleep(false);
-  WiFi.softAP(cfg::AP_SSID, cfg::AP_PASS);
-  LOGI("AP ativo: %s", cfg::AP_SSID);
+  const String apSsid = gatewayApSsid();
+  const bool apOk = WiFi.softAP(apSsid.c_str(), cfg::AP_PASS);
+  if (!apOk) {
+    wifiApRunning = false;
+    WiFi.mode(WIFI_OFF);
+    LOGE("Falha ao subir AP.");
+    return false;
+  }
+  wifiApRunning = true;
+  wifiRecoveryAttemptCount = 0;
+  LOGI("AP ativo: %s", apSsid.c_str());
+  return true;
 }
 
 static void setupOta() {
@@ -111,6 +133,9 @@ static void setupOta() {
 }
 
 static void stopWifiAndOta() {
+  wifiApRunning = false;
+  wifiRecoveryAttemptCount = 0;
+  wifiRecoveryAttemptAtMs = 0;
   if (WiFi.getMode() == WIFI_STA || WiFi.getMode() == WIFI_AP_STA) {
     WiFi.disconnect(true, true);
   }
@@ -119,6 +144,72 @@ static void stopWifiAndOta() {
   }
   WiFi.mode(WIFI_OFF);
   LOGI("Gateway em modo LoRa-only");
+}
+
+static void onWifiEvent(WiFiEvent_t event) {
+#if defined(ARDUINO_EVENT_WIFI_AP_START)
+  if (event == ARDUINO_EVENT_WIFI_AP_START) {
+    wifiApRunning = true;
+    LOGI("WiFi AP iniciado");
+  }
+#endif
+#if defined(ARDUINO_EVENT_WIFI_AP_STOP)
+  if (event == ARDUINO_EVENT_WIFI_AP_STOP) {
+    wifiApRunning = false;
+    wifiRecoveryAttemptAtMs = 0;
+    LOGW("WiFi AP parou");
+  }
+#endif
+#if defined(ARDUINO_EVENT_WIFI_AP_STACONNECTED)
+  if (event == ARDUINO_EVENT_WIFI_AP_STACONNECTED) {
+    LOGI("Cliente conectado no AP (n=%d)", WiFi.softAPgetStationNum());
+  }
+#endif
+#if defined(ARDUINO_EVENT_WIFI_AP_STADISCONNECTED)
+  if (event == ARDUINO_EVENT_WIFI_AP_STADISCONNECTED) {
+    LOGI("Cliente desconectado do AP (n=%d)", WiFi.softAPgetStationNum());
+  }
+#endif
+}
+
+static bool wifiApClientConnected() {
+  if (!wifiOtaEnabled || !wifiApRunning) return false;
+  const wifi_mode_t mode = WiFi.getMode();
+  if (mode != WIFI_AP && mode != WIFI_AP_STA) return false;
+  return WiFi.softAPgetStationNum() > 0;
+}
+
+static bool shouldBlePresenceBeEnabled() {
+  if (!wifiOtaEnabled) return false;
+  if (otaUploadInProgress) return false;
+  if (wifiApClientConnected()) return false;
+  return true;
+}
+
+static uint32_t wifiRecoveryBackoffMs() {
+  uint8_t step = wifiRecoveryAttemptCount;
+  if (step > 5) step = 5;
+  return 1000UL << step;
+}
+
+static void ensureWifiOtaServices() {
+  if (!wifiOtaEnabled) return;
+  const wifi_mode_t mode = WiFi.getMode();
+  if (wifiApRunning && (mode == WIFI_AP || mode == WIFI_AP_STA)) return;
+  const uint32_t now = millis();
+  const uint32_t backoffMs = wifiRecoveryBackoffMs();
+  if (wifiRecoveryAttemptAtMs != 0 &&
+      (uint32_t)(now - wifiRecoveryAttemptAtMs) < backoffMs) {
+    return;
+  }
+  wifiRecoveryAttemptAtMs = now;
+  LOGW("WiFi/AP inativo, retomando servico (tentativa=%u)", (unsigned)(wifiRecoveryAttemptCount + 1U));
+  if (setupWiFi()) {
+    setupOta();
+    wifiRecoveryAttemptCount = 0;
+    return;
+  }
+  if (wifiRecoveryAttemptCount < 10) wifiRecoveryAttemptCount++;
 }
 
 static void setWatchdogEnabled(bool enabled) {
@@ -175,10 +266,13 @@ static void applyWifiOtaMode(bool enabled, const char* source) {
   setWatchdogEnabled(enabled);
 
   if (enabled) {
-    setupWiFi();
-    setupOta();
+    if (setupWiFi()) {
+      setupOta();
+    } else {
+      LOGW("SET_PARAMS: WiFi/AP indisponivel; retry automatico ativo");
+    }
     if (cfg::BLE_PRESENCE_ENABLED) {
-      blePresence.setEnabled(true);
+      blePresence.setEnabled(shouldBlePresenceBeEnabled());
       blePresence.setFlags(true, WiFi.status() == WL_CONNECTED);
     }
     LOGI("SET_PARAMS: wifi_ota_enabled=1 aplicado via %s", source);
@@ -409,24 +503,24 @@ static void drawStatus(const char* line1, const char* line2) {
 
 void setup() {
   Serial.begin(cfg::SERIAL_BAUD);
+  LOGI("Boot reset_reason=%d", (int)esp_reset_reason());
 #if defined(ESP_IDF_VERSION_MAJOR) && ESP_IDF_VERSION_MAJOR >= 5
   esp_task_wdt_config_t wdtConfig = {};
-  wdtConfig.timeout_ms = 12000;
+  wdtConfig.timeout_ms = (uint32_t)cfg::TASK_WDT_TIMEOUT_SEC * 1000U;
   wdtConfig.idle_core_mask = 0;
   wdtConfig.trigger_panic = true;
   esp_task_wdt_init(&wdtConfig);
 #else
-  esp_task_wdt_init(12, true);
+  esp_task_wdt_init(cfg::TASK_WDT_TIMEOUT_SEC, true);
 #endif
-  setWatchdogEnabled(wifiOtaEnabled);
+  WiFi.onEvent(onWifiEvent);
 
   Wire.begin(cfg::PIN_I2C_SDA, cfg::PIN_I2C_SCL);
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   drawStatus("Boot", cfg::FW_VERSION);
 
   if (wifiOtaEnabled) {
-    setupWiFi();
-    setupOta();
+    if (setupWiFi()) setupOta();
   }
   if (cfg::BLE_PRESENCE_ENABLED) {
     const String nodeId = gatewayNodeId();
@@ -436,7 +530,7 @@ void setup() {
         gatewayAdvName(nodeId),
         cfg::BLE_COMPANY_ID,
         cfg::BLE_SERVICE_UUID);
-    blePresence.setEnabled(wifiOtaEnabled);
+    blePresence.setEnabled(shouldBlePresenceBeEnabled());
     blePresence.setFlags(wifiOtaEnabled, WiFi.status() == WL_CONNECTED);
   }
   api.begin();
@@ -445,25 +539,28 @@ void setup() {
 
   if (!sdlog.begin(cfg::PIN_SD_CS)) LOGW("SD indisponível");
   if (!lora.begin()) LOGE("LoRa indisponível");
+  setWatchdogEnabled(wifiOtaEnabled);
 
   LOGI("Gateway pronto fw=%s", cfg::FW_VERSION);
 }
 
 void loop() {
+  ensureWifiOtaServices();
   if (wifiOtaEnabled && cfg::OTA_ENABLED) {
     ArduinoOTA.handle();
   }
   if (cfg::BLE_PRESENCE_ENABLED) {
-    blePresence.setEnabled(wifiOtaEnabled);
+    const bool bleEnabled = shouldBlePresenceBeEnabled();
+    blePresence.setEnabled(bleEnabled);
     blePresence.setFlags(wifiOtaEnabled, WiFi.status() == WL_CONNECTED);
-    blePresence.loop();
+    if (bleEnabled) blePresence.loop();
   }
   if (watchdogTaskRegistered) esp_task_wdt_reset();
   if (wifiOtaEnabled && otaUploadInProgress) {
     delay(2);
     return;
   }
-  if (wifiOtaEnabled) api.loop();
+  if (wifiOtaEnabled && WiFi.getMode() != WIFI_OFF) api.loop();
 
   LoRaFrame rx;
   if (lora.receive(rx)) {

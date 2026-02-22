@@ -27,7 +27,7 @@ Wi-Fi + BLE + LoRa (com opção de LoRa-only) para:
 - OLED/DS3231 I2C SDA=21 SCL=22
 
 ## Rede App <-> Gateway Matriz
-- AP local: `RuralTech-Matriz` / `ruraltechota`
+- AP local: `RuralTech-Matriz-<ID6HEX>` / `ruraltechota`
 - HTTP: porta 80 (`/status`, `/devices`, `/logs`)
 - WebSocket: porta 81 (json bidirecional)
 
@@ -51,7 +51,7 @@ Wi-Fi + BLE + LoRa (com opção de LoRa-only) para:
 
 ## Atualização de firmware via Wi-Fi (OTA)
 - O gateway matriz inicia com OTA/Wi-Fi ativo por padrão (`wifi_ota_enabled=true`).
-- Conecte no AP: `RuralTech-Matriz` / `ruraltechota`.
+- Conecte no AP: `RuralTech-Matriz-<ID6HEX>` / `ruraltechota`.
 - No Arduino IDE, selecione a porta de rede `ruraltech-matriz`.
 - Use senha OTA: `ruraltechota`.
 - `GET /status` retorna `service=gateway_matrix` e o estado atual de `wifi_ota_enabled`.

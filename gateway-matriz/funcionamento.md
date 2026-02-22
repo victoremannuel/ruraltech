@@ -22,7 +22,7 @@ Também concentra dados para envio posterior ao backend (ex.: Firebase), via app
 
 1. Sobe watchdog.
 2. Inicializa display OLED e RTC.
-3. Sobe Wi-Fi AP (`RuralTech-Matriz`) por padrão (`wifi_ota_enabled=true`).
+3. Sobe Wi-Fi AP (`RuralTech-Matriz-<ID6HEX>`) por padrão (`wifi_ota_enabled=true`).
 4. Sobe OTA (`ArduinoOTA`) no host `ruraltech-matriz` quando `wifi_ota_enabled=true`.
 5. Sobe BLE de presença com tipo `gateway_matrix`.
 6. Inicializa API HTTP/WS, SD e LoRa.

@@ -9,6 +9,7 @@ namespace cfg {
 constexpr char FW_VERSION[] = "gateway-1.0.0";
 constexpr uint8_t LOG_LEVEL = 3;
 constexpr uint32_t SERIAL_BAUD = 115200;
+constexpr uint16_t TASK_WDT_TIMEOUT_SEC = 30;
 
 constexpr int PIN_LORA_CS = 5;
 constexpr int PIN_LORA_RST = 14;

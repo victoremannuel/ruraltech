@@ -26,7 +26,8 @@ void ApiServer::begin() {
     doc["ok"] = true;
     doc["service"] = "gateway";
     doc["fw"] = cfg::FW_VERSION;
-    doc["ap_ssid"] = cfg::AP_SSID;
+    const String apSsid = WiFi.softAPSSID();
+    doc["ap_ssid"] = apSsid.isEmpty() ? String(cfg::AP_SSID) : apSsid;
     doc["ap_ip"] = WiFi.softAPIP().toString();
     doc["gatewayId"] = compactIdentifier(WiFi.softAPmacAddress());
     doc["ota"] = cfg::OTA_ENABLED;

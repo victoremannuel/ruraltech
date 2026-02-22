@@ -21,7 +21,7 @@ Também é o nó que pode concentrar dados para posterior envio ao backend (ex.:
 
 1. Sobe watchdog.
 2. Inicializa display OLED e RTC.
-3. Sobe Wi-Fi AP (`RuralTech-Gateway`) quando `wifi_ota_enabled=true`.
+3. Sobe Wi-Fi AP (`RuralTech-Gateway-<ID6HEX>`) quando `wifi_ota_enabled=true`.
 4. Sobe OTA (`ArduinoOTA`) no host `ruraltech-gateway`.
 5. Inicializa API HTTP/WS, SD e LoRa.
 

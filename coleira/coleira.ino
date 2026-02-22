@@ -20,6 +20,7 @@
 #include <math.h>
 #include <esp_task_wdt.h>
 #include <esp_sleep.h>
+#include <esp_system.h>
 #if __has_include(<esp_idf_version.h>)
 #include <esp_idf_version.h>
 #endif
@@ -53,6 +54,8 @@ bool watchdogTaskRegistered = false;
 bool otaUploadInProgress = false;
 uint32_t wifiOtaEnabledAtMs = 0;
 uint32_t otaApLastClientSeenMs = 0;
+uint32_t otaRecoveryAttemptAtMs = 0;
+uint8_t otaRecoveryAttemptCount = 0;
 Preferences prefs_;
 bool prefsReady_ = false;
 static void logEvent(EventType type, int32_t d1, int32_t d2);
@@ -82,6 +85,15 @@ static String collarNodeId() { return String((uint32_t)cfg::DEVICE_ID); }
 
 static String collarAdvName() {
   return String(cfg::BLE_DEVICE_PREFIX) + "-" + collarNodeId();
+}
+
+static String collarApSsid() {
+  String suffix = String((uint32_t)cfg::DEVICE_ID, HEX);
+  suffix.toUpperCase();
+  if (suffix.length() > 6) suffix = suffix.substring(suffix.length() - 6);
+  String ssid = String(cfg::OTA_AP_SSID) + "-" + suffix;
+  if (ssid.length() > 31) ssid = ssid.substring(0, 31);
+  return ssid;
 }
 
 static bool otaDisableGuardActive() {
@@ -438,6 +450,8 @@ static void setWatchdogEnabled(bool enabled) {
 
 static void stopWifiOtaMaintenance() {
   otaModeActive = false;
+  otaRecoveryAttemptCount = 0;
+  otaRecoveryAttemptAtMs = 0;
   if (WiFi.getMode() == WIFI_STA || WiFi.getMode() == WIFI_AP_STA) {
     WiFi.disconnect(true, true);
   }
@@ -457,6 +471,7 @@ static void onWifiEvent(WiFiEvent_t event) {
 #if defined(ARDUINO_EVENT_WIFI_AP_STOP)
   if (event == ARDUINO_EVENT_WIFI_AP_STOP) {
     otaModeActive = false;
+    otaRecoveryAttemptAtMs = 0;
     LOGW("WiFi AP parou");
   }
 #endif
@@ -521,15 +536,26 @@ static bool otaApClientConnected() {
   return WiFi.softAPgetStationNum() > 0;
 }
 
+static bool shouldBlePresenceBeEnabled() {
+  if (!wifiOtaEnabled) return false;
+  if (otaUploadInProgress) return false;
+  const wifi_mode_t mode = WiFi.getMode();
+  if ((mode == WIFI_AP || mode == WIFI_AP_STA) && otaApClientConnected()) {
+    return false;
+  }
+  return true;
+}
+
 static void setupWifiOtaMaintenance() {
-  if (!wifiOtaEnabled || !cfg::OTA_ENABLED) return;
+  if (!wifiOtaEnabled || !cfg::OTA_ENABLED || otaModeActive) return;
   wifiOtaEnabledAtMs = millis();
+  const String apSsid = collarApSsid();
 
   if (cfg::OTA_FORCE_AP_ONLY) {
     WiFi.mode(WIFI_AP);
     WiFi.setSleep(false);
     const bool apOk = WiFi.softAP(
-        cfg::OTA_AP_SSID,
+        apSsid.c_str(),
         cfg::OTA_AP_PASS,
         cfg::OTA_AP_CHANNEL,
         false,
@@ -540,7 +566,8 @@ static void setupWifiOtaMaintenance() {
       return;
     }
     startOtaService();
-    LOGI("OTA pronto (AP FORCADO) SSID=%s IP=%s host=%s", cfg::OTA_AP_SSID, WiFi.softAPIP().toString().c_str(), cfg::OTA_HOSTNAME);
+    otaRecoveryAttemptCount = 0;
+    LOGI("OTA pronto (AP FORCADO) SSID=%s IP=%s host=%s", apSsid.c_str(), WiFi.softAPIP().toString().c_str(), cfg::OTA_HOSTNAME);
     return;
   }
 
@@ -572,7 +599,7 @@ static void setupWifiOtaMaintenance() {
   WiFi.mode(WIFI_AP);
   WiFi.setSleep(false);
   const bool apOk = WiFi.softAP(
-      cfg::OTA_AP_SSID,
+      apSsid.c_str(),
       cfg::OTA_AP_PASS,
       cfg::OTA_AP_CHANNEL,
       false,
@@ -584,7 +611,28 @@ static void setupWifiOtaMaintenance() {
   }
 
   startOtaService();
-  LOGI("OTA pronto (AP) SSID=%s IP=%s host=%s", cfg::OTA_AP_SSID, WiFi.softAPIP().toString().c_str(), cfg::OTA_HOSTNAME);
+  otaRecoveryAttemptCount = 0;
+  LOGI("OTA pronto (AP) SSID=%s IP=%s host=%s", apSsid.c_str(), WiFi.softAPIP().toString().c_str(), cfg::OTA_HOSTNAME);
+}
+
+static uint32_t otaRecoveryBackoffMs() {
+  uint8_t step = otaRecoveryAttemptCount;
+  if (step > 5) step = 5;
+  return 1000UL << step;
+}
+
+static void ensureWifiOtaMaintenance() {
+  if (!wifiOtaEnabled || otaModeActive) return;
+  const uint32_t now = millis();
+  const uint32_t backoffMs = otaRecoveryBackoffMs();
+  if (otaRecoveryAttemptAtMs != 0 &&
+      (uint32_t)(now - otaRecoveryAttemptAtMs) < backoffMs) {
+    return;
+  }
+  otaRecoveryAttemptAtMs = now;
+  LOGW("OTA/WiFi inativo, retomando servico (tentativa=%u)", (unsigned)(otaRecoveryAttemptCount + 1U));
+  setupWifiOtaMaintenance();
+  if (!otaModeActive && otaRecoveryAttemptCount < 10) otaRecoveryAttemptCount++;
 }
 
 static void applyWifiOtaMode(bool enabled, const char* source) {
@@ -613,7 +661,7 @@ static void applyWifiOtaMode(bool enabled, const char* source) {
   if (enabled) {
     setupWifiOtaMaintenance();
     if (cfg::BLE_PRESENCE_ENABLED) {
-      blePresence.setEnabled(true);
+      blePresence.setEnabled(shouldBlePresenceBeEnabled());
       blePresence.setFlags(true, WiFi.status() == WL_CONNECTED);
     }
     LOGI("SET_PARAMS: wifi_ota_enabled=1 aplicado via %s", source);
@@ -772,17 +820,17 @@ static void applyDownlink(const LoRaFrame& frame) {
 
 void setup() {
   Serial.begin(cfg::SERIAL_BAUD);
+  LOGI("Boot reset_reason=%d", (int)esp_reset_reason());
 #if defined(ESP_IDF_VERSION_MAJOR) && ESP_IDF_VERSION_MAJOR >= 5
   esp_task_wdt_config_t wdtConfig = {};
-  wdtConfig.timeout_ms = 12000;
+  wdtConfig.timeout_ms = (uint32_t)cfg::TASK_WDT_TIMEOUT_SEC * 1000U;
   wdtConfig.idle_core_mask = 0;
   wdtConfig.trigger_panic = true;
   esp_task_wdt_init(&wdtConfig);
 #else
-  esp_task_wdt_init(12, true);
+  esp_task_wdt_init(cfg::TASK_WDT_TIMEOUT_SEC, true);
 #endif
   loadPersistedConfig();
-  setWatchdogEnabled(wifiOtaEnabled);
   WiFi.onEvent(onWifiEvent);
 
   setupWifiOtaMaintenance();
@@ -794,7 +842,7 @@ void setup() {
         collarAdvName(),
         cfg::BLE_COMPANY_ID,
         cfg::BLE_SERVICE_UUID);
-    blePresence.setEnabled(wifiOtaEnabled);
+    blePresence.setEnabled(shouldBlePresenceBeEnabled());
     blePresence.setFlags(wifiOtaEnabled, WiFi.status() == WL_CONNECTED);
   }
 
@@ -802,12 +850,13 @@ void setup() {
   safety.begin();
   storage.begin();
   lora.begin();
+  setWatchdogEnabled(wifiOtaEnabled);
 
   LOGI("Coleira inicializada: id=%lu fw=%s", cfg::DEVICE_ID, cfg::FW_VERSION);
 }
 
 void loop() {
-  if (wifiOtaEnabled && !otaModeActive) setupWifiOtaMaintenance();
+  ensureWifiOtaMaintenance();
 
   if (wifiOtaEnabled && otaModeActive) {
     ArduinoOTA.handle();
@@ -823,9 +872,10 @@ void loop() {
 
   if (watchdogTaskRegistered) esp_task_wdt_reset();
   if (cfg::BLE_PRESENCE_ENABLED) {
-    blePresence.setEnabled(wifiOtaEnabled);
+    const bool bleEnabled = shouldBlePresenceBeEnabled();
+    blePresence.setEnabled(bleEnabled);
     blePresence.setFlags(wifiOtaEnabled, WiFi.status() == WL_CONNECTED);
-    blePresence.loop();
+    if (bleEnabled) blePresence.loop();
   }
   sensors.tick();
 

@@ -94,7 +94,7 @@ Para comandos válidos, a coleira responde `ACK`; para erro de validação/ordem
 
 1. OTA usa porta `3232` com senha.
 2. No build atual, o default está em AP forçado (`OTA_FORCE_AP_ONLY=true`).
-3. SSID do AP da coleira: `RuralTech-Coleira-OTA`.
+3. SSID do AP da coleira: `RuralTech-Coleira-OTA-<ID6HEX>`.
 4. `wifi_ota_enabled` pode ser alternado remotamente e persiste após reboot.
 5. BLE de descoberta acompanha `wifi_ota_enabled`:
    - `true` -> BLE ativo.

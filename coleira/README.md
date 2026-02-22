@@ -42,7 +42,7 @@ Firmware da coleira com telemetria, cerca virtual autônoma, condução por fase
   - SSID: `RuralTech-Gateway`
   - Senha: `ruraltechota`
 - Se nao conectar no Wi-Fi acima, ela cria AP fallback:
-  - SSID: `RuralTech-Coleira-OTA`
+  - SSID: `RuralTech-Coleira-OTA-<ID6HEX>`
   - Senha: `ruraltechota`
 - Para testes de bancada, voce pode forcar AP direto ajustando
   `OTA_FORCE_AP_ONLY=true` em `config.h`.

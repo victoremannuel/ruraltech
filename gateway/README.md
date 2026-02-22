@@ -22,7 +22,7 @@ Receber LoRa da coleira, expor REST+WebSocket para o app, logar em microSD com h
 - OLED/DS3231 I2C SDA=21 SCL=22
 
 ## Rede App <-> Gateway
-- AP local: `RuralTech-Gateway` / `ruraltech123`
+- AP local: `RuralTech-Gateway-<ID6HEX>` / `ruraltechota`
 - HTTP: porta 80 (`/status`, `/devices`, `/logs`)
 - WebSocket: porta 81 (json bidirecional)
 
@@ -47,7 +47,7 @@ Receber LoRa da coleira, expor REST+WebSocket para o app, logar em microSD com h
 
 ## Atualização de firmware via Wi-Fi (OTA)
 - OTA/Wi-Fi já vem habilitado continuamente por padrão (`config.h`).
-- Conecte seu PC no AP do gateway: `RuralTech-Gateway` / `ruraltechota`.
+- Conecte seu PC no AP do gateway: `RuralTech-Gateway-<ID6HEX>` / `ruraltechota`.
 - No Arduino IDE, selecione a porta de rede do dispositivo `ruraltech-gateway`.
 - Faça upload normalmente; quando solicitado, use a senha OTA: `ruraltechota`.
 - Endpoint útil: `GET /status` mostra `ota=true` e IP do AP.
