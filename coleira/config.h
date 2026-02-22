@@ -46,11 +46,17 @@ constexpr char WIFI_PASS[] = "ruraltechota";
 constexpr char OTA_HOSTNAME[] = "ruraltech-coleira";
 constexpr char OTA_PASSWORD[] = "ruraltechota";
 constexpr uint32_t OTA_CONNECT_TIMEOUT_MS = 12000;
+constexpr uint32_t OTA_ARDUINO_TIMEOUT_MS = 60000;
 constexpr uint32_t OTA_WINDOW_MS = 300000;
 constexpr bool OTA_AP_FALLBACK_ENABLED = true;
 constexpr bool OTA_FORCE_AP_ONLY = true;
 constexpr char OTA_AP_SSID[] = "RuralTech-Coleira-OTA";
 constexpr char OTA_AP_PASS[] = "ruraltechota";
+constexpr uint8_t OTA_AP_CHANNEL = 6;
+constexpr uint8_t OTA_AP_MAX_CLIENTS = 2;
+constexpr uint32_t OTA_DISABLE_GUARD_MS = 300000;
+constexpr uint16_t OTA_UPLOAD_RX_WINDOW_MS = 120;
+constexpr uint8_t OTA_UPLOAD_EVENT_BURST = 2;
 
 // BLE discovery for app onboarding
 constexpr bool BLE_PRESENCE_ENABLED = true;

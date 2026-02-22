@@ -52,7 +52,10 @@ Firmware da coleira com telemetria, cerca virtual autônoma, condução por fase
 ## Chave remota Wi-Fi/OTA via LoRa
 - A coleira aceita `SET_PARAMS` com payload JSON:
   - `{"wifi_ota_enabled": true}` ativa Wi-Fi/OTA e watchdog.
-  - `{"wifi_ota_enabled": false}` desativa Wi-Fi/OTA e watchdog (modo LoRa-only).
+  - `{"wifi_ota_enabled": false,"requested_by_role":"adm"}` desativa
+    Wi-Fi/OTA e watchdog (modo LoRa-only).
+- `wifi_ota_enabled=false` só é aceito quando marcado como administrativo
+  (`requested_by_role=adm` ou `requested_by_admin=true`).
 - O estado de `wifi_ota_enabled` fica persistido em NVS e sobrevive a reboot.
 - Regra de descoberta BLE:
   - BLE onboarding fica ativo apenas quando `wifi_ota_enabled=true`.

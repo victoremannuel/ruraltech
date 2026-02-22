@@ -63,6 +63,8 @@ Fila de comandos WebSocket no firmware: 8 mensagens.
 4. `SET_PARAMS`:
    - pode aplicar localmente no próprio gateway (`target: gateway|all`)
    - pode encaminhar para coleiras (`target: collar|collars|all`)
+   - `wifi_ota_enabled=false` exige marcação administrativa
+     (`requested_by_role=adm` ou `requested_by_admin=true`)
 5. Emite `command_result` no WebSocket e log SD (`DL|...`).
 
 ## 7) Fragmentação LoRa e limites
@@ -89,7 +91,8 @@ Fila de comandos WebSocket no firmware: 8 mensagens.
 ## 10) OTA e modos de operação
 
 1. OTA ativa quando Wi-Fi/OTA habilitado.
-2. `SET_PARAMS` com `wifi_ota_enabled=false` coloca gateway em modo LoRa-only (Wi-Fi desligado).
+2. `SET_PARAMS` com `wifi_ota_enabled=false` coloca gateway em modo LoRa-only
+   (Wi-Fi desligado), somente quando o comando é administrativo.
 3. `SET_PARAMS` com `wifi_ota_enabled=true` reativa AP + OTA + API local.
 4. BLE de descoberta do app acompanha o mesmo estado:
    - `wifi_ota_enabled=true` -> BLE ativo.

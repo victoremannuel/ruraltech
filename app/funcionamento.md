@@ -82,6 +82,11 @@ Pelo app é possível:
 4. Incluir/editar gateway (nome, status, host, posição, propriedade).
 5. Editar polígonos existentes com arrasto/inserção de pontos.
 6. Escolher ponto no mapa para posicionamento de coleira/gateway.
+7. Apagar registros:
+   - coleira (somente `adm`)
+   - gateway (somente `adm`)
+   - propriedade rural (somente `adm`)
+   - área ( `adm` e `user` com acesso )
 
 ## 6.1) Descoberta de dispositivos para cadastro
 
@@ -89,8 +94,13 @@ Pelo app é possível:
 2. Se a coleira/gateway já enviar dados (id, nome, posição), o app preenche automaticamente.
 3. Se for primeira inclusão, os campos continuam editáveis para preenchimento manual.
 4. Regra de negócio aplicada no app:
-   - coleira/gateway comum via BLE só aparece quando o firmware sinaliza `wifi_ota_enabled=true`.
-   - gateway matriz pode aparecer em BLE independentemente desse flag (sempre-on).
+   - coleira/gateway/gateway matriz via BLE só aparece quando o firmware sinaliza `wifi_ota_enabled=true`.
+5. Na inclusão de coleira:
+   - Bluetooth/Wi-Fi OTA são usados para associar a coleira ao cadastro.
+   - conexão LoRa via gateway aparece como fonte opcional separada.
+6. Troca de modo de conectividade:
+   - padrão inicial: `wifi_ota_enabled=true` (Wi-Fi/Bluetooth/LoRa).
+   - alternância para `LoRa-only` (`wifi_ota_enabled=false`) só é permitida para perfil `adm`.
 
 ## 7) Geofence e condução (integração com firmware)
 
@@ -158,3 +168,4 @@ Os filtros são geridos por `MapFilterService` e aplicados em tempo real.
 2. Plano de condução no app: até `8` fases.
 3. Pontos por fase: até `32`.
 4. O payload LoRa por frame é `128` bytes (a fragmentação é feita no gateway).
+5. Área (`AreaEditor`/edição de área): bloqueio em tempo real no `33º` ponto com aviso ao usuário.

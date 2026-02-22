@@ -1,8 +1,8 @@
 # Gateway Matriz Firmware (ESP32 DevKit V1)
 
 ## Objetivo
-Atuar como nó central da propriedade rural, mantendo Wi-Fi + BLE + LoRa
-sempre ativos para:
+Atuar como nó central da propriedade rural, iniciando por padrão em
+Wi-Fi + BLE + LoRa (com opção de LoRa-only) para:
 
 1. Configuração local via app (HTTP/WS).
 2. Comunicação LoRa com coleiras e gateways comuns.
@@ -50,16 +50,17 @@ sempre ativos para:
 5. Compile/upload.
 
 ## Atualização de firmware via Wi-Fi (OTA)
-- O gateway matriz mantém OTA/Wi-Fi ativo continuamente por design.
+- O gateway matriz inicia com OTA/Wi-Fi ativo por padrão (`wifi_ota_enabled=true`).
 - Conecte no AP: `RuralTech-Matriz` / `ruraltechota`.
 - No Arduino IDE, selecione a porta de rede `ruraltech-matriz`.
 - Use senha OTA: `ruraltechota`.
-- `GET /status` retorna `service=gateway_matrix` e `wifi_ota_enabled=true`.
+- `GET /status` retorna `service=gateway_matrix` e o estado atual de `wifi_ota_enabled`.
 
 ## Regra de operação
-- `gateway-matriz` ignora tentativas de `wifi_ota_enabled=false` para si.
-- Ainda encaminha `SET_PARAMS` para coleiras/gateways alvo via LoRa.
-- BLE permanece sempre ativo no gateway matriz para onboarding no app.
+- `wifi_ota_enabled=true` (padrão) mantém Wi-Fi/BLE/LoRa ativos.
+- `wifi_ota_enabled=false` coloca em LoRa-only (Wi-Fi e BLE desligados).
+- A transição para LoRa-only requer comando `SET_PARAMS` marcado como administrativo (`requested_by_role=adm` ou `requested_by_admin=true`).
+- `SET_PARAMS` continua podendo ser encaminhado via LoRa para coleiras/gateways alvo.
 
 ## Relay Gateway <-> Gateway
 - Relay LoRa multi-hop best-effort para `TELEMETRY`, `EVENT`, `ACK`, `NACK`.

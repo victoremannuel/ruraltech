@@ -12,11 +12,17 @@ class PolygonEditorScreen extends StatefulWidget {
     required this.initialPoints,
     required this.onSave,
     this.boundary = const [],
+    this.maxPoints,
+    this.onDelete,
+    this.deleteLabel = 'Apagar',
   });
 
   final String title;
   final List<LatLng> initialPoints;
   final List<LatLng> boundary;
+  final int? maxPoints;
+  final Future<void> Function()? onDelete;
+  final String deleteLabel;
   final Future<void> Function(List<List<double>> points) onSave;
 
   @override
@@ -30,6 +36,7 @@ class _PolygonEditorScreenState extends State<PolygonEditorScreen> {
   int? _draggingPointIndex;
   Offset? _dragScreenOffset;
   bool _saving = false;
+  bool _deleting = false;
 
   bool _isInsidePolygon(LatLng point, List<LatLng> polygon) {
     if (polygon.length < 3) return false;
@@ -123,11 +130,19 @@ class _PolygonEditorScreenState extends State<PolygonEditorScreen> {
   }
 
   Future<void> _save() async {
-    if (_saving) return;
+    if (_saving || _deleting) return;
     if (_points.length < 3) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text('O poligono precisa de pelo menos 3 pontos.')),
+      );
+      return;
+    }
+    if (widget.maxPoints != null && _points.length > widget.maxPoints!) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Permitido apenas ${widget.maxPoints} pontos.'),
+        ),
       );
       return;
     }
@@ -145,6 +160,45 @@ class _PolygonEditorScreenState extends State<PolygonEditorScreen> {
       );
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _delete() async {
+    final onDelete = widget.onDelete;
+    if (onDelete == null || _saving || _deleting) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Confirmar exclusao'),
+        content: Text('Deseja realmente ${widget.deleteLabel.toLowerCase()}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Apagar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    setState(() => _deleting = true);
+    try {
+      await onDelete();
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao apagar: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _deleting = false);
     }
   }
 
@@ -167,6 +221,14 @@ class _PolygonEditorScreenState extends State<PolygonEditorScreen> {
 
     final edge = _nearestEdgeIndex(p, _points);
     if (edge != null) {
+      if (widget.maxPoints != null && _points.length >= widget.maxPoints!) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Permitido apenas ${widget.maxPoints} pontos.'),
+          ),
+        );
+        return;
+      }
       setState(() => _points.insert(edge + 1, p));
       return;
     }
@@ -284,7 +346,8 @@ class _PolygonEditorScreenState extends State<PolygonEditorScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             color: Colors.green.withValues(alpha: 0.08),
             child: Text(
-              'Area da edicao: ${PolygonMetrics.areaTextInline(_points)}',
+              'Area da edicao: ${PolygonMetrics.areaTextInline(_points)}'
+              '${widget.maxPoints == null ? '' : ' | Pontos: ${_points.length}/${widget.maxPoints}'}',
               textAlign: TextAlign.center,
             ),
           ),
@@ -292,9 +355,27 @@ class _PolygonEditorScreenState extends State<PolygonEditorScreen> {
             padding: const EdgeInsets.all(12),
             child: Row(
               children: [
+                if (widget.onDelete != null) ...[
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: _saving || _deleting ? null : _delete,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.red.shade700,
+                      ),
+                      child: _deleting
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Text(widget.deleteLabel),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: _points.isEmpty || _saving
+                    onPressed: _points.isEmpty || _saving || _deleting
                         ? null
                         : () => setState(() => _points.removeLast()),
                     child: const Text('Desfazer'),
@@ -303,7 +384,7 @@ class _PolygonEditorScreenState extends State<PolygonEditorScreen> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: _saving ? null : _save,
+                    onPressed: _saving || _deleting ? null : _save,
                     child: _saving
                         ? const SizedBox(
                             width: 18,

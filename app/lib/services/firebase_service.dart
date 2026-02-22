@@ -154,6 +154,9 @@ class FirebaseService {
             'lat': _latFromPosition(data),
             'lon': _lonFromPosition(data),
             'propertyId': _idFromRefOrPath(data['propertyId']),
+            'wifi_ota_enabled': data['wifi_ota_enabled'] is bool
+                ? data['wifi_ota_enabled']
+                : true,
           };
         }).toList();
       });
@@ -182,6 +185,9 @@ class FirebaseService {
             'lat': _latFromPosition(data),
             'lon': _lonFromPosition(data),
             'propertyId': _idFromRefOrPath(data['propertyId']),
+            'wifi_ota_enabled': data['wifi_ota_enabled'] is bool
+                ? data['wifi_ota_enabled']
+                : true,
           };
         }
         controller.add(byId.values.toList());
@@ -573,6 +579,7 @@ class FirebaseService {
           ? null
           : _db.collection('gateways').doc(_idFromRefOrPath(gatewayId)),
       'propertyId': _propertyRefOrNull(propertyId),
+      'wifi_ota_enabled': true,
       'updatedAt': FieldValue.serverTimestamp(),
     };
 
@@ -610,6 +617,7 @@ class FirebaseService {
       'host': host,
       'propertyId': _propertyRefOrNull(propertyId),
       'userUids': linkedUsers,
+      'wifi_ota_enabled': true,
       'position': [lat ?? 0, lon ?? 0],
       'updatedAt': FieldValue.serverTimestamp(),
     };
@@ -647,6 +655,7 @@ class FirebaseService {
     required String ownerUid,
     String? gatewayId,
     String? propertyId,
+    bool? wifiOtaEnabled,
   }) async {
     final update = <String, dynamic>{
       'name': name,
@@ -659,6 +668,9 @@ class FirebaseService {
           : _db.collection('gateways').doc(_idFromRefOrPath(gatewayId)),
       'updatedAt': FieldValue.serverTimestamp(),
     };
+    if (wifiOtaEnabled != null) {
+      update['wifi_ota_enabled'] = wifiOtaEnabled;
+    }
 
     if (propertyId != null && propertyId.trim().isNotEmpty) {
       update['propertyId'] = _propertyRefOrNull(propertyId);
@@ -680,6 +692,7 @@ class FirebaseService {
     required double lon,
     String? host,
     String? propertyId,
+    bool? wifiOtaEnabled,
   }) async {
     List<DocumentReference<Map<String, dynamic>>> linkedUsers = const [];
     if (propertyId != null && propertyId.trim().isNotEmpty) {
@@ -694,6 +707,9 @@ class FirebaseService {
       'userUids': linkedUsers,
       'updatedAt': FieldValue.serverTimestamp(),
     };
+    if (wifiOtaEnabled != null) {
+      update['wifi_ota_enabled'] = wifiOtaEnabled;
+    }
 
     if (propertyId != null && propertyId.trim().isNotEmpty) {
       update['propertyId'] = _propertyRefOrNull(propertyId);
@@ -725,6 +741,149 @@ class FirebaseService {
       'perimeter': _encodeLatLonPoints(perimeter),
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+  }
+
+  Future<void> setDeviceWifiOtaEnabled({
+    required String id,
+    required bool enabled,
+  }) async {
+    await _db.collection('collars').doc(id).set({
+      'wifi_ota_enabled': enabled,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> setGatewayWifiOtaEnabled({
+    required String id,
+    required bool enabled,
+  }) async {
+    await _db.collection('gateways').doc(id).set({
+      'wifi_ota_enabled': enabled,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> deleteDevice({required String id}) async {
+    final batch = _db.batch();
+    batch.delete(_db.collection('collars').doc(id));
+    batch.delete(_db.collection('fences').doc(id));
+    batch.delete(_db.collection('herdingPlans').doc(id));
+    await batch.commit();
+  }
+
+  Future<void> deleteGateway({required String id}) async {
+    await _db.collection('gateways').doc(id).delete();
+  }
+
+  Future<void> deleteArea({required String id}) async {
+    await _db.collection('areas').doc(id).delete();
+  }
+
+  Future<void> deleteRuralProperty({required String id}) async {
+    final propertyRef = _db.collection('ruralProperties').doc(id);
+    final propertyPath = '/ruralProperties/$id';
+
+    final areaSnaps = await Future.wait([
+      _db
+          .collection('areas')
+          .where('ruralPropertiesID', isEqualTo: propertyRef)
+          .get(),
+      _db.collection('areas').where('ruralPropertiesID', isEqualTo: id).get(),
+      _db
+          .collection('areas')
+          .where('ruralPropertiesID', isEqualTo: propertyPath)
+          .get(),
+    ]);
+    final gatewaySnaps = await Future.wait([
+      _db
+          .collection('gateways')
+          .where('propertyId', isEqualTo: propertyRef)
+          .get(),
+      _db.collection('gateways').where('propertyId', isEqualTo: id).get(),
+      _db
+          .collection('gateways')
+          .where('propertyId', isEqualTo: propertyPath)
+          .get(),
+    ]);
+    final collarSnaps = await Future.wait([
+      _db
+          .collection('collars')
+          .where('propertyId', isEqualTo: propertyRef)
+          .get(),
+      _db.collection('collars').where('propertyId', isEqualTo: id).get(),
+      _db
+          .collection('collars')
+          .where('propertyId', isEqualTo: propertyPath)
+          .get(),
+    ]);
+
+    final areaDocs = <String, DocumentReference<Map<String, dynamic>>>{};
+    for (final s in areaSnaps) {
+      for (final d in s.docs) {
+        areaDocs[d.reference.path] = d.reference;
+      }
+    }
+
+    final gatewayDocs = <String, DocumentReference<Map<String, dynamic>>>{};
+    for (final s in gatewaySnaps) {
+      for (final d in s.docs) {
+        gatewayDocs[d.reference.path] = d.reference;
+      }
+    }
+
+    final collarDocs = <String, DocumentReference<Map<String, dynamic>>>{};
+    for (final s in collarSnaps) {
+      for (final d in s.docs) {
+        collarDocs[d.reference.path] = d.reference;
+      }
+    }
+
+    WriteBatch batch = _db.batch();
+    var opCount = 0;
+
+    Future<void> flush() async {
+      if (opCount == 0) return;
+      await batch.commit();
+      batch = _db.batch();
+      opCount = 0;
+    }
+
+    for (final docRef in areaDocs.values) {
+      batch.delete(docRef);
+      opCount++;
+      if (opCount >= 400) await flush();
+    }
+
+    for (final docRef in gatewayDocs.values) {
+      batch.set(
+        docRef,
+        {
+          'propertyId': null,
+          'userUids': const [],
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+      opCount++;
+      if (opCount >= 400) await flush();
+    }
+
+    for (final docRef in collarDocs.values) {
+      batch.set(
+        docRef,
+        {
+          'propertyId': null,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+      opCount++;
+      if (opCount >= 400) await flush();
+    }
+
+    batch.delete(propertyRef);
+    opCount++;
+    await flush();
   }
 
   Future<void> backfillLegacyAccessForAreasAndGateways() async {

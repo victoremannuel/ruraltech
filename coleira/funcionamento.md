@@ -74,6 +74,8 @@ Firmware da coleira em ESP32 para:
      `{"chunked":true,"phase_index":p,"phase_total":P,"part":i,"total":n,"points":[...]}`
 3. `SET_PARAMS`
    - `{"wifi_ota_enabled": true|false}`
+   - para `wifi_ota_enabled=false`, o payload deve trazer
+     `requested_by_role=adm` ou `requested_by_admin=true`
 4. `PING`
    - responde com `ACK` e `reason: "pong"`.
 

@@ -44,14 +44,8 @@ class BluetoothDiscoveryService extends ChangeNotifier {
   }
 
   bool _isEligibleForOnboarding(Map<String, dynamic> d) {
-    final kind = d['kind']?.toString();
-    if (kind == 'gateway_matrix') {
-      // Gateway matriz permanece sempre com Wi-Fi/BLE/LoRa ativos.
-      return true;
-    }
-
-    // Coleira/gateway comum só entram na descoberta BLE quando o próprio
-    // firmware sinaliza Wi-Fi/OTA ativo no payload de manufacturer data.
+    // Dispositivo só entra na descoberta BLE quando o próprio firmware
+    // sinaliza Wi-Fi/OTA ativo no payload de manufacturer data.
     final wifiEnabled = d['wifi_enabled'];
     return wifiEnabled is bool && wifiEnabled;
   }

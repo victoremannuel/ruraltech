@@ -18,12 +18,12 @@ Também concentra dados para envio posterior ao backend (ex.: Firebase), via app
 4. `SdLogger.*`: log local em SD com hash chain.
 5. `LoRaProtocol.*` + `CryptoEngine.*`: serialização segura dos frames LoRa.
 
-## 3) Inicialização (sempre-on)
+## 3) Inicialização (padrão)
 
 1. Sobe watchdog.
 2. Inicializa display OLED e RTC.
-3. Sobe Wi-Fi AP (`RuralTech-Matriz`) sempre ativo.
-4. Sobe OTA (`ArduinoOTA`) no host `ruraltech-matriz`.
+3. Sobe Wi-Fi AP (`RuralTech-Matriz`) por padrão (`wifi_ota_enabled=true`).
+4. Sobe OTA (`ArduinoOTA`) no host `ruraltech-matriz` quando `wifi_ota_enabled=true`.
 5. Sobe BLE de presença com tipo `gateway_matrix`.
 6. Inicializa API HTTP/WS, SD e LoRa.
 
@@ -63,7 +63,8 @@ Fila de comandos WebSocket no firmware: 8 mensagens.
    - valida dados de ponto
    - fragmenta em múltiplos frames (`chunked`) se necessário
 4. `SET_PARAMS`:
-   - para o gateway matriz local, `wifi_ota_enabled=false` é ignorado
+   - aceita alternância local de `wifi_ota_enabled` (Wi-Fi/BLE/LoRa <-> LoRa-only)
+   - `wifi_ota_enabled=false` só é aceito quando comando indica origem administrativa (`requested_by_role=adm` ou `requested_by_admin=true`)
    - pode encaminhar para coleiras (`target: collar|collars|all`)
 5. Emite `command_result` no WebSocket e log SD (`DL|...`).
 
@@ -90,10 +91,11 @@ Fila de comandos WebSocket no firmware: 8 mensagens.
 
 ## 10) OTA/BLE e modo de operação
 
-1. OTA fica sempre ativa no gateway matriz.
-2. BLE fica sempre ativo no gateway matriz.
-3. `SET_PARAMS` local com `wifi_ota_enabled=false` não desliga Wi-Fi/OTA/BLE da matriz.
-4. Esse mesmo `SET_PARAMS` continua podendo ser encaminhado via LoRa para nós alvo.
+1. Padrão no boot: `wifi_ota_enabled=true` (Wi-Fi/BLE/LoRa ativos).
+2. Com `wifi_ota_enabled=false`: entra em LoRa-only (Wi-Fi/BLE desligados).
+3. Com `wifi_ota_enabled=true`: volta a Wi-Fi/BLE/LoRa.
+4. Comando para LoRa-only exige marcação administrativa no payload.
+5. `SET_PARAMS` continua podendo ser encaminhado via LoRa para nós alvo.
 
 ## 11) Papel na integração com backend
 

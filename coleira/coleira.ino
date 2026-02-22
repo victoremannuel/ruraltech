@@ -7,6 +7,10 @@
  * Risco e segurança: pulso elétrico só ocorre após escalonamento e com hard-limits locais,
  * mesmo sem gateway. Em perda de GPS, sistema degrada para modo seguro sem pulso.
  */
+#if !defined(ARDUINO_PARTITION_min_spiffs)
+#error "Selecione Partition Scheme: Minimal SPIFFS (1.9MB APP with OTA/128KB SPIFFS)."
+#endif
+
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <WiFi.h>
@@ -47,6 +51,8 @@ bool otaModeActive = false;
 bool wifiOtaEnabled = cfg::OTA_ENABLED;
 bool watchdogTaskRegistered = false;
 bool otaUploadInProgress = false;
+uint32_t wifiOtaEnabledAtMs = 0;
+uint32_t otaApLastClientSeenMs = 0;
 Preferences prefs_;
 bool prefsReady_ = false;
 static void logEvent(EventType type, int32_t d1, int32_t d2);
@@ -76,6 +82,18 @@ static String collarNodeId() { return String((uint32_t)cfg::DEVICE_ID); }
 
 static String collarAdvName() {
   return String(cfg::BLE_DEVICE_PREFIX) + "-" + collarNodeId();
+}
+
+static bool otaDisableGuardActive() {
+  if (!wifiOtaEnabled) return false;
+  const uint32_t now = millis();
+  if (wifiOtaEnabledAtMs != 0 && (uint32_t)(now - wifiOtaEnabledAtMs) < cfg::OTA_DISABLE_GUARD_MS) {
+    return true;
+  }
+  if (otaApLastClientSeenMs != 0 && (uint32_t)(now - otaApLastClientSeenMs) < cfg::OTA_DISABLE_GUARD_MS) {
+    return true;
+  }
+  return false;
 }
 
 static bool beginPrefs() {
@@ -156,6 +174,7 @@ static bool loadPersistedWifiOtaEnabled() {
 
 static void loadPersistedConfig() {
   wifiOtaEnabled = loadPersistedWifiOtaEnabled();
+  if (wifiOtaEnabled) wifiOtaEnabledAtMs = millis();
 
   Polygon savedFence;
   if (loadPersistedFence(&savedFence)) {
@@ -429,10 +448,35 @@ static void stopWifiOtaMaintenance() {
   LOGI("OTA/WiFi desativado: modo LoRa-only");
 }
 
+static void onWifiEvent(WiFiEvent_t event) {
+#if defined(ARDUINO_EVENT_WIFI_AP_START)
+  if (event == ARDUINO_EVENT_WIFI_AP_START) {
+    LOGI("WiFi AP iniciado");
+  }
+#endif
+#if defined(ARDUINO_EVENT_WIFI_AP_STOP)
+  if (event == ARDUINO_EVENT_WIFI_AP_STOP) {
+    otaModeActive = false;
+    LOGW("WiFi AP parou");
+  }
+#endif
+#if defined(ARDUINO_EVENT_WIFI_AP_STACONNECTED)
+  if (event == ARDUINO_EVENT_WIFI_AP_STACONNECTED) {
+    otaApLastClientSeenMs = millis();
+    LOGI("Cliente conectado no AP (n=%d)", WiFi.softAPgetStationNum());
+  }
+#endif
+#if defined(ARDUINO_EVENT_WIFI_AP_STADISCONNECTED)
+  if (event == ARDUINO_EVENT_WIFI_AP_STADISCONNECTED) {
+    LOGI("Cliente desconectado do AP (n=%d)", WiFi.softAPgetStationNum());
+  }
+#endif
+}
+
 static void startOtaService() {
   ArduinoOTA.setHostname(cfg::OTA_HOSTNAME);
   ArduinoOTA.setPort(3232);
-  ArduinoOTA.setTimeout(20000);
+  ArduinoOTA.setTimeout(cfg::OTA_ARDUINO_TIMEOUT_MS);
   ArduinoOTA.setPassword(cfg::OTA_PASSWORD);
   ArduinoOTA.onStart([]() {
     otaUploadInProgress = true;
@@ -470,13 +514,26 @@ static void startOtaService() {
   otaModeActive = true;
 }
 
+static bool otaApClientConnected() {
+  if (!wifiOtaEnabled || !otaModeActive) return false;
+  const wifi_mode_t mode = WiFi.getMode();
+  if (mode != WIFI_AP && mode != WIFI_AP_STA) return false;
+  return WiFi.softAPgetStationNum() > 0;
+}
+
 static void setupWifiOtaMaintenance() {
   if (!wifiOtaEnabled || !cfg::OTA_ENABLED) return;
+  wifiOtaEnabledAtMs = millis();
 
   if (cfg::OTA_FORCE_AP_ONLY) {
     WiFi.mode(WIFI_AP);
     WiFi.setSleep(false);
-    const bool apOk = WiFi.softAP(cfg::OTA_AP_SSID, cfg::OTA_AP_PASS);
+    const bool apOk = WiFi.softAP(
+        cfg::OTA_AP_SSID,
+        cfg::OTA_AP_PASS,
+        cfg::OTA_AP_CHANNEL,
+        false,
+        cfg::OTA_AP_MAX_CLIENTS);
     if (!apOk) {
       WiFi.mode(WIFI_OFF);
       LOGE("OTA: falha ao subir AP forcado.");
@@ -514,7 +571,12 @@ static void setupWifiOtaMaintenance() {
 
   WiFi.mode(WIFI_AP);
   WiFi.setSleep(false);
-  const bool apOk = WiFi.softAP(cfg::OTA_AP_SSID, cfg::OTA_AP_PASS);
+  const bool apOk = WiFi.softAP(
+      cfg::OTA_AP_SSID,
+      cfg::OTA_AP_PASS,
+      cfg::OTA_AP_CHANNEL,
+      false,
+      cfg::OTA_AP_MAX_CLIENTS);
   if (!apOk) {
     WiFi.mode(WIFI_OFF);
     LOGE("OTA: falha ao subir AP fallback.");
@@ -532,9 +594,21 @@ static void applyWifiOtaMode(bool enabled, const char* source) {
     return;
   }
 
+  if (!enabled && otaApClientConnected()) {
+    LOGW("SET_PARAMS: wifi_ota_enabled=0 ignorado (%s), cliente OTA conectado", source);
+    persistWifiOtaEnabled(true);
+    return;
+  }
+  if (!enabled && otaDisableGuardActive()) {
+    LOGW("SET_PARAMS: wifi_ota_enabled=0 ignorado (%s), guard OTA ativo", source);
+    persistWifiOtaEnabled(true);
+    return;
+  }
+
   wifiOtaEnabled = enabled;
   persistWifiOtaEnabled(enabled);
   setWatchdogEnabled(enabled);
+  if (enabled) wifiOtaEnabledAtMs = millis();
 
   if (enabled) {
     setupWifiOtaMaintenance();
@@ -551,6 +625,20 @@ static void applyWifiOtaMode(bool enabled, const char* source) {
     stopWifiOtaMaintenance();
     LOGI("SET_PARAMS: wifi_ota_enabled=0 aplicado via %s", source);
   }
+}
+
+static bool hasAdminModePermission(const JsonVariantConst payload) {
+  if (!payload.is<JsonObjectConst>()) return false;
+  const char* requestedByRole = payload["requested_by_role"] | "";
+  if (strcmp(requestedByRole, "adm") == 0 || strcmp(requestedByRole, "admin") == 0) {
+    return true;
+  }
+  const char* actorRole = payload["actor_role"] | "";
+  if (strcmp(actorRole, "adm") == 0 || strcmp(actorRole, "admin") == 0) {
+    return true;
+  }
+  const JsonVariantConst requestedByAdmin = payload["requested_by_admin"];
+  return requestedByAdmin.is<bool>() && requestedByAdmin.as<bool>();
 }
 
 static void logEvent(EventType type, int32_t d1 = 0, int32_t d2 = 0) {
@@ -667,7 +755,13 @@ static void applyDownlink(const LoRaFrame& frame) {
     }
   } else if (frame.msgType == MsgType::SET_PARAMS) {
     if (doc["wifi_ota_enabled"].is<bool>()) {
-      applyWifiOtaMode(doc["wifi_ota_enabled"].as<bool>(), "LoRa");
+      const bool enableWifi = doc["wifi_ota_enabled"].as<bool>();
+      if (!enableWifi && !hasAdminModePermission(doc.as<JsonVariantConst>())) {
+        LOGW("SET_PARAMS rejeitado: admin requerido para LoRa-only");
+        sendCommandFeedback(frame, false, "admin_required_for_lora_only");
+        return;
+      }
+      applyWifiOtaMode(enableWifi, "LoRa");
       sendCommandFeedback(frame, true);
     } else {
       LOGW("SET_PARAMS sem campo wifi_ota_enabled");
@@ -689,6 +783,7 @@ void setup() {
 #endif
   loadPersistedConfig();
   setWatchdogEnabled(wifiOtaEnabled);
+  WiFi.onEvent(onWifiEvent);
 
   setupWifiOtaMaintenance();
   if (cfg::BLE_PRESENCE_ENABLED) {
@@ -724,6 +819,7 @@ void loop() {
       return;
     }
   }
+  const bool otaSessionLikelyActive = otaUploadInProgress || otaApClientConnected();
 
   if (watchdogTaskRegistered) esp_task_wdt_reset();
   if (cfg::BLE_PRESENCE_ENABLED) {
@@ -793,9 +889,13 @@ void loop() {
   }
 
   LoRaFrame down;
-  if (lora.receiveFrame(down, cfg::RX_WINDOW_MS)) applyDownlink(down);
+  const uint32_t rxWindowMs = otaSessionLikelyActive
+                                  ? cfg::OTA_UPLOAD_RX_WINDOW_MS
+                                  : cfg::RX_WINDOW_MS;
+  if (lora.receiveFrame(down, rxWindowMs)) applyDownlink(down);
 
   EventRecord pending;
+  uint8_t eventBudget = otaSessionLikelyActive ? cfg::OTA_UPLOAD_EVENT_BURST : 0xFF;
   while (storage.popEvent(pending)) {
     LoRaFrame ev;
     ev.deviceId = cfg::DEVICE_ID;
@@ -809,6 +909,11 @@ void loop() {
     d["d2"] = pending.d2;
     ev.payloadLen = serializeJson(d, ev.payload, sizeof(ev.payload));
     if (!lora.sendFrame(ev)) break;
+    if (otaSessionLikelyActive) {
+      if (--eventBudget == 0) break;
+      ArduinoOTA.handle();
+      delay(2);
+    }
   }
 
   // Com Wi-Fi/OTA ativo, permanece online continuamente para manutenção remota.

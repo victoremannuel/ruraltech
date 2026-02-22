@@ -4,6 +4,10 @@
  * @version 1.0.0
  * @date 2026-02-21
  */
+#if !defined(ARDUINO_PARTITION_min_spiffs)
+#error "Selecione Partition Scheme: Minimal SPIFFS (1.9MB APP with OTA/128KB SPIFFS)."
+#endif
+
 #include <Arduino.h>
 #include <ctype.h>
 #include <cstring>
@@ -34,7 +38,7 @@ ApiServer api;
 RTC_DS3231 rtc;
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
 uint32_t seqDown = 1;
-bool wifiOtaEnabled = true;
+bool wifiOtaEnabled = cfg::OTA_ENABLED;
 bool watchdogTaskRegistered = false;
 bool otaUploadInProgress = false;
 static void setWatchdogEnabled(bool enabled);
@@ -73,7 +77,7 @@ static void setupWiFi() {
 }
 
 static void setupOta() {
-  if (!cfg::OTA_ENABLED) return;
+  if (!wifiOtaEnabled || !cfg::OTA_ENABLED) return;
   ArduinoOTA.setHostname(cfg::OTA_HOSTNAME);
   ArduinoOTA.setPort(3232);
   ArduinoOTA.setTimeout(20000);
@@ -106,6 +110,17 @@ static void setupOta() {
   LOGI("OTA ativo hostname=%s", cfg::OTA_HOSTNAME);
 }
 
+static void stopWifiAndOta() {
+  if (WiFi.getMode() == WIFI_STA || WiFi.getMode() == WIFI_AP_STA) {
+    WiFi.disconnect(true, true);
+  }
+  if (WiFi.getMode() == WIFI_AP || WiFi.getMode() == WIFI_AP_STA) {
+    WiFi.softAPdisconnect(true);
+  }
+  WiFi.mode(WIFI_OFF);
+  LOGI("Gateway matriz em modo LoRa-only");
+}
+
 static void setWatchdogEnabled(bool enabled) {
   if (enabled && !watchdogTaskRegistered) {
     esp_task_wdt_add(NULL);
@@ -124,6 +139,20 @@ static bool parseWifiOtaParam(const JsonVariantConst payload, bool& outEnabled) 
   return true;
 }
 
+static bool hasAdminModePermission(const JsonVariantConst payload) {
+  if (!payload.is<JsonObjectConst>()) return false;
+  const char* requestedByRole = payload["requested_by_role"] | "";
+  if (strcmp(requestedByRole, "adm") == 0 || strcmp(requestedByRole, "admin") == 0) {
+    return true;
+  }
+  const char* actorRole = payload["actor_role"] | "";
+  if (strcmp(actorRole, "adm") == 0 || strcmp(actorRole, "admin") == 0) {
+    return true;
+  }
+  const JsonVariantConst requestedByAdmin = payload["requested_by_admin"];
+  return requestedByAdmin.is<bool>() && requestedByAdmin.as<bool>();
+}
+
 static bool targetIncludesGateway(const JsonVariantConst payload) {
   if (!payload.is<JsonObjectConst>()) return true;
   const char* target = payload["target"] | "all";
@@ -137,19 +166,29 @@ static bool targetIncludesCollars(const JsonVariantConst payload) {
 }
 
 static void applyWifiOtaMode(bool enabled, const char* source) {
-  if (!enabled) {
-    LOGW("SET_PARAMS: gateway-matriz ignora wifi_ota_enabled=0 (%s)", source);
-  } else {
-    LOGI("SET_PARAMS: gateway-matriz mantendo wifi_ota_enabled=1 (%s)", source);
+  if (wifiOtaEnabled == enabled) {
+    LOGI("SET_PARAMS: wifi_ota_enabled ja estava em %d (%s)", enabled ? 1 : 0, source);
+    return;
   }
 
-  wifiOtaEnabled = true;
-  setupWiFi();
-  setupOta();
-  setWatchdogEnabled(true);
-  if (cfg::BLE_PRESENCE_ENABLED) {
-    blePresence.setEnabled(true);
-    blePresence.setFlags(true, WiFi.status() == WL_CONNECTED);
+  wifiOtaEnabled = enabled;
+  setWatchdogEnabled(enabled);
+
+  if (enabled) {
+    setupWiFi();
+    setupOta();
+    if (cfg::BLE_PRESENCE_ENABLED) {
+      blePresence.setEnabled(true);
+      blePresence.setFlags(true, WiFi.status() == WL_CONNECTED);
+    }
+    LOGI("SET_PARAMS: wifi_ota_enabled=1 aplicado via %s", source);
+  } else {
+    if (cfg::BLE_PRESENCE_ENABLED) {
+      blePresence.setFlags(false, false);
+      blePresence.setEnabled(false);
+    }
+    stopWifiAndOta();
+    LOGI("SET_PARAMS: wifi_ota_enabled=0 aplicado via %s", source);
   }
 }
 
@@ -379,14 +418,16 @@ void setup() {
 #else
   esp_task_wdt_init(12, true);
 #endif
-  setWatchdogEnabled(true);
+  setWatchdogEnabled(wifiOtaEnabled);
 
   Wire.begin(cfg::PIN_I2C_SDA, cfg::PIN_I2C_SCL);
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   drawStatus("Boot", cfg::FW_VERSION);
 
-  setupWiFi();
-  setupOta();
+  if (wifiOtaEnabled) {
+    setupWiFi();
+    setupOta();
+  }
   if (cfg::BLE_PRESENCE_ENABLED) {
     const String nodeId = gatewayNodeId();
     blePresence.begin(
@@ -395,8 +436,8 @@ void setup() {
         gatewayAdvName(nodeId),
         cfg::BLE_COMPANY_ID,
         cfg::BLE_SERVICE_UUID);
-    blePresence.setEnabled(true);
-    blePresence.setFlags(true, WiFi.status() == WL_CONNECTED);
+    blePresence.setEnabled(wifiOtaEnabled);
+    blePresence.setFlags(wifiOtaEnabled, WiFi.status() == WL_CONNECTED);
   }
   api.begin();
   rtc.begin();
@@ -409,20 +450,20 @@ void setup() {
 }
 
 void loop() {
-  if (cfg::OTA_ENABLED) {
+  if (wifiOtaEnabled && cfg::OTA_ENABLED) {
     ArduinoOTA.handle();
   }
   if (cfg::BLE_PRESENCE_ENABLED) {
-    blePresence.setEnabled(true);
-    blePresence.setFlags(true, WiFi.status() == WL_CONNECTED);
+    blePresence.setEnabled(wifiOtaEnabled);
+    blePresence.setFlags(wifiOtaEnabled, WiFi.status() == WL_CONNECTED);
     blePresence.loop();
   }
   if (watchdogTaskRegistered) esp_task_wdt_reset();
-  if (otaUploadInProgress) {
+  if (wifiOtaEnabled && otaUploadInProgress) {
     delay(2);
     return;
   }
-  api.loop();
+  if (wifiOtaEnabled) api.loop();
 
   LoRaFrame rx;
   if (lora.receive(rx)) {
@@ -431,7 +472,11 @@ void loop() {
       if (deserializeJson(params, rx.payload, rx.payloadLen) == DeserializationError::Ok) {
         bool wifiEnabled = false;
         if (parseWifiOtaParam(params.as<JsonVariantConst>(), wifiEnabled) && targetIncludesGateway(params.as<JsonVariantConst>())) {
-          applyWifiOtaMode(wifiEnabled, "LoRa");
+          if (!wifiEnabled && !hasAdminModePermission(params.as<JsonVariantConst>())) {
+            LOGW("SET_PARAMS LoRa rejeitado: admin requerido para LoRa-only");
+          } else {
+            applyWifiOtaMode(wifiEnabled, "LoRa");
+          }
         }
       }
     }
@@ -458,14 +503,30 @@ void loop() {
       const JsonVariantConst payload = cmd["payload"].as<JsonVariantConst>();
 
       bool localToggleRequested = false;
-      bool localWifiEnabled = true;
-      if (command == "SET_PARAMS" && parseWifiOtaParam(payload, localWifiEnabled) &&
-          targetIncludesGateway(payload)) {
-        localToggleRequested = true;
+      bool localWifiEnabled = wifiOtaEnabled;
+      bool setParamsPayloadValid = false;
+      bool requestedWifiEnabled = true;
+      bool hasAdminPermission = false;
+      if (command == "SET_PARAMS") {
+        setParamsPayloadValid = parseWifiOtaParam(payload, requestedWifiEnabled);
+        hasAdminPermission = hasAdminModePermission(payload);
+        if (setParamsPayloadValid && targetIncludesGateway(payload)) {
+          localToggleRequested = true;
+          localWifiEnabled = requestedWifiEnabled;
+        }
       }
 
       const uint32_t deviceId = cmd["device_id"] | 0;
-      const bool shouldRelayLoRa = !(command == "SET_PARAMS" && !targetIncludesCollars(payload));
+      bool shouldRelayLoRa = !(command == "SET_PARAMS" && !targetIncludesCollars(payload));
+      const bool invalidSetParamsPayload =
+          command == "SET_PARAMS" && !setParamsPayloadValid;
+      const bool rejectLoraOnlyToggle =
+          command == "SET_PARAMS" && setParamsPayloadValid &&
+          !requestedWifiEnabled && !hasAdminPermission;
+      if (invalidSetParamsPayload || rejectLoraOnlyToggle) {
+        shouldRelayLoRa = false;
+        localToggleRequested = false;
+      }
 
       const MsgType msgType = command == "SET_FENCE" ? MsgType::SET_FENCE :
                               command == "SET_HERDING_PLAN" ? MsgType::SET_HERDING_PLAN :
@@ -473,7 +534,13 @@ void loop() {
 
       bool ok = true;
       const char* failReason = nullptr;
-      if (shouldRelayLoRa) {
+      if (invalidSetParamsPayload) {
+        ok = false;
+        failReason = "missing_wifi_ota_enabled";
+      } else if (rejectLoraOnlyToggle) {
+        ok = false;
+        failReason = "admin_required_for_lora_only";
+      } else if (shouldRelayLoRa) {
         if (command == "SET_FENCE") {
           ok = sendFenceCommandChunked(deviceId, payload, &failReason);
         } else if (command == "SET_HERDING_PLAN") {

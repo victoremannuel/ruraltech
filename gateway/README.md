@@ -54,13 +54,15 @@ Receber LoRa da coleira, expor REST+WebSocket para o app, logar em microSD com h
 
 ## Chave remota Wi-Fi/OTA
 - Via WebSocket/API ou LoRa, envie `SET_PARAMS` com payload:
-  - `{"target":"all","wifi_ota_enabled":false}` -> gateway e coleiras em LoRa-only.
+  - `{"target":"all","wifi_ota_enabled":false,"requested_by_role":"adm"}` -> gateway e coleiras em LoRa-only.
   - `{"target":"all","wifi_ota_enabled":true}` -> reativa Wi-Fi/OTA e watchdog.
 - Targets aceitos: `all`, `gateway`, `collars`/`collar`.
+- `wifi_ota_enabled=false` só é aceito quando marcado como administrativo
+  (`requested_by_role=adm` ou `requested_by_admin=true`).
 - Regra de descoberta BLE:
-  - gateway comum: BLE onboarding fica ativo somente quando `wifi_ota_enabled=true`.
+  - gateway comum e gateway matriz: BLE onboarding fica ativo somente quando
+    `wifi_ota_enabled=true`.
   - com `wifi_ota_enabled=false`, BLE também é desligado.
-  - exceção: `gateway-matriz` mantém Wi-Fi + BLE + LoRa sempre ativos.
 
 ## Relay Gateway <-> Gateway
 - Gateways fazem relay LoRa multi-hop best-effort para `TELEMETRY`, `EVENT`,

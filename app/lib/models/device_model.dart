@@ -9,6 +9,7 @@ class DeviceModel {
   final double? lon;
   final String? ownerUid;
   final String? propertyId;
+  final bool wifiOtaEnabled;
 
   DeviceModel({
     required this.id,
@@ -19,6 +20,7 @@ class DeviceModel {
     this.lon,
     this.ownerUid,
     this.propertyId,
+    this.wifiOtaEnabled = true,
   });
 
   String get networkId {
@@ -83,6 +85,11 @@ class DeviceModel {
           }
           return null;
         })(),
+        wifiOtaEnabled: (() {
+          final raw = m['wifi_ota_enabled'];
+          if (raw is bool) return raw;
+          return true;
+        })(),
       );
 
   Map<String, dynamic> toMap() => {
@@ -93,5 +100,6 @@ class DeviceModel {
         'lon': lon,
         'ownerUid': ownerUid,
         'propertyId': propertyId,
+        'wifi_ota_enabled': wifiOtaEnabled,
       };
 }

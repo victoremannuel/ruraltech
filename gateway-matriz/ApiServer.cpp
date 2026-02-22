@@ -30,7 +30,7 @@ void ApiServer::begin() {
     doc["ap_ip"] = WiFi.softAPIP().toString();
     doc["gatewayId"] = compactIdentifier(WiFi.softAPmacAddress());
     doc["ota"] = cfg::OTA_ENABLED;
-    doc["wifi_ota_enabled"] = true;
+    doc["wifi_ota_enabled"] = WiFi.getMode() != WIFI_OFF;
     doc["role"] = "matrix";
     String out;
     serializeJson(doc, out);

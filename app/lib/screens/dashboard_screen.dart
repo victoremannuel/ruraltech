@@ -190,7 +190,50 @@ class _HomeScreenState extends State<HomeScreen> {
     _mapController.move(user, zoom);
   }
 
+  Future<bool> _confirmDelete(
+    BuildContext context, {
+    required String targetLabel,
+  }) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Confirmar exclusao'),
+        content: Text('Deseja realmente apagar $targetLabel?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Apagar'),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
+  void _showActionError(BuildContext context, Object error) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Falha na operacao: $error')),
+    );
+  }
+
+  bool _isLikelyMatrixGateway(Map<String, dynamic> gateway) {
+    final kind = (gateway['kind'] ?? '').toString().toLowerCase();
+    if (kind == 'gateway_matrix' || kind == 'matrix') return true;
+
+    final gatewayId =
+        (gateway['gatewayId'] ?? gateway['id'] ?? '').toString().toUpperCase();
+    if (gatewayId.startsWith('RT-M-')) return true;
+
+    final name = (gateway['name'] ?? '').toString().toLowerCase();
+    return name.contains('matriz');
+  }
+
   Future<void> _openSelectedPolygonEditor(BuildContext context) async {
+    final auth = context.read<AuthService>();
     final fb = context.read<FirebaseService>();
     final areaId = _selectedAreaId;
     final propertyId = _selectedPropertyId;
@@ -204,6 +247,9 @@ class _HomeScreenState extends State<HomeScreen> {
             title: 'Editar area',
             initialPoints: _selectedPolygonPoints,
             boundary: _selectedPolygonBoundary,
+            maxPoints: GatewayService.maxPolygonPoints,
+            onDelete: () => fb.deleteArea(id: areaId),
+            deleteLabel: 'Apagar area',
             onSave: (points) =>
                 fb.updateAreaPerimeter(id: areaId, perimeter: points),
           ),
@@ -227,6 +273,10 @@ class _HomeScreenState extends State<HomeScreen> {
           builder: (_) => PolygonEditorScreen(
             title: 'Editar propriedade',
             initialPoints: _selectedPolygonPoints,
+            onDelete: auth.isAdmin
+                ? () => fb.deleteRuralProperty(id: propertyId)
+                : null,
+            deleteLabel: 'Apagar propriedade',
             onSave: (points) =>
                 fb.updateRuralPropertyPolygon(id: propertyId, points: points),
           ),
@@ -246,6 +296,7 @@ class _HomeScreenState extends State<HomeScreen> {
       BuildContext context, DeviceModel device) async {
     final auth = context.read<AuthService>();
     final fb = context.read<FirebaseService>();
+    final gatewayService = context.read<GatewayService>();
     final uid = auth.user?.uid;
     if (uid == null) return;
 
@@ -277,6 +328,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final nameCtrl = TextEditingController(text: device.name);
     final statusCtrl = TextEditingController(text: device.status);
     final gatewayCtrl = TextEditingController();
+    bool wifiOtaEnabled = device.wifiOtaEnabled;
     final formKey = GlobalKey<FormState>();
 
     await showDialog<void>(
@@ -346,6 +398,27 @@ class _HomeScreenState extends State<HomeScreen> {
                         labelText: 'Gateway ID (opcional)'),
                   ),
                   const SizedBox(height: 8),
+                  if (auth.isAdmin)
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: wifiOtaEnabled,
+                      onChanged: (v) => setState(() => wifiOtaEnabled = v),
+                      title: const Text('Modo Wi-Fi/Bluetooth/LoRa'),
+                      subtitle: Text(
+                        wifiOtaEnabled
+                            ? 'Ativo (padrao). Desative para LoRa-only.'
+                            : 'LoRa-only ativo (Wi-Fi/BLE desligados).',
+                      ),
+                    )
+                  else
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Modo de conectividade'),
+                      subtitle: Text(
+                        wifiOtaEnabled ? 'Wi-Fi/Bluetooth/LoRa' : 'LoRa-only',
+                      ),
+                    ),
+                  const SizedBox(height: 8),
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(Icons.location_on),
@@ -384,6 +457,26 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           actions: [
+            if (auth.isAdmin)
+              TextButton(
+                onPressed: () async {
+                  final confirm =
+                      await _confirmDelete(context, targetLabel: 'a coleira');
+                  if (!confirm) return;
+                  try {
+                    await fb.deleteDevice(id: device.id);
+                    if (!context.mounted) return;
+                    Navigator.pop(context);
+                  } catch (e) {
+                    if (!context.mounted) return;
+                    _showActionError(context, e);
+                  }
+                },
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.red.shade700,
+                ),
+                child: const Text('Apagar'),
+              ),
             TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('Cancelar'),
@@ -392,6 +485,7 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () async {
                 if (!formKey.currentState!.validate()) return;
                 if (selectedPosition == null) return;
+                final modeChanged = wifiOtaEnabled != device.wifiOtaEnabled;
                 await fb.updateDevice(
                   id: device.id,
                   name: nameCtrl.text.trim(),
@@ -403,7 +497,49 @@ class _HomeScreenState extends State<HomeScreen> {
                       ? null
                       : gatewayCtrl.text.trim(),
                   propertyId: propertyId,
+                  wifiOtaEnabled: wifiOtaEnabled,
                 );
+                if (auth.isAdmin && modeChanged) {
+                  final loraTarget = (() {
+                    final d = (device.deviceId ?? '').trim();
+                    if (d.isNotEmpty) return d;
+                    return device.id.trim();
+                  })();
+                  if (int.tryParse(loraTarget) == null) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Modo salvo no cadastro, mas o ID LoRa da coleira nao e numerico para enviar SET_PARAMS.',
+                          ),
+                        ),
+                      );
+                    }
+                  } else {
+                    if (!gatewayService.isConnected) {
+                      gatewayService.connect();
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Tentando conectar ao gateway para aplicar SET_PARAMS via LoRa...',
+                            ),
+                          ),
+                        );
+                      }
+                    }
+                    gatewayService.sendCommand(
+                      deviceId: loraTarget,
+                      command: 'SET_PARAMS',
+                      payload: {
+                        'target': 'collars',
+                        'wifi_ota_enabled': wifiOtaEnabled,
+                        'requested_by_role': 'adm',
+                        'requested_by_admin': true,
+                      },
+                    );
+                  }
+                }
                 if (context.mounted) Navigator.pop(context);
               },
               child: const Text('Salvar'),
@@ -418,6 +554,7 @@ class _HomeScreenState extends State<HomeScreen> {
       BuildContext context, Map<String, dynamic> gateway) async {
     final auth = context.read<AuthService>();
     final fb = context.read<FirebaseService>();
+    final gatewayService = context.read<GatewayService>();
     final uid = auth.user?.uid;
     if (uid == null) return;
 
@@ -438,6 +575,10 @@ class _HomeScreenState extends State<HomeScreen> {
         TextEditingController(text: (gateway['status'] ?? 'active').toString());
     final hostCtrl =
         TextEditingController(text: (gateway['host'] ?? '').toString());
+    bool wifiOtaEnabled = gateway['wifi_ota_enabled'] is bool
+        ? gateway['wifi_ota_enabled'] as bool
+        : true;
+    final isMatrix = _isLikelyMatrixGateway(gateway);
     final formKey = GlobalKey<FormState>();
 
     await showDialog<void>(
@@ -483,6 +624,29 @@ class _HomeScreenState extends State<HomeScreen> {
                         const InputDecoration(labelText: 'Host (opcional)'),
                   ),
                   const SizedBox(height: 8),
+                  if (auth.isAdmin)
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: wifiOtaEnabled,
+                      onChanged: (v) => setState(() => wifiOtaEnabled = v),
+                      title: const Text('Modo Wi-Fi/Bluetooth/LoRa'),
+                      subtitle: Text(
+                        wifiOtaEnabled
+                            ? (isMatrix
+                                ? 'Ativo (padrao da matriz).'
+                                : 'Ativo (padrao). Desative para LoRa-only.')
+                            : 'LoRa-only ativo (Wi-Fi/BLE desligados).',
+                      ),
+                    )
+                  else
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Modo de conectividade'),
+                      subtitle: Text(
+                        wifiOtaEnabled ? 'Wi-Fi/Bluetooth/LoRa' : 'LoRa-only',
+                      ),
+                    ),
+                  const SizedBox(height: 8),
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: const Icon(Icons.location_on),
@@ -521,6 +685,26 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           actions: [
+            if (auth.isAdmin)
+              TextButton(
+                onPressed: () async {
+                  final confirm =
+                      await _confirmDelete(context, targetLabel: 'o gateway');
+                  if (!confirm) return;
+                  try {
+                    await fb.deleteGateway(id: gateway['id'].toString());
+                    if (!context.mounted) return;
+                    Navigator.pop(context);
+                  } catch (e) {
+                    if (!context.mounted) return;
+                    _showActionError(context, e);
+                  }
+                },
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.red.shade700,
+                ),
+                child: const Text('Apagar'),
+              ),
             TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('Cancelar'),
@@ -529,6 +713,10 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () async {
                 if (!formKey.currentState!.validate()) return;
                 if (selectedPosition == null) return;
+                final modeChanged = wifiOtaEnabled !=
+                    ((gateway['wifi_ota_enabled'] is bool)
+                        ? gateway['wifi_ota_enabled'] as bool
+                        : true);
                 await fb.updateGateway(
                   id: gateway['id'].toString(),
                   name: nameCtrl.text.trim(),
@@ -539,7 +727,36 @@ class _HomeScreenState extends State<HomeScreen> {
                   propertyId: propertyId,
                   lat: selectedPosition!.latitude,
                   lon: selectedPosition!.longitude,
+                  wifiOtaEnabled: wifiOtaEnabled,
                 );
+                if (auth.isAdmin && modeChanged) {
+                  final host = hostCtrl.text.trim();
+                  if (host.startsWith('ws://') || host.startsWith('wss://')) {
+                    gatewayService.gatewayHost = host;
+                  }
+                  if (!gatewayService.isConnected) {
+                    gatewayService.connect();
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Tentando conectar ao gateway alvo para aplicar SET_PARAMS...',
+                          ),
+                        ),
+                      );
+                    }
+                  }
+                  gatewayService.sendCommand(
+                    deviceId: '0',
+                    command: 'SET_PARAMS',
+                    payload: {
+                      'target': 'gateway',
+                      'wifi_ota_enabled': wifiOtaEnabled,
+                      'requested_by_role': 'adm',
+                      'requested_by_admin': true,
+                    },
+                  );
+                }
                 if (context.mounted) Navigator.pop(context);
               },
               child: const Text('Salvar'),
@@ -557,10 +774,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final bleService = context.read<BluetoothDiscoveryService>();
     final uid = auth.user?.uid;
     if (uid == null) return;
-    if (!gatewayService.isConnected) {
-      gatewayService.connect();
+    if (!bleService.isScanning) {
+      unawaited(bleService.startScan());
     }
-    unawaited(bleService.startScan());
 
     final properties =
         await fb.getRuralProperties(uid: uid, isAdmin: auth.isAdmin);
@@ -728,29 +944,19 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 8),
                       Align(
                         alignment: Alignment.centerLeft,
-                        child: Wrap(
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          spacing: 10,
-                          runSpacing: 8,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              gatewayService.isConnected
-                                  ? 'Gateway conectado'
-                                  : 'Gateway desconectado',
+                            const Text(
+                              'Descoberta da coleira (Bluetooth/Wi-Fi OTA)',
                             ),
-                            OutlinedButton.icon(
-                              onPressed: gatewayService.connect,
-                              icon: Icon(
-                                gatewayService.isConnected
-                                    ? Icons.wifi
-                                    : Icons.wifi_off,
-                              ),
-                              label: Text(
-                                gatewayService.isConnected
-                                    ? 'Reconectar'
-                                    : 'Conectar gateway',
-                              ),
+                            const SizedBox(height: 4),
+                            const Text(
+                              'Use Bluetooth para associar a coleira ao cadastro atual. '
+                              'Se estiver em Wi-Fi OTA, preencha manualmente os campos se necessario.',
+                              style: TextStyle(fontSize: 12),
                             ),
+                            const SizedBox(height: 8),
                             OutlinedButton.icon(
                               onPressed: bleService.isScanning
                                   ? null
@@ -762,9 +968,41 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                               label: Text(
                                 bleService.isScanning
-                                    ? 'Buscando BLE...'
-                                    : 'Buscar Bluetooth',
+                                    ? 'Buscando coleira...'
+                                    : 'Buscar coleira por Bluetooth',
                               ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'LoRa via gateway (opcional)',
+                              style: TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                            const SizedBox(height: 4),
+                            Wrap(
+                              spacing: 10,
+                              runSpacing: 8,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                Text(
+                                  gatewayService.isConnected
+                                      ? 'Gateway LoRa conectado'
+                                      : 'Gateway LoRa desconectado',
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                                OutlinedButton.icon(
+                                  onPressed: gatewayService.connect,
+                                  icon: Icon(
+                                    gatewayService.isConnected
+                                        ? Icons.wifi
+                                        : Icons.wifi_off,
+                                  ),
+                                  label: Text(
+                                    gatewayService.isConnected
+                                        ? 'Atualizar via LoRa'
+                                        : 'Conectar gateway LoRa',
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
@@ -819,14 +1057,14 @@ class _HomeScreenState extends State<HomeScreen> {
                             applyDetectedCollar(detected);
                           }),
                           decoration: const InputDecoration(
-                            labelText: 'Coleira detectada (LoRa/BLE)',
+                            labelText: 'Coleira detectada (Bluetooth/LoRa)',
                           ),
                         )
                       else
                         const Padding(
                           padding: EdgeInsets.only(top: 6, bottom: 2),
                           child: Text(
-                            'Nenhuma coleira detectada ainda. Use Bluetooth ou aguarde telemetria LoRa.',
+                            'Nenhuma coleira detectada ainda. Use Bluetooth ou, opcionalmente, conecte o gateway para receber LoRa.',
                           ),
                         ),
                       TextFormField(

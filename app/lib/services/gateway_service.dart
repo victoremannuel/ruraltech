@@ -118,6 +118,25 @@ class GatewayService extends ChangeNotifier {
     return null;
   }
 
+  String? _validateSetParamsPayload(Map<String, dynamic> payload) {
+    final wifiEnabled = payload['wifi_ota_enabled'];
+    if (wifiEnabled is! bool) return 'missing_wifi_ota_enabled';
+    if (wifiEnabled) return null;
+
+    final requestedByAdmin = payload['requested_by_admin'] == true;
+    final requestedByRole =
+        (payload['requested_by_role'] ?? payload['actor_role'])
+            ?.toString()
+            .trim()
+            .toLowerCase();
+    if (requestedByAdmin ||
+        requestedByRole == 'adm' ||
+        requestedByRole == 'admin') {
+      return null;
+    }
+    return 'admin_required_for_lora_only';
+  }
+
   String? _validatePayloadByCommand(
       String command, Map<String, dynamic> payload) {
     switch (command) {
@@ -125,6 +144,8 @@ class GatewayService extends ChangeNotifier {
         return _validateFencePayload(payload);
       case 'SET_HERDING_PLAN':
         return _validateHerdingPayload(payload);
+      case 'SET_PARAMS':
+        return _validateSetParamsPayload(payload);
       default:
         return null;
     }

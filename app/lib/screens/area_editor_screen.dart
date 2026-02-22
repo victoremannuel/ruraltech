@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../services/auth_service.dart';
 import '../services/firebase_service.dart';
+import '../services/gateway_service.dart';
 
 class AreaEditorScreen extends StatefulWidget {
   const AreaEditorScreen({super.key});
@@ -14,6 +15,8 @@ class AreaEditorScreen extends StatefulWidget {
 }
 
 class _AreaEditorScreenState extends State<AreaEditorScreen> {
+  static const int _maxAreaPoints = GatewayService.maxPolygonPoints;
+
   final List<LatLng> _points = [];
   String? _selectedPropertyId;
   bool _loadingProperties = true;
@@ -26,12 +29,16 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
     if (value is List && value.length >= 2) {
       final lat = value[0];
       final lon = value[1];
-      if (lat is num && lon is num) return LatLng(lat.toDouble(), lon.toDouble());
+      if (lat is num && lon is num) {
+        return LatLng(lat.toDouble(), lon.toDouble());
+      }
     }
     if (value is Map) {
       final lat = value['lat'] ?? value['latitude'];
       final lon = value['lon'] ?? value['lng'] ?? value['longitude'];
-      if (lat is num && lon is num) return LatLng(lat.toDouble(), lon.toDouble());
+      if (lat is num && lon is num) {
+        return LatLng(lat.toDouble(), lon.toDouble());
+      }
     }
     return null;
   }
@@ -113,6 +120,14 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
       );
       return;
     }
+    if (_points.length > _maxAreaPoints) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Permitido apenas $_maxAreaPoints pontos por area.'),
+        ),
+      );
+      return;
+    }
 
     final uid = context.read<AuthService>().user?.uid;
     if (uid == null) return;
@@ -160,75 +175,87 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
             padding: const EdgeInsets.all(12),
             color: Colors.green.withValues(alpha: 0.08),
             child: Text(
-                'Toque para desenhar o poligono (${_points.length} pontos)'),
+                'Toque para desenhar o poligono (${_points.length}/$_maxAreaPoints pontos)'),
           ),
           Expanded(
             child: Builder(builder: (context) {
               _fitToSelectedProperty();
               return FlutterMap(
-              mapController: _mapController,
-              options: MapOptions(
-                initialCenter: const LatLng(-23.0, -46.0),
-                initialZoom: 15,
-                onTap: (_, p) {
-                  final propertyPolygon = _selectedPropertyPolygon;
-                  if (propertyPolygon.length < 3) return;
-                  if (!_isPointInsidePolygon(p, propertyPolygon)) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'Ponto fora do perimetro da propriedade selecionada.',
-                        ),
-                      ),
-                    );
-                    return;
-                  }
-                  setState(() => _points.add(p));
-                },
-              ),
-              children: [
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.example.ruraltechApp',
-                ),
-                PolygonLayer(
-                  polygons: [
-                    if (_selectedPropertyPolygon.length >= 3)
-                      Polygon(
-                        points: _selectedPropertyPolygon,
-                        color: Colors.orange.withValues(alpha: 0.2),
-                        borderColor: Colors.orange.shade700,
-                        borderStrokeWidth: 3,
-                      ),
-                    if (_points.length >= 3)
-                      Polygon(
-                        points: _points,
-                        color: Colors.teal.withValues(alpha: 0.3),
-                        borderColor: Colors.teal,
-                        borderStrokeWidth: 3,
-                      ),
-                  ],
-                ),
-                MarkerLayer(
-                  markers: _points
-                      .map(
-                        (p) => Marker(
-                          point: p,
-                          width: 16,
-                          height: 16,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.teal.shade800,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 2),
-                            ),
+                mapController: _mapController,
+                options: MapOptions(
+                  initialCenter: const LatLng(-23.0, -46.0),
+                  initialZoom: 15,
+                  onTap: (_, p) {
+                    if (_points.length >= _maxAreaPoints) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Permitido apenas $_maxAreaPoints pontos por area.',
                           ),
                         ),
-                      )
-                      .toList(),
+                      );
+                      return;
+                    }
+                    final propertyPolygon = _selectedPropertyPolygon;
+                    if (propertyPolygon.length < 3) return;
+                    if (!_isPointInsidePolygon(p, propertyPolygon)) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Ponto fora do perimetro da propriedade selecionada.',
+                          ),
+                        ),
+                      );
+                      return;
+                    }
+                    setState(() => _points.add(p));
+                  },
                 ),
-              ],
-            );
+                children: [
+                  TileLayer(
+                    urlTemplate:
+                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    userAgentPackageName: 'com.example.ruraltechApp',
+                  ),
+                  PolygonLayer(
+                    polygons: [
+                      if (_selectedPropertyPolygon.length >= 3)
+                        Polygon(
+                          points: _selectedPropertyPolygon,
+                          color: Colors.orange.withValues(alpha: 0.2),
+                          borderColor: Colors.orange.shade700,
+                          borderStrokeWidth: 3,
+                        ),
+                      if (_points.length >= 3)
+                        Polygon(
+                          points: _points,
+                          color: Colors.teal.withValues(alpha: 0.3),
+                          borderColor: Colors.teal,
+                          borderStrokeWidth: 3,
+                        ),
+                    ],
+                  ),
+                  MarkerLayer(
+                    markers: _points
+                        .map(
+                          (p) => Marker(
+                            point: p,
+                            width: 16,
+                            height: 16,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.teal.shade800,
+                                shape: BoxShape.circle,
+                                border:
+                                    Border.all(color: Colors.white, width: 2),
+                              ),
+                            ),
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ],
+              );
             }),
           ),
           Padding(

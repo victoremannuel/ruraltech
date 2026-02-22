@@ -4,6 +4,10 @@
  * @version 1.0.0
  * @date 2026-02-18
  */
+#if !defined(ARDUINO_PARTITION_min_spiffs)
+#error "Selecione Partition Scheme: Minimal SPIFFS (1.9MB APP with OTA/128KB SPIFFS)."
+#endif
+
 #include <Arduino.h>
 #include <ctype.h>
 #include <cstring>
@@ -133,6 +137,20 @@ static bool parseWifiOtaParam(const JsonVariantConst payload, bool& outEnabled) 
   if (!v.is<bool>()) return false;
   outEnabled = v.as<bool>();
   return true;
+}
+
+static bool hasAdminModePermission(const JsonVariantConst payload) {
+  if (!payload.is<JsonObjectConst>()) return false;
+  const char* requestedByRole = payload["requested_by_role"] | "";
+  if (strcmp(requestedByRole, "adm") == 0 || strcmp(requestedByRole, "admin") == 0) {
+    return true;
+  }
+  const char* actorRole = payload["actor_role"] | "";
+  if (strcmp(actorRole, "adm") == 0 || strcmp(actorRole, "admin") == 0) {
+    return true;
+  }
+  const JsonVariantConst requestedByAdmin = payload["requested_by_admin"];
+  return requestedByAdmin.is<bool>() && requestedByAdmin.as<bool>();
 }
 
 static bool targetIncludesGateway(const JsonVariantConst payload) {
@@ -454,7 +472,11 @@ void loop() {
       if (deserializeJson(params, rx.payload, rx.payloadLen) == DeserializationError::Ok) {
         bool wifiEnabled = false;
         if (parseWifiOtaParam(params.as<JsonVariantConst>(), wifiEnabled) && targetIncludesGateway(params.as<JsonVariantConst>())) {
-          applyWifiOtaMode(wifiEnabled, "LoRa");
+          if (!wifiEnabled && !hasAdminModePermission(params.as<JsonVariantConst>())) {
+            LOGW("SET_PARAMS LoRa rejeitado: admin requerido para LoRa-only");
+          } else {
+            applyWifiOtaMode(wifiEnabled, "LoRa");
+          }
         }
       }
     }
@@ -482,13 +504,29 @@ void loop() {
 
       bool localToggleRequested = false;
       bool localWifiEnabled = wifiOtaEnabled;
-      if (command == "SET_PARAMS" && parseWifiOtaParam(payload, localWifiEnabled) &&
-          targetIncludesGateway(payload)) {
-        localToggleRequested = true;
+      bool setParamsPayloadValid = false;
+      bool requestedWifiEnabled = true;
+      bool hasAdminPermission = false;
+      if (command == "SET_PARAMS") {
+        setParamsPayloadValid = parseWifiOtaParam(payload, requestedWifiEnabled);
+        hasAdminPermission = hasAdminModePermission(payload);
+        if (setParamsPayloadValid && targetIncludesGateway(payload)) {
+          localToggleRequested = true;
+          localWifiEnabled = requestedWifiEnabled;
+        }
       }
 
       const uint32_t deviceId = cmd["device_id"] | 0;
-      const bool shouldRelayLoRa = !(command == "SET_PARAMS" && !targetIncludesCollars(payload));
+      bool shouldRelayLoRa = !(command == "SET_PARAMS" && !targetIncludesCollars(payload));
+      const bool invalidSetParamsPayload =
+          command == "SET_PARAMS" && !setParamsPayloadValid;
+      const bool rejectLoraOnlyToggle =
+          command == "SET_PARAMS" && setParamsPayloadValid &&
+          !requestedWifiEnabled && !hasAdminPermission;
+      if (invalidSetParamsPayload || rejectLoraOnlyToggle) {
+        shouldRelayLoRa = false;
+        localToggleRequested = false;
+      }
 
       const MsgType msgType = command == "SET_FENCE" ? MsgType::SET_FENCE :
                               command == "SET_HERDING_PLAN" ? MsgType::SET_HERDING_PLAN :
@@ -496,7 +534,13 @@ void loop() {
 
       bool ok = true;
       const char* failReason = nullptr;
-      if (shouldRelayLoRa) {
+      if (invalidSetParamsPayload) {
+        ok = false;
+        failReason = "missing_wifi_ota_enabled";
+      } else if (rejectLoraOnlyToggle) {
+        ok = false;
+        failReason = "admin_required_for_lora_only";
+      } else if (shouldRelayLoRa) {
         if (command == "SET_FENCE") {
           ok = sendFenceCommandChunked(deviceId, payload, &failReason);
         } else if (command == "SET_HERDING_PLAN") {
