@@ -121,7 +121,7 @@ class GatewayService extends ChangeNotifier {
   String? _validateSetParamsPayload(Map<String, dynamic> payload) {
     final wifiEnabled = payload['wifi_ota_enabled'];
     if (wifiEnabled is! bool) return 'missing_wifi_ota_enabled';
-    if (wifiEnabled) return null;
+    if (!wifiEnabled) return null;
 
     final requestedByAdmin = payload['requested_by_admin'] == true;
     final requestedByRole =
@@ -134,7 +134,7 @@ class GatewayService extends ChangeNotifier {
         requestedByRole == 'admin') {
       return null;
     }
-    return 'admin_required_for_lora_only';
+    return 'admin_required_for_wifi_mode';
   }
 
   String? _validatePayloadByCommand(

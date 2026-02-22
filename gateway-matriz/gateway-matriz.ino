@@ -40,7 +40,7 @@ ApiServer api;
 RTC_DS3231 rtc;
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
 uint32_t seqDown = 1;
-bool wifiOtaEnabled = cfg::OTA_ENABLED;
+bool wifiOtaEnabled = cfg::WIFI_OTA_DEFAULT_ENABLED;
 bool watchdogTaskRegistered = false;
 bool otaUploadInProgress = false;
 bool wifiApRunning = false;
@@ -600,8 +600,8 @@ void loop() {
       if (deserializeJson(params, rx.payload, rx.payloadLen) == DeserializationError::Ok) {
         bool wifiEnabled = false;
         if (parseWifiOtaParam(params.as<JsonVariantConst>(), wifiEnabled) && targetIncludesGateway(params.as<JsonVariantConst>())) {
-          if (!wifiEnabled && !hasAdminModePermission(params.as<JsonVariantConst>())) {
-            LOGW("SET_PARAMS LoRa rejeitado: admin requerido para LoRa-only");
+          if (wifiEnabled && !hasAdminModePermission(params.as<JsonVariantConst>())) {
+            LOGW("SET_PARAMS LoRa rejeitado: admin requerido para modo Wi-Fi");
           } else {
             applyWifiOtaMode(wifiEnabled, "LoRa");
           }
@@ -648,10 +648,10 @@ void loop() {
       bool shouldRelayLoRa = !(command == "SET_PARAMS" && !targetIncludesCollars(payload));
       const bool invalidSetParamsPayload =
           command == "SET_PARAMS" && !setParamsPayloadValid;
-      const bool rejectLoraOnlyToggle =
+      const bool rejectWifiModeToggle =
           command == "SET_PARAMS" && setParamsPayloadValid &&
-          !requestedWifiEnabled && !hasAdminPermission;
-      if (invalidSetParamsPayload || rejectLoraOnlyToggle) {
+          requestedWifiEnabled && !hasAdminPermission;
+      if (invalidSetParamsPayload || rejectWifiModeToggle) {
         shouldRelayLoRa = false;
         localToggleRequested = false;
       }
@@ -665,9 +665,9 @@ void loop() {
       if (invalidSetParamsPayload) {
         ok = false;
         failReason = "missing_wifi_ota_enabled";
-      } else if (rejectLoraOnlyToggle) {
+      } else if (rejectWifiModeToggle) {
         ok = false;
-        failReason = "admin_required_for_lora_only";
+        failReason = "admin_required_for_wifi_mode";
       } else if (shouldRelayLoRa) {
         if (command == "SET_FENCE") {
           ok = sendFenceCommandChunked(deviceId, payload, &failReason);

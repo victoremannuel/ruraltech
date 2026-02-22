@@ -50,7 +50,7 @@ uint32_t lastCycle = 0;
 uint32_t violationStart = 0;
 bool wasInside = true;
 bool otaModeActive = false;
-bool wifiOtaEnabled = cfg::OTA_ENABLED;
+bool wifiOtaEnabled = cfg::WIFI_OTA_DEFAULT_ENABLED;
 bool watchdogTaskRegistered = false;
 bool otaUploadInProgress = false;
 uint32_t wifiOtaEnabledAtMs = 0;
@@ -206,8 +206,8 @@ static bool loadPersistedHerdingPlan(HerdingPlan* outPlan) {
 }
 
 static bool loadPersistedWifiOtaEnabled() {
-  if (!beginPrefs()) return cfg::OTA_ENABLED;
-  return prefs_.getBool(cfg::PREF_KEY_WIFI_OTA, cfg::OTA_ENABLED);
+  if (!beginPrefs()) return cfg::WIFI_OTA_DEFAULT_ENABLED;
+  return prefs_.getBool(cfg::PREF_KEY_WIFI_OTA, cfg::WIFI_OTA_DEFAULT_ENABLED);
 }
 
 static void loadPersistedConfig() {
@@ -833,9 +833,9 @@ static void applyDownlink(const LoRaFrame& frame) {
   } else if (frame.msgType == MsgType::SET_PARAMS) {
     if (doc["wifi_ota_enabled"].is<bool>()) {
       const bool enableWifi = doc["wifi_ota_enabled"].as<bool>();
-      if (!enableWifi && !hasAdminModePermission(doc.as<JsonVariantConst>())) {
-        LOGW("SET_PARAMS rejeitado: admin requerido para LoRa-only");
-        sendCommandFeedback(frame, false, "admin_required_for_lora_only");
+      if (enableWifi && !hasAdminModePermission(doc.as<JsonVariantConst>())) {
+        LOGW("SET_PARAMS rejeitado: admin requerido para modo Wi-Fi");
+        sendCommandFeedback(frame, false, "admin_required_for_wifi_mode");
         return;
       }
       applyWifiOtaMode(enableWifi, "LoRa");

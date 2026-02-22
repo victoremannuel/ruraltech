@@ -42,6 +42,7 @@ constexpr uint8_t LORA_SYNC_WORD = 0x12;
 
 // Wi-Fi / OTA (manutenção)
 constexpr bool OTA_ENABLED = true;
+constexpr bool WIFI_OTA_DEFAULT_ENABLED = false;
 constexpr char WIFI_SSID[] = "RuralTech-Gateway";
 constexpr char WIFI_PASS[] = "ruraltechota";
 constexpr char OTA_HOSTNAME[] = "ruraltech-coleira";

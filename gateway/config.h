@@ -24,6 +24,7 @@ constexpr uint16_t WS_PORT = 81;
 constexpr char AP_SSID[] = "RuralTech-Gateway";
 constexpr char AP_PASS[] = "ruraltechota";
 constexpr bool OTA_ENABLED = true;
+constexpr bool WIFI_OTA_DEFAULT_ENABLED = false;
 constexpr char OTA_HOSTNAME[] = "ruraltech-gateway";
 constexpr char OTA_PASSWORD[] = "ruraltechota";
 constexpr uint32_t OTA_HANDSHAKE_TIMEOUT_MS = 120000;
