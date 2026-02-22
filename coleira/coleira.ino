@@ -833,9 +833,9 @@ static void applyDownlink(const LoRaFrame& frame) {
   } else if (frame.msgType == MsgType::SET_PARAMS) {
     if (doc["wifi_ota_enabled"].is<bool>()) {
       const bool enableWifi = doc["wifi_ota_enabled"].as<bool>();
-      if (enableWifi && !hasAdminModePermission(doc.as<JsonVariantConst>())) {
-        LOGW("SET_PARAMS rejeitado: admin requerido para modo Wi-Fi");
-        sendCommandFeedback(frame, false, "admin_required_for_wifi_mode");
+      if (!enableWifi && !hasAdminModePermission(doc.as<JsonVariantConst>())) {
+        LOGW("SET_PARAMS rejeitado: admin requerido para LoRa-only");
+        sendCommandFeedback(frame, false, "admin_required_for_lora_only");
         return;
       }
       applyWifiOtaMode(enableWifi, "LoRa");

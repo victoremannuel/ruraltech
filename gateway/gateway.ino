@@ -600,8 +600,8 @@ void loop() {
       if (deserializeJson(params, rx.payload, rx.payloadLen) == DeserializationError::Ok) {
         bool wifiEnabled = false;
         if (parseWifiOtaParam(params.as<JsonVariantConst>(), wifiEnabled) && targetIncludesGateway(params.as<JsonVariantConst>())) {
-          if (wifiEnabled && !hasAdminModePermission(params.as<JsonVariantConst>())) {
-            LOGW("SET_PARAMS LoRa rejeitado: admin requerido para modo Wi-Fi");
+          if (!wifiEnabled && !hasAdminModePermission(params.as<JsonVariantConst>())) {
+            LOGW("SET_PARAMS LoRa rejeitado: admin requerido para LoRa-only");
           } else {
             applyWifiOtaMode(wifiEnabled, "LoRa");
           }
@@ -648,10 +648,10 @@ void loop() {
       bool shouldRelayLoRa = !(command == "SET_PARAMS" && !targetIncludesCollars(payload));
       const bool invalidSetParamsPayload =
           command == "SET_PARAMS" && !setParamsPayloadValid;
-      const bool rejectWifiModeToggle =
+      const bool rejectLoraOnlyToggle =
           command == "SET_PARAMS" && setParamsPayloadValid &&
-          requestedWifiEnabled && !hasAdminPermission;
-      if (invalidSetParamsPayload || rejectWifiModeToggle) {
+          !requestedWifiEnabled && !hasAdminPermission;
+      if (invalidSetParamsPayload || rejectLoraOnlyToggle) {
         shouldRelayLoRa = false;
         localToggleRequested = false;
       }
@@ -665,9 +665,9 @@ void loop() {
       if (invalidSetParamsPayload) {
         ok = false;
         failReason = "missing_wifi_ota_enabled";
-      } else if (rejectWifiModeToggle) {
+      } else if (rejectLoraOnlyToggle) {
         ok = false;
-        failReason = "admin_required_for_wifi_mode";
+        failReason = "admin_required_for_lora_only";
       } else if (shouldRelayLoRa) {
         if (command == "SET_FENCE") {
           ok = sendFenceCommandChunked(deviceId, payload, &failReason);
