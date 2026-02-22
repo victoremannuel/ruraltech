@@ -19,6 +19,8 @@ dependencies:
   flutter_map: ^7.0.2
   latlong2: ^0.9.1
   geolocator: ^13.0.2
+  file_picker: ^8.1.2
+  flutter_blue_plus: ^1.35.8
 
 dev_dependencies:
   flutter_test:

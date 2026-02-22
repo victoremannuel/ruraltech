@@ -11,6 +11,9 @@
 #include <ArduinoJson.h>
 #include <WiFi.h>
 #include <ArduinoOTA.h>
+#include <ESPmDNS.h>
+#include <Preferences.h>
+#include <math.h>
 #include <esp_task_wdt.h>
 #include <esp_sleep.h>
 #if __has_include(<esp_idf_version.h>)
@@ -23,6 +26,7 @@
 #include "SafetyController.h"
 #include "StorageQueue.h"
 #include "LoRaManager.h"
+#include "BlePresence.h"
 #include "HerdingController.h"
 #include "StateMachine.h"
 
@@ -31,6 +35,7 @@ Geofence geofence;
 SafetyController safety;
 StorageQueue storage;
 LoRaManager lora;
+BlePresence blePresence;
 HerdingController herding;
 StateMachine stateMachine;
 
@@ -41,9 +46,365 @@ bool wasInside = true;
 bool otaModeActive = false;
 bool wifiOtaEnabled = cfg::OTA_ENABLED;
 bool watchdogTaskRegistered = false;
+bool otaUploadInProgress = false;
+Preferences prefs_;
+bool prefsReady_ = false;
+static void logEvent(EventType type, int32_t d1, int32_t d2);
+
+struct FenceChunkRxState {
+  bool active = false;
+  uint8_t totalParts = 0;
+  uint8_t expectedPart = 0;
+  Polygon fence{};
+} fenceChunkRx_;
+
+struct HerdChunkRxState {
+  bool active = false;
+  uint8_t phaseTotal = 0;
+  uint8_t currentPhase = 0;
+  uint8_t expectedPart = 0;
+  uint8_t totalPartsCurrentPhase = 0;
+  Polygon phaseAccum{};
+  HerdingPlan plan{};
+} herdChunkRx_;
 
 static void randomNonce(uint8_t* nonce12) {
   for (int i = 0; i < 12; ++i) nonce12[i] = (uint8_t)esp_random();
+}
+
+static String collarNodeId() { return String((uint32_t)cfg::DEVICE_ID); }
+
+static String collarAdvName() {
+  return String(cfg::BLE_DEVICE_PREFIX) + "-" + collarNodeId();
+}
+
+static bool beginPrefs() {
+  if (prefsReady_) return true;
+  prefsReady_ = prefs_.begin(cfg::PREF_NAMESPACE, false);
+  if (!prefsReady_) LOGE("Falha ao abrir NVS namespace=%s", cfg::PREF_NAMESPACE);
+  return prefsReady_;
+}
+
+static bool isValidGeoPoint(const GeoPoint& p) {
+  return isfinite(p.lat) && isfinite(p.lon) &&
+         p.lat >= -90.0 && p.lat <= 90.0 &&
+         p.lon >= -180.0 && p.lon <= 180.0;
+}
+
+static bool isValidPolygon(const Polygon& p) {
+  if (p.count < 3 || p.count > cfg::MAX_POLYGON_POINTS) return false;
+  for (uint8_t i = 0; i < p.count; ++i) {
+    if (!isValidGeoPoint(p.points[i])) return false;
+  }
+  return true;
+}
+
+static bool sanitizeHerdingPlan(HerdingPlan* plan) {
+  if (!plan) return false;
+  if (plan->phaseCount == 0 || plan->phaseCount > cfg::MAX_HERD_PHASES) {
+    plan->active = false;
+    plan->phaseCount = 0;
+    plan->currentPhase = 0;
+    return false;
+  }
+  for (uint8_t i = 0; i < plan->phaseCount; ++i) {
+    if (!isValidPolygon(plan->phases[i])) {
+      plan->active = false;
+      plan->phaseCount = 0;
+      plan->currentPhase = 0;
+      return false;
+    }
+  }
+  if (plan->currentPhase >= plan->phaseCount) plan->currentPhase = 0;
+  return true;
+}
+
+static void persistWifiOtaEnabled(bool enabled) {
+  if (!beginPrefs()) return;
+  prefs_.putBool(cfg::PREF_KEY_WIFI_OTA, enabled);
+}
+
+static void persistFence(const Polygon& fence) {
+  if (!beginPrefs()) return;
+  prefs_.putBytes(cfg::PREF_KEY_FENCE, &fence, sizeof(fence));
+}
+
+static void persistHerdingPlan(const HerdingPlan& plan) {
+  if (!beginPrefs()) return;
+  prefs_.putBytes(cfg::PREF_KEY_HERD, &plan, sizeof(plan));
+}
+
+static bool loadPersistedFence(Polygon* outFence) {
+  if (!beginPrefs() || !outFence) return false;
+  if (prefs_.getBytesLength(cfg::PREF_KEY_FENCE) != sizeof(Polygon)) return false;
+  if (prefs_.getBytes(cfg::PREF_KEY_FENCE, outFence, sizeof(Polygon)) != sizeof(Polygon)) return false;
+  if (!isValidPolygon(*outFence)) return false;
+  return true;
+}
+
+static bool loadPersistedHerdingPlan(HerdingPlan* outPlan) {
+  if (!beginPrefs() || !outPlan) return false;
+  if (prefs_.getBytesLength(cfg::PREF_KEY_HERD) != sizeof(HerdingPlan)) return false;
+  if (prefs_.getBytes(cfg::PREF_KEY_HERD, outPlan, sizeof(HerdingPlan)) != sizeof(HerdingPlan)) return false;
+  return sanitizeHerdingPlan(outPlan);
+}
+
+static bool loadPersistedWifiOtaEnabled() {
+  if (!beginPrefs()) return cfg::OTA_ENABLED;
+  return prefs_.getBool(cfg::PREF_KEY_WIFI_OTA, cfg::OTA_ENABLED);
+}
+
+static void loadPersistedConfig() {
+  wifiOtaEnabled = loadPersistedWifiOtaEnabled();
+
+  Polygon savedFence;
+  if (loadPersistedFence(&savedFence)) {
+    geofence.setFence(savedFence);
+    LOGI("Fence restaurada da NVS (%u pontos)", savedFence.count);
+  }
+
+  HerdingPlan savedPlan;
+  if (loadPersistedHerdingPlan(&savedPlan)) {
+    herding.setPlan(savedPlan);
+    if (savedPlan.active) stateMachine.setMode(CollarMode::CONDUCAO);
+    LOGI("Plano de conducao restaurado: active=%d fase=%u/%u",
+         savedPlan.active ? 1 : 0, savedPlan.currentPhase, savedPlan.phaseCount);
+  }
+}
+
+static bool parsePointListJson(
+    const JsonArray& points,
+    GeoPoint* outPoints,
+    uint8_t* outCount,
+    uint8_t minCount,
+    uint8_t maxCount,
+    const char** err) {
+  if (!outPoints || !outCount) {
+    if (err) *err = "out_points_null";
+    return false;
+  }
+  if (points.isNull()) {
+    if (err) *err = "missing_points";
+    return false;
+  }
+  const size_t count = points.size();
+  if (count < minCount || count > maxCount) {
+    if (err) *err = "invalid_points_count";
+    return false;
+  }
+
+  for (uint8_t i = 0; i < (uint8_t)count; ++i) {
+    JsonArray pair = points[i].as<JsonArray>();
+    if (pair.isNull() || pair.size() < 2 || pair[0].isNull() || pair[1].isNull()) {
+      if (err) *err = "invalid_point_format";
+      return false;
+    }
+    outPoints[i].lat = pair[0].as<double>();
+    outPoints[i].lon = pair[1].as<double>();
+    if (!isValidGeoPoint(outPoints[i])) {
+      if (err) *err = "invalid_point_value";
+      return false;
+    }
+  }
+  *outCount = (uint8_t)count;
+  return true;
+}
+
+static bool parsePolygonJson(const JsonArray& points, Polygon* outPolygon, const char** err) {
+  if (!outPolygon) {
+    if (err) *err = "out_polygon_null";
+    return false;
+  }
+  Polygon tmp;
+  if (!parsePointListJson(points, tmp.points, &tmp.count, 3, cfg::MAX_POLYGON_POINTS, err)) return false;
+  *outPolygon = tmp;
+  return true;
+}
+
+static bool parseHerdingPlanJson(const JsonArray& phases, HerdingPlan* outPlan, const char** err) {
+  if (!outPlan) {
+    if (err) *err = "out_plan_null";
+    return false;
+  }
+  if (phases.isNull()) {
+    if (err) *err = "missing_phases";
+    return false;
+  }
+  const size_t phaseCount = phases.size();
+  if (phaseCount == 0 || phaseCount > cfg::MAX_HERD_PHASES) {
+    if (err) *err = "invalid_phase_count";
+    return false;
+  }
+
+  HerdingPlan tmp;
+  tmp.active = true;
+  tmp.phaseCount = (uint8_t)phaseCount;
+  tmp.currentPhase = 0;
+  for (uint8_t i = 0; i < tmp.phaseCount; ++i) {
+    JsonArray points = phases[i].as<JsonArray>();
+    if (!parsePolygonJson(points, &tmp.phases[i], err)) return false;
+  }
+
+  *outPlan = tmp;
+  return true;
+}
+
+static void resetFenceChunkRx() {
+  fenceChunkRx_ = FenceChunkRxState{};
+}
+
+static void resetHerdChunkRx() {
+  herdChunkRx_ = HerdChunkRxState{};
+}
+
+static bool applyFenceChunkJson(const JsonObject& doc, const char** err) {
+  const int part = doc["part"] | -1;
+  const int total = doc["total"] | -1;
+  const JsonArray points = doc["points"].as<JsonArray>();
+  if (part < 0 || total <= 0 || part >= total || total > cfg::MAX_POLYGON_POINTS) {
+    if (err) *err = "invalid_chunk_header";
+    return false;
+  }
+
+  GeoPoint parsed[cfg::MAX_POLYGON_POINTS]{};
+  uint8_t parsedCount = 0;
+  if (!parsePointListJson(points, parsed, &parsedCount, 1, cfg::MAX_POLYGON_POINTS, err)) return false;
+
+  if (part == 0) {
+    resetFenceChunkRx();
+    fenceChunkRx_.active = true;
+    fenceChunkRx_.totalParts = (uint8_t)total;
+    fenceChunkRx_.expectedPart = 0;
+  }
+
+  if (!fenceChunkRx_.active) {
+    if (err) *err = "missing_chunk_start";
+    return false;
+  }
+  if (fenceChunkRx_.totalParts != (uint8_t)total) {
+    if (err) *err = "chunk_total_mismatch";
+    return false;
+  }
+  if (fenceChunkRx_.expectedPart != (uint8_t)part) {
+    if (err) *err = "chunk_out_of_order";
+    return false;
+  }
+  if ((uint16_t)fenceChunkRx_.fence.count + parsedCount > cfg::MAX_POLYGON_POINTS) {
+    if (err) *err = "too_many_points";
+    return false;
+  }
+
+  for (uint8_t i = 0; i < parsedCount; ++i) {
+    fenceChunkRx_.fence.points[fenceChunkRx_.fence.count++] = parsed[i];
+  }
+  fenceChunkRx_.expectedPart++;
+
+  if ((uint8_t)part == (uint8_t)(total - 1)) {
+    if (!isValidPolygon(fenceChunkRx_.fence)) {
+      resetFenceChunkRx();
+      if (err) *err = "invalid_fence_final";
+      return false;
+    }
+    geofence.setFence(fenceChunkRx_.fence);
+    persistFence(fenceChunkRx_.fence);
+    LOGI("SET_FENCE chunked aplicado com %u pontos", fenceChunkRx_.fence.count);
+    resetFenceChunkRx();
+  }
+  return true;
+}
+
+static bool applyHerdChunkJson(const JsonObject& doc, const char** err) {
+  const int phaseIdx = doc["phase_index"] | -1;
+  const int phaseTotal = doc["phase_total"] | -1;
+  const int part = doc["part"] | -1;
+  const int total = doc["total"] | -1;
+  const JsonArray points = doc["points"].as<JsonArray>();
+
+  if (phaseIdx < 0 || phaseTotal <= 0 || phaseIdx >= phaseTotal || phaseTotal > cfg::MAX_HERD_PHASES) {
+    if (err) *err = "invalid_phase_header";
+    return false;
+  }
+  if (part < 0 || total <= 0 || part >= total || total > cfg::MAX_POLYGON_POINTS) {
+    if (err) *err = "invalid_chunk_header";
+    return false;
+  }
+
+  GeoPoint parsed[cfg::MAX_POLYGON_POINTS]{};
+  uint8_t parsedCount = 0;
+  if (!parsePointListJson(points, parsed, &parsedCount, 1, cfg::MAX_POLYGON_POINTS, err)) return false;
+
+  if (phaseIdx == 0 && part == 0) {
+    resetHerdChunkRx();
+    herdChunkRx_.active = true;
+    herdChunkRx_.phaseTotal = (uint8_t)phaseTotal;
+    herdChunkRx_.currentPhase = 0;
+    herdChunkRx_.expectedPart = 0;
+    herdChunkRx_.totalPartsCurrentPhase = (uint8_t)total;
+    herdChunkRx_.plan.active = true;
+    herdChunkRx_.plan.phaseCount = (uint8_t)phaseTotal;
+    herdChunkRx_.plan.currentPhase = 0;
+    herdChunkRx_.phaseAccum.count = 0;
+  }
+
+  if (!herdChunkRx_.active) {
+    if (err) *err = "missing_phase_start";
+    return false;
+  }
+  if (herdChunkRx_.phaseTotal != (uint8_t)phaseTotal) {
+    if (err) *err = "phase_total_mismatch";
+    return false;
+  }
+  if (herdChunkRx_.currentPhase != (uint8_t)phaseIdx) {
+    if (err) *err = "phase_out_of_order";
+    return false;
+  }
+
+  if (part == 0) {
+    herdChunkRx_.phaseAccum.count = 0;
+    herdChunkRx_.expectedPart = 0;
+    herdChunkRx_.totalPartsCurrentPhase = (uint8_t)total;
+  } else if (herdChunkRx_.totalPartsCurrentPhase != (uint8_t)total) {
+    if (err) *err = "chunk_total_mismatch";
+    return false;
+  }
+
+  if (herdChunkRx_.expectedPart != (uint8_t)part) {
+    if (err) *err = "chunk_out_of_order";
+    return false;
+  }
+  if ((uint16_t)herdChunkRx_.phaseAccum.count + parsedCount > cfg::MAX_POLYGON_POINTS) {
+    if (err) *err = "too_many_points";
+    return false;
+  }
+
+  for (uint8_t i = 0; i < parsedCount; ++i) {
+    herdChunkRx_.phaseAccum.points[herdChunkRx_.phaseAccum.count++] = parsed[i];
+  }
+  herdChunkRx_.expectedPart++;
+
+  if ((uint8_t)part == (uint8_t)(total - 1)) {
+    if (!isValidPolygon(herdChunkRx_.phaseAccum)) {
+      resetHerdChunkRx();
+      if (err) *err = "invalid_phase_polygon";
+      return false;
+    }
+    herdChunkRx_.plan.phases[phaseIdx] = herdChunkRx_.phaseAccum;
+
+    if ((uint8_t)phaseIdx + 1 == (uint8_t)phaseTotal) {
+      herding.setPlan(herdChunkRx_.plan);
+      persistHerdingPlan(herdChunkRx_.plan);
+      stateMachine.setMode(CollarMode::CONDUCAO);
+      logEvent(EventType::HERD_START, herdChunkRx_.plan.phaseCount, 0);
+      LOGI("SET_HERDING_PLAN chunked aplicado: fases=%u", herdChunkRx_.plan.phaseCount);
+      resetHerdChunkRx();
+    } else {
+      herdChunkRx_.currentPhase++;
+      herdChunkRx_.expectedPart = 0;
+      herdChunkRx_.totalPartsCurrentPhase = 0;
+      herdChunkRx_.phaseAccum.count = 0;
+    }
+  }
+  return true;
 }
 
 static void setWatchdogEnabled(bool enabled) {
@@ -70,16 +431,42 @@ static void stopWifiOtaMaintenance() {
 
 static void startOtaService() {
   ArduinoOTA.setHostname(cfg::OTA_HOSTNAME);
+  ArduinoOTA.setPort(3232);
+  ArduinoOTA.setTimeout(20000);
   ArduinoOTA.setPassword(cfg::OTA_PASSWORD);
-  ArduinoOTA.onStart([]() { LOGI("OTA iniciado"); });
-  ArduinoOTA.onEnd([]() { LOGI("OTA concluido"); });
+  ArduinoOTA.onStart([]() {
+    otaUploadInProgress = true;
+    setWatchdogEnabled(false);
+    LOGI("OTA iniciado");
+  });
+  ArduinoOTA.onEnd([]() {
+    otaUploadInProgress = false;
+    if (wifiOtaEnabled) setWatchdogEnabled(true);
+    LOGI("OTA concluido");
+  });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    LOGI("OTA progresso: %u%%", (progress * 100U) / total);
+    static uint8_t lastStep = 0xFF;
+    const uint8_t pct = (uint8_t)((progress * 100U) / total);
+    const uint8_t step = pct / 10U;
+    if (step != lastStep || pct == 100U) {
+      lastStep = step;
+      LOGI("OTA progresso: %u%%", pct);
+    }
   });
   ArduinoOTA.onError([](ota_error_t error) {
+    otaUploadInProgress = false;
+    if (wifiOtaEnabled) setWatchdogEnabled(true);
     LOGE("OTA erro=%u", (unsigned int)error);
   });
   ArduinoOTA.begin();
+
+  if (MDNS.begin(cfg::OTA_HOSTNAME)) {
+    MDNS.addService("arduino", "tcp", 3232);
+    LOGI("mDNS ativo: %s.local:3232", cfg::OTA_HOSTNAME);
+  } else {
+    LOGW("mDNS indisponivel; OTA pode nao aparecer automaticamente no IDE.");
+  }
+
   otaModeActive = true;
 }
 
@@ -88,6 +475,7 @@ static void setupWifiOtaMaintenance() {
 
   if (cfg::OTA_FORCE_AP_ONLY) {
     WiFi.mode(WIFI_AP);
+    WiFi.setSleep(false);
     const bool apOk = WiFi.softAP(cfg::OTA_AP_SSID, cfg::OTA_AP_PASS);
     if (!apOk) {
       WiFi.mode(WIFI_OFF);
@@ -100,6 +488,7 @@ static void setupWifiOtaMaintenance() {
   }
 
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
   WiFi.begin(cfg::WIFI_SSID, cfg::WIFI_PASS);
   LOGI("OTA: conectando Wi-Fi SSID=%s", cfg::WIFI_SSID);
 
@@ -124,6 +513,7 @@ static void setupWifiOtaMaintenance() {
   }
 
   WiFi.mode(WIFI_AP);
+  WiFi.setSleep(false);
   const bool apOk = WiFi.softAP(cfg::OTA_AP_SSID, cfg::OTA_AP_PASS);
   if (!apOk) {
     WiFi.mode(WIFI_OFF);
@@ -138,16 +528,26 @@ static void setupWifiOtaMaintenance() {
 static void applyWifiOtaMode(bool enabled, const char* source) {
   if (wifiOtaEnabled == enabled) {
     LOGI("SET_PARAMS: wifi_ota_enabled ja estava em %d (%s)", enabled ? 1 : 0, source);
+    persistWifiOtaEnabled(enabled);
     return;
   }
 
   wifiOtaEnabled = enabled;
+  persistWifiOtaEnabled(enabled);
   setWatchdogEnabled(enabled);
 
   if (enabled) {
     setupWifiOtaMaintenance();
+    if (cfg::BLE_PRESENCE_ENABLED) {
+      blePresence.setEnabled(true);
+      blePresence.setFlags(true, WiFi.status() == WL_CONNECTED);
+    }
     LOGI("SET_PARAMS: wifi_ota_enabled=1 aplicado via %s", source);
   } else {
+    if (cfg::BLE_PRESENCE_ENABLED) {
+      blePresence.setFlags(false, false);
+      blePresence.setEnabled(false);
+    }
     stopWifiOtaMaintenance();
     LOGI("SET_PARAMS: wifi_ota_enabled=0 aplicado via %s", source);
   }
@@ -179,28 +579,99 @@ static uint8_t buildTelemetryPayload(const Telemetry& t, uint8_t* out, size_t ma
   return serializeJson(doc, out, max);
 }
 
+static void sendCommandFeedback(const LoRaFrame& cmd, bool ok, const char* reason = nullptr) {
+  LoRaFrame reply;
+  reply.deviceId = cfg::DEVICE_ID;
+  reply.msgType = ok ? MsgType::ACK : MsgType::NACK;
+  reply.seq = seq++;
+  reply.timestamp = millis() / 1000;
+  randomNonce(reply.nonce);
+
+  StaticJsonDocument<128> payload;
+  payload["cmd"] = (int)cmd.msgType;
+  payload["cmd_seq"] = cmd.seq;
+  payload["ok"] = ok;
+  if (reason && reason[0]) payload["reason"] = reason;
+  reply.payloadLen = serializeJson(payload, reply.payload, sizeof(reply.payload));
+
+  if (!lora.sendFrame(reply)) {
+    LOGW("Falha ao enviar %s para cmd=%u seq=%lu",
+         ok ? "ACK" : "NACK", (unsigned)cmd.msgType, cmd.seq);
+  }
+}
+
 static void applyDownlink(const LoRaFrame& frame) {
   const bool targetMatch = (frame.deviceId == cfg::DEVICE_ID) || (frame.deviceId == 0);
   if (!targetMatch) return;
 
+  if (frame.msgType == MsgType::PING) {
+    sendCommandFeedback(frame, true, "pong");
+    return;
+  }
+
+  if (frame.msgType != MsgType::SET_FENCE &&
+      frame.msgType != MsgType::SET_HERDING_PLAN &&
+      frame.msgType != MsgType::SET_PARAMS) {
+    return;
+  }
+
   StaticJsonDocument<512> doc;
-  if (deserializeJson(doc, frame.payload, frame.payloadLen) != DeserializationError::Ok) return;
+  if (deserializeJson(doc, frame.payload, frame.payloadLen) != DeserializationError::Ok) {
+    sendCommandFeedback(frame, false, "invalid_json");
+    return;
+  }
 
   if (frame.msgType == MsgType::SET_FENCE) {
-    Polygon p;
-    JsonArray pts = doc["points"].as<JsonArray>();
-    p.count = min((int)pts.size(), (int)cfg::MAX_POLYGON_POINTS);
-    for (uint8_t i = 0; i < p.count; ++i) {
-      p.points[i].lat = pts[i][0];
-      p.points[i].lon = pts[i][1];
+    const char* err = nullptr;
+    const bool chunked = doc["chunked"].is<bool>() && doc["chunked"].as<bool>();
+    if (chunked) {
+      if (!applyFenceChunkJson(doc.as<JsonObject>(), &err)) {
+        sendCommandFeedback(frame, false, err ? err : "invalid_fence_chunk");
+        return;
+      }
+      sendCommandFeedback(frame, true);
+    } else {
+      resetFenceChunkRx();
+      Polygon p;
+      if (!parsePolygonJson(doc["points"].as<JsonArray>(), &p, &err)) {
+        sendCommandFeedback(frame, false, err ? err : "invalid_fence");
+        return;
+      }
+      geofence.setFence(p);
+      persistFence(p);
+      LOGI("SET_FENCE aplicado com %u pontos", p.count);
+      sendCommandFeedback(frame, true);
     }
-    geofence.setFence(p);
-    LOGI("SET_FENCE aplicado com %u pontos", p.count);
+  } else if (frame.msgType == MsgType::SET_HERDING_PLAN) {
+    const char* err = nullptr;
+    const bool chunked = doc["chunked"].is<bool>() && doc["chunked"].as<bool>();
+    if (chunked) {
+      if (!applyHerdChunkJson(doc.as<JsonObject>(), &err)) {
+        sendCommandFeedback(frame, false, err ? err : "invalid_herd_chunk");
+        return;
+      }
+      sendCommandFeedback(frame, true);
+    } else {
+      resetHerdChunkRx();
+      HerdingPlan plan;
+      if (!parseHerdingPlanJson(doc["phases"].as<JsonArray>(), &plan, &err)) {
+        sendCommandFeedback(frame, false, err ? err : "invalid_herd_plan");
+        return;
+      }
+      herding.setPlan(plan);
+      persistHerdingPlan(plan);
+      stateMachine.setMode(CollarMode::CONDUCAO);
+      logEvent(EventType::HERD_START, plan.phaseCount, 0);
+      LOGI("SET_HERDING_PLAN aplicado: fases=%u", plan.phaseCount);
+      sendCommandFeedback(frame, true);
+    }
   } else if (frame.msgType == MsgType::SET_PARAMS) {
     if (doc["wifi_ota_enabled"].is<bool>()) {
       applyWifiOtaMode(doc["wifi_ota_enabled"].as<bool>(), "LoRa");
+      sendCommandFeedback(frame, true);
     } else {
       LOGW("SET_PARAMS sem campo wifi_ota_enabled");
+      sendCommandFeedback(frame, false, "missing_wifi_ota_enabled");
     }
   }
 }
@@ -216,9 +687,21 @@ void setup() {
 #else
   esp_task_wdt_init(12, true);
 #endif
+  loadPersistedConfig();
   setWatchdogEnabled(wifiOtaEnabled);
 
   setupWifiOtaMaintenance();
+  if (cfg::BLE_PRESENCE_ENABLED) {
+    const String nodeId = collarNodeId();
+    blePresence.begin(
+        BleNodeKind::COLLAR,
+        nodeId,
+        collarAdvName(),
+        cfg::BLE_COMPANY_ID,
+        cfg::BLE_SERVICE_UUID);
+    blePresence.setEnabled(wifiOtaEnabled);
+    blePresence.setFlags(wifiOtaEnabled, WiFi.status() == WL_CONNECTED);
+  }
 
   sensors.begin();
   safety.begin();
@@ -236,9 +719,18 @@ void loop() {
     if (watchdogTaskRegistered) {
       esp_task_wdt_reset();
     }
+    if (otaUploadInProgress) {
+      delay(2);
+      return;
+    }
   }
 
   if (watchdogTaskRegistered) esp_task_wdt_reset();
+  if (cfg::BLE_PRESENCE_ENABLED) {
+    blePresence.setEnabled(wifiOtaEnabled);
+    blePresence.setFlags(wifiOtaEnabled, WiFi.status() == WL_CONNECTED);
+    blePresence.loop();
+  }
   sensors.tick();
 
   const uint32_t now = millis();
@@ -249,6 +741,9 @@ void loop() {
   lastCycle = now;
 
   const Telemetry t = sensors.readTelemetry(stateMachine.mode(), now / 1000, lora.lastRssi(), lora.lastSnr());
+  if (cfg::BLE_PRESENCE_ENABLED) {
+    blePresence.setPosition(t.gps.lat, t.gps.lon, t.gps.valid);
+  }
   if (!t.gps.valid) logEvent(EventType::GPS_FAIL);
 
   const bool inside = geofence.isInside(t.gps);
@@ -279,6 +774,10 @@ void loop() {
   EventRecord herdEvent;
   if (herding.updateWithGps(t.gps, &herdEvent)) {
     logEvent(herdEvent.type, herdEvent.d1, herdEvent.d2);
+    persistHerdingPlan(herding.plan());
+    if (!herding.active() && stateMachine.mode() == CollarMode::CONDUCAO) {
+      stateMachine.setMode(CollarMode::NORMAL);
+    }
   }
 
   LoRaFrame uplink;

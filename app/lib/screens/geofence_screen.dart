@@ -24,6 +24,7 @@ class GeofenceScreen extends StatefulWidget {
 }
 
 class _GeofenceScreenState extends State<GeofenceScreen> {
+  static const int _maxFencePoints = GatewayService.maxPolygonPoints;
   late LatLng _center;
   final List<LatLng> _polygonPoints = [];
 
@@ -73,7 +74,7 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
             padding: const EdgeInsets.all(12),
             color: Colors.green.withValues(alpha: 0.08),
             child: Text(
-              'Toque no mapa para adicionar vertices. Pontos: ${_polygonPoints.length}',
+              'Toque no mapa para adicionar vertices. Pontos: ${_polygonPoints.length}/$_maxFencePoints',
             ),
           ),
           Expanded(
@@ -82,6 +83,15 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
                 initialCenter: _center,
                 initialZoom: 16,
                 onTap: (_, point) {
+                  if (_polygonPoints.length >= _maxFencePoints) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                            'Limite da coleira: máximo de $_maxFencePoints pontos na geofence.'),
+                      ),
+                    );
+                    return;
+                  }
                   setState(() => _polygonPoints.add(point));
                 },
               ),

@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 class DeviceModel {
   final String id;
+  final String? deviceId;
   final String name;
   final String status;
   final double? lat;
@@ -11,6 +12,7 @@ class DeviceModel {
 
   DeviceModel({
     required this.id,
+    this.deviceId,
     required this.name,
     required this.status,
     this.lat,
@@ -19,8 +21,20 @@ class DeviceModel {
     this.propertyId,
   });
 
+  String get networkId {
+    final v = deviceId?.trim();
+    if (v == null || v.isEmpty) return id;
+    return v;
+  }
+
   factory DeviceModel.fromMap(String id, Map<String, dynamic> m) => DeviceModel(
         id: id,
+        deviceId: (() {
+          final d = m['deviceId'];
+          if (d == null) return null;
+          final raw = d.toString().trim();
+          return raw.isEmpty ? null : raw;
+        })(),
         name: m['name'] ?? 'Coleira',
         status: m['status'] ?? 'unknown',
         lat: (() {
@@ -72,6 +86,7 @@ class DeviceModel {
       );
 
   Map<String, dynamic> toMap() => {
+        'deviceId': deviceId,
         'name': name,
         'status': status,
         'lat': lat,

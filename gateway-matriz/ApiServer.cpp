@@ -24,12 +24,14 @@ void ApiServer::begin() {
   http_.on("/status", HTTP_GET, [this]() {
     StaticJsonDocument<256> doc;
     doc["ok"] = true;
-    doc["service"] = "gateway";
+    doc["service"] = "gateway_matrix";
     doc["fw"] = cfg::FW_VERSION;
     doc["ap_ssid"] = cfg::AP_SSID;
     doc["ap_ip"] = WiFi.softAPIP().toString();
     doc["gatewayId"] = compactIdentifier(WiFi.softAPmacAddress());
     doc["ota"] = cfg::OTA_ENABLED;
+    doc["wifi_ota_enabled"] = true;
+    doc["role"] = "matrix";
     String out;
     serializeJson(doc, out);
     http_.send(200, "application/json", out);

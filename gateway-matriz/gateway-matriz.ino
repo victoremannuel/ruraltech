@@ -1,8 +1,8 @@
 /**
  * @file gateway.ino
- * @brief Firmware gateway RuralTech: LoRa seguro + REST/WS + SD log + OLED.
+ * @brief Firmware gateway matriz RuralTech: LoRa seguro + REST/WS + SD log + OLED.
  * @version 1.0.0
- * @date 2026-02-18
+ * @date 2026-02-21
  */
 #include <Arduino.h>
 #include <ctype.h>
@@ -34,7 +34,7 @@ ApiServer api;
 RTC_DS3231 rtc;
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
 uint32_t seqDown = 1;
-bool wifiOtaEnabled = cfg::OTA_ENABLED;
+bool wifiOtaEnabled = true;
 bool watchdogTaskRegistered = false;
 bool otaUploadInProgress = false;
 static void setWatchdogEnabled(bool enabled);
@@ -73,7 +73,7 @@ static void setupWiFi() {
 }
 
 static void setupOta() {
-  if (!wifiOtaEnabled || !cfg::OTA_ENABLED) return;
+  if (!cfg::OTA_ENABLED) return;
   ArduinoOTA.setHostname(cfg::OTA_HOSTNAME);
   ArduinoOTA.setPort(3232);
   ArduinoOTA.setTimeout(20000);
@@ -85,7 +85,7 @@ static void setupOta() {
   });
   ArduinoOTA.onEnd([]() {
     otaUploadInProgress = false;
-    if (wifiOtaEnabled) setWatchdogEnabled(true);
+    setWatchdogEnabled(true);
     LOGI("OTA concluido");
   });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
@@ -99,22 +99,11 @@ static void setupOta() {
   });
   ArduinoOTA.onError([](ota_error_t error) {
     otaUploadInProgress = false;
-    if (wifiOtaEnabled) setWatchdogEnabled(true);
+    setWatchdogEnabled(true);
     LOGE("OTA erro=%u", (unsigned int)error);
   });
   ArduinoOTA.begin();
   LOGI("OTA ativo hostname=%s", cfg::OTA_HOSTNAME);
-}
-
-static void stopWifiAndOta() {
-  if (WiFi.getMode() == WIFI_STA || WiFi.getMode() == WIFI_AP_STA) {
-    WiFi.disconnect(true, true);
-  }
-  if (WiFi.getMode() == WIFI_AP || WiFi.getMode() == WIFI_AP_STA) {
-    WiFi.softAPdisconnect(true);
-  }
-  WiFi.mode(WIFI_OFF);
-  LOGI("Gateway em modo LoRa-only");
 }
 
 static void setWatchdogEnabled(bool enabled) {
@@ -148,29 +137,19 @@ static bool targetIncludesCollars(const JsonVariantConst payload) {
 }
 
 static void applyWifiOtaMode(bool enabled, const char* source) {
-  if (wifiOtaEnabled == enabled) {
-    LOGI("SET_PARAMS: wifi_ota_enabled ja estava em %d (%s)", enabled ? 1 : 0, source);
-    return;
+  if (!enabled) {
+    LOGW("SET_PARAMS: gateway-matriz ignora wifi_ota_enabled=0 (%s)", source);
+  } else {
+    LOGI("SET_PARAMS: gateway-matriz mantendo wifi_ota_enabled=1 (%s)", source);
   }
 
-  wifiOtaEnabled = enabled;
-  setWatchdogEnabled(enabled);
-
-  if (enabled) {
-    setupWiFi();
-    setupOta();
-    if (cfg::BLE_PRESENCE_ENABLED) {
-      blePresence.setEnabled(true);
-      blePresence.setFlags(true, WiFi.status() == WL_CONNECTED);
-    }
-    LOGI("SET_PARAMS: wifi_ota_enabled=1 aplicado via %s", source);
-  } else {
-    if (cfg::BLE_PRESENCE_ENABLED) {
-      blePresence.setFlags(false, false);
-      blePresence.setEnabled(false);
-    }
-    stopWifiAndOta();
-    LOGI("SET_PARAMS: wifi_ota_enabled=0 aplicado via %s", source);
+  wifiOtaEnabled = true;
+  setupWiFi();
+  setupOta();
+  setWatchdogEnabled(true);
+  if (cfg::BLE_PRESENCE_ENABLED) {
+    blePresence.setEnabled(true);
+    blePresence.setFlags(true, WiFi.status() == WL_CONNECTED);
   }
 }
 
@@ -383,7 +362,7 @@ static void drawStatus(const char* line1, const char* line2) {
   display.setTextSize(1);
   display.setTextColor(WHITE);
   display.setCursor(0, 0);
-  display.println("RuralTech Gateway");
+  display.println("RuralTech Matriz");
   display.println(line1);
   display.println(line2);
   display.display();
@@ -400,26 +379,24 @@ void setup() {
 #else
   esp_task_wdt_init(12, true);
 #endif
-  setWatchdogEnabled(wifiOtaEnabled);
+  setWatchdogEnabled(true);
 
   Wire.begin(cfg::PIN_I2C_SDA, cfg::PIN_I2C_SCL);
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   drawStatus("Boot", cfg::FW_VERSION);
 
-  if (wifiOtaEnabled) {
-    setupWiFi();
-    setupOta();
-  }
+  setupWiFi();
+  setupOta();
   if (cfg::BLE_PRESENCE_ENABLED) {
     const String nodeId = gatewayNodeId();
     blePresence.begin(
-        BleNodeKind::GATEWAY,
+        BleNodeKind::MATRIX,
         nodeId,
         gatewayAdvName(nodeId),
         cfg::BLE_COMPANY_ID,
         cfg::BLE_SERVICE_UUID);
-    blePresence.setEnabled(wifiOtaEnabled);
-    blePresence.setFlags(wifiOtaEnabled, WiFi.status() == WL_CONNECTED);
+    blePresence.setEnabled(true);
+    blePresence.setFlags(true, WiFi.status() == WL_CONNECTED);
   }
   api.begin();
   rtc.begin();
@@ -428,24 +405,24 @@ void setup() {
   if (!sdlog.begin(cfg::PIN_SD_CS)) LOGW("SD indisponível");
   if (!lora.begin()) LOGE("LoRa indisponível");
 
-  LOGI("Gateway pronto fw=%s", cfg::FW_VERSION);
+  LOGI("Gateway matriz pronto fw=%s", cfg::FW_VERSION);
 }
 
 void loop() {
-  if (wifiOtaEnabled && cfg::OTA_ENABLED) {
+  if (cfg::OTA_ENABLED) {
     ArduinoOTA.handle();
   }
   if (cfg::BLE_PRESENCE_ENABLED) {
-    blePresence.setEnabled(wifiOtaEnabled);
-    blePresence.setFlags(wifiOtaEnabled, WiFi.status() == WL_CONNECTED);
+    blePresence.setEnabled(true);
+    blePresence.setFlags(true, WiFi.status() == WL_CONNECTED);
     blePresence.loop();
   }
   if (watchdogTaskRegistered) esp_task_wdt_reset();
-  if (wifiOtaEnabled && otaUploadInProgress) {
+  if (otaUploadInProgress) {
     delay(2);
     return;
   }
-  if (wifiOtaEnabled) api.loop();
+  api.loop();
 
   LoRaFrame rx;
   if (lora.receive(rx)) {
@@ -481,7 +458,7 @@ void loop() {
       const JsonVariantConst payload = cmd["payload"].as<JsonVariantConst>();
 
       bool localToggleRequested = false;
-      bool localWifiEnabled = wifiOtaEnabled;
+      bool localWifiEnabled = true;
       if (command == "SET_PARAMS" && parseWifiOtaParam(payload, localWifiEnabled) &&
           targetIncludesGateway(payload)) {
         localToggleRequested = true;

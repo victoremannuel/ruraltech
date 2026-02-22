@@ -1,12 +1,12 @@
 /**
  * @file config.h
- * @brief Configurações do gateway RuralTech ESP32.
+ * @brief Configurações do gateway matriz RuralTech ESP32.
  */
 #pragma once
 #include <Arduino.h>
 
 namespace cfg {
-constexpr char FW_VERSION[] = "gateway-1.0.0";
+constexpr char FW_VERSION[] = "gateway-matriz-1.0.0";
 constexpr uint8_t LOG_LEVEL = 3;
 constexpr uint32_t SERIAL_BAUD = 115200;
 
@@ -20,15 +20,15 @@ constexpr int PIN_I2C_SCL = 22;
 
 constexpr float LORA_FREQ_MHZ = 915.0;
 constexpr uint16_t WS_PORT = 81;
-constexpr char AP_SSID[] = "RuralTech-Gateway";
+constexpr char AP_SSID[] = "RuralTech-Matriz";
 constexpr char AP_PASS[] = "ruraltechota";
 constexpr bool OTA_ENABLED = true;
-constexpr char OTA_HOSTNAME[] = "ruraltech-gateway";
+constexpr char OTA_HOSTNAME[] = "ruraltech-matriz";
 constexpr char OTA_PASSWORD[] = "ruraltechota";
 
 // BLE discovery for app onboarding
 constexpr bool BLE_PRESENCE_ENABLED = true;
-constexpr char BLE_DEVICE_PREFIX[] = "RT-G";
+constexpr char BLE_DEVICE_PREFIX[] = "RT-M";
 constexpr uint16_t BLE_COMPANY_ID = 0x1234;
 constexpr char BLE_SERVICE_UUID[] = "7f920001-0a26-4d09-a606-0cfef4f9a1f0";
 

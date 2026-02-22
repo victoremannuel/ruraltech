@@ -6,6 +6,7 @@ import 'firebase_options.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/auth_service.dart';
+import 'services/bluetooth_discovery_service.dart';
 import 'services/firebase_service.dart';
 import 'services/gateway_service.dart';
 import 'services/map_filter_service.dart';
@@ -64,6 +65,7 @@ class RuralTechApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AuthService()),
         Provider(create: (_) => FirebaseService()),
         ChangeNotifierProvider(create: (_) => GatewayService()),
+        ChangeNotifierProvider(create: (_) => BluetoothDiscoveryService()),
         ChangeNotifierProvider(create: (_) => MapFilterService()),
       ],
       child: MaterialApp(
@@ -106,7 +108,8 @@ class RuralTechApp extends StatelessWidget {
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: Color(0xFF2F7D3D), width: 1.4),
+              borderSide:
+                  const BorderSide(color: Color(0xFF2F7D3D), width: 1.4),
             ),
           ),
           elevatedButtonTheme: ElevatedButtonThemeData(

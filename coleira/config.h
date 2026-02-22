@@ -52,6 +52,18 @@ constexpr bool OTA_FORCE_AP_ONLY = true;
 constexpr char OTA_AP_SSID[] = "RuralTech-Coleira-OTA";
 constexpr char OTA_AP_PASS[] = "ruraltechota";
 
+// BLE discovery for app onboarding
+constexpr bool BLE_PRESENCE_ENABLED = true;
+constexpr char BLE_DEVICE_PREFIX[] = "RT-C";
+constexpr uint16_t BLE_COMPANY_ID = 0x1234;
+constexpr char BLE_SERVICE_UUID[] = "7f920001-0a26-4d09-a606-0cfef4f9a1f0";
+
+// NVS (persistência de configuração operacional)
+constexpr char PREF_NAMESPACE[] = "collar_cfg";
+constexpr char PREF_KEY_WIFI_OTA[] = "wifi_ota";
+constexpr char PREF_KEY_FENCE[] = "fence";
+constexpr char PREF_KEY_HERD[] = "herd";
+
 // Intervalos (ms)
 constexpr uint32_t NORMAL_INTERVAL_MS = 180000;
 constexpr uint32_t ALERT_INTERVAL_MS = 20000;
@@ -77,7 +89,7 @@ constexpr uint16_t EEPROM_EVENT_START = 64;
 constexpr uint8_t EEPROM_EVENT_SLOTS = 20;
 
 // Geofence e condução
-constexpr uint8_t MAX_POLYGON_POINTS = 16;
+constexpr uint8_t MAX_POLYGON_POINTS = 32;
 constexpr uint8_t MAX_HERD_PHASES = 8;
 constexpr float FENCE_WARNING_METERS = 20.0f;
 

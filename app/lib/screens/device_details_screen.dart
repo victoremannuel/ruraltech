@@ -9,11 +9,12 @@ class DeviceDetailsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final networkId = device.networkId;
     return Scaffold(
       appBar: AppBar(title: Text('Dispositivo ${device.name}')),
       body: ListView(
         children: [
-          ListTile(title: const Text('ID'), subtitle: Text(device.id)),
+          ListTile(title: const Text('ID'), subtitle: Text(networkId)),
           ListTile(
               title: const Text('Última posição'),
               subtitle: Text('${device.lat ?? 0}, ${device.lon ?? 0}')),
@@ -23,7 +24,7 @@ class DeviceDetailsScreen extends StatelessWidget {
                     context,
                     MaterialPageRoute(
                       builder: (_) => GeofenceScreen(
-                        deviceId: device.id,
+                        deviceId: networkId,
                         initialLat: device.lat,
                         initialLon: device.lon,
                       ),
@@ -34,7 +35,7 @@ class DeviceDetailsScreen extends StatelessWidget {
               onTap: () => Navigator.push(
                   context,
                   MaterialPageRoute(
-                      builder: (_) => HerdingScreen(deviceId: device.id)))),
+                      builder: (_) => HerdingScreen(deviceId: networkId)))),
         ],
       ),
     );

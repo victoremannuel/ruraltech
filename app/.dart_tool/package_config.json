@@ -26,6 +26,12 @@
       "languageVersion": "3.4"
     },
     {
+      "name": "bluez",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/bluez-0.8.3",
+      "packageUri": "lib/",
+      "languageVersion": "2.17"
+    },
+    {
       "name": "boolean_selector",
       "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/boolean_selector-2.1.2",
       "packageUri": "lib/",
@@ -80,6 +86,12 @@
       "languageVersion": "3.4"
     },
     {
+      "name": "cross_file",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/cross_file-0.3.5+2",
+      "packageUri": "lib/",
+      "languageVersion": "3.8"
+    },
+    {
       "name": "crypto",
       "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/crypto-3.0.7",
       "packageUri": "lib/",
@@ -98,6 +110,12 @@
       "languageVersion": "3.0"
     },
     {
+      "name": "dbus",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/dbus-0.7.12",
+      "packageUri": "lib/",
+      "languageVersion": "2.17"
+    },
+    {
       "name": "fake_async",
       "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/fake_async-1.3.3",
       "packageUri": "lib/",
@@ -108,6 +126,12 @@
       "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/ffi-2.2.0",
       "packageUri": "lib/",
       "languageVersion": "3.7"
+    },
+    {
+      "name": "file_picker",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/file_picker-8.3.7",
+      "packageUri": "lib/",
+      "languageVersion": "3.4"
     },
     {
       "name": "firebase_auth",
@@ -158,6 +182,42 @@
       "languageVersion": "3.9"
     },
     {
+      "name": "flutter_blue_plus",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/flutter_blue_plus-1.36.8",
+      "packageUri": "lib/",
+      "languageVersion": "3.0"
+    },
+    {
+      "name": "flutter_blue_plus_android",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/flutter_blue_plus_android-7.0.4",
+      "packageUri": "lib/",
+      "languageVersion": "3.0"
+    },
+    {
+      "name": "flutter_blue_plus_darwin",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/flutter_blue_plus_darwin-7.0.3",
+      "packageUri": "lib/",
+      "languageVersion": "3.0"
+    },
+    {
+      "name": "flutter_blue_plus_linux",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/flutter_blue_plus_linux-7.0.3",
+      "packageUri": "lib/",
+      "languageVersion": "3.0"
+    },
+    {
+      "name": "flutter_blue_plus_platform_interface",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/flutter_blue_plus_platform_interface-7.0.0",
+      "packageUri": "lib/",
+      "languageVersion": "3.0"
+    },
+    {
+      "name": "flutter_blue_plus_web",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/flutter_blue_plus_web-7.0.2",
+      "packageUri": "lib/",
+      "languageVersion": "3.3"
+    },
+    {
       "name": "flutter_launcher_icons",
       "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/flutter_launcher_icons-0.14.4",
       "packageUri": "lib/",
@@ -174,6 +234,12 @@
       "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/flutter_map-7.0.2",
       "packageUri": "lib/",
       "languageVersion": "3.0"
+    },
+    {
+      "name": "flutter_plugin_android_lifecycle",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/flutter_plugin_android_lifecycle-2.0.33",
+      "packageUri": "lib/",
+      "languageVersion": "3.9"
     },
     {
       "name": "flutter_test",
@@ -368,6 +434,12 @@
       "languageVersion": "2.12"
     },
     {
+      "name": "rxdart",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/rxdart-0.28.0",
+      "packageUri": "lib/",
+      "languageVersion": "2.12"
+    },
+    {
       "name": "sky_engine",
       "rootUri": "file:///usr/local/share/flutter/bin/cache/pkg/sky_engine",
       "packageUri": "lib/",
@@ -456,6 +528,12 @@
       "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/web_socket_channel-3.0.3",
       "packageUri": "lib/",
       "languageVersion": "3.3"
+    },
+    {
+      "name": "win32",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/win32-5.15.0",
+      "packageUri": "lib/",
+      "languageVersion": "3.8"
     },
     {
       "name": "wkt_parser",

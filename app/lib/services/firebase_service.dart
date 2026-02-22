@@ -556,26 +556,41 @@ class FirebaseService {
     required String status,
     double? lat,
     double? lon,
+    String? deviceId,
     String? gatewayId,
     String? propertyId,
   }) async {
-    await _db.collection('collars').add({
+    final normalizedDeviceId = deviceId == null || deviceId.trim().isEmpty
+        ? null
+        : _idFromRefOrPath(deviceId);
+    final payload = {
       'ownerUid': _userRef(ownerUid),
       'name': name,
       'status': status,
+      'deviceId': normalizedDeviceId,
       'position': [lat ?? 0, lon ?? 0],
       'gatewayId': gatewayId == null || gatewayId.trim().isEmpty
           ? null
           : _db.collection('gateways').doc(_idFromRefOrPath(gatewayId)),
       'propertyId': _propertyRefOrNull(propertyId),
       'updatedAt': FieldValue.serverTimestamp(),
-    });
+    };
+
+    if (normalizedDeviceId == null) {
+      await _db.collection('collars').add(payload);
+    } else {
+      await _db
+          .collection('collars')
+          .doc(normalizedDeviceId)
+          .set(payload, SetOptions(merge: true));
+    }
   }
 
   Future<void> addGateway({
     required String ownerUid,
     required String name,
     required String status,
+    String? gatewayId,
     String? host,
     String? propertyId,
     double? lat,
@@ -584,16 +599,29 @@ class FirebaseService {
     final linkedUsers = propertyId == null
         ? const <DocumentReference<Map<String, dynamic>>>[]
         : await _linkedUsersForProperty(propertyId);
-    await _db.collection('gateways').add({
+    final normalizedGatewayId = gatewayId == null || gatewayId.trim().isEmpty
+        ? null
+        : _idFromRefOrPath(gatewayId);
+    final payload = {
       'ownerUid': _userRef(ownerUid),
       'name': name,
       'status': status,
+      'gatewayId': normalizedGatewayId,
       'host': host,
       'propertyId': _propertyRefOrNull(propertyId),
       'userUids': linkedUsers,
       'position': [lat ?? 0, lon ?? 0],
       'updatedAt': FieldValue.serverTimestamp(),
-    });
+    };
+
+    if (normalizedGatewayId == null) {
+      await _db.collection('gateways').add(payload);
+    } else {
+      await _db
+          .collection('gateways')
+          .doc(normalizedGatewayId)
+          .set(payload, SetOptions(merge: true));
+    }
   }
 
   Future<List<Map<String, String>>> getUserOptions() async {
@@ -623,6 +651,7 @@ class FirebaseService {
     final update = <String, dynamic>{
       'name': name,
       'status': status,
+      'deviceId': _idFromRefOrPath(id),
       'ownerUid': _userRef(ownerUid),
       'position': [lat, lon],
       'gatewayId': gatewayId == null || gatewayId.trim().isEmpty
@@ -659,6 +688,7 @@ class FirebaseService {
     final update = <String, dynamic>{
       'name': name,
       'status': status,
+      'gatewayId': _idFromRefOrPath(id),
       'host': host,
       'position': [lat, lon],
       'userUids': linkedUsers,

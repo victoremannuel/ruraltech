@@ -35,7 +35,7 @@ bool LoRaManager::receiveFrame(LoRaFrame& frame, uint32_t windowMs) {
     size_t len = sizeof(buf);
     int s = radio_.receive(buf, len);
     if (s == RADIOLIB_ERR_NONE) {
-      if (len < 28) return false;
+      if (len < 28) continue;
       lastRssi_ = radio_.getRSSI();
       lastSnr_ = radio_.getSNR();
       const uint8_t* nonce = buf;
@@ -43,12 +43,24 @@ bool LoRaManager::receiveFrame(LoRaFrame& frame, uint32_t windowMs) {
       const uint8_t* cipher = buf + 12;
       const uint8_t* tag = buf + 12 + cipherLen;
       uint8_t plain[256];
-      if (!crypto_.verifyAndDecrypt(cipher, cipherLen, tag, plain, nonce)) return false;
+      if (!crypto_.verifyAndDecrypt(cipher, cipherLen, tag, plain, nonce)) continue;
       memcpy(plain + cipherLen, tag, 16);
-      if (!LoRaProtocol::decodePlain(plain, cipherLen + 16, frame)) return false;
+      if (!LoRaProtocol::decodePlain(plain, cipherLen + 16, frame)) continue;
+
+      // A coleira só deve consumir comandos destinados a ela (ou broadcast).
+      const bool targetMatch = frame.deviceId == cfg::DEVICE_ID || frame.deviceId == 0;
+      if (!targetMatch) continue;
+
+      const bool downlinkCommand =
+          frame.msgType == MsgType::SET_FENCE ||
+          frame.msgType == MsgType::SET_HERDING_PLAN ||
+          frame.msgType == MsgType::SET_PARAMS ||
+          frame.msgType == MsgType::PING;
+      if (!downlinkCommand) continue;
+
       if (frame.seq <= lastSeqSeen_) {
         LOGW("Replay detectado seq=%lu", frame.seq);
-        return false;
+        continue;
       }
       lastSeqSeen_ = frame.seq;
       return true;

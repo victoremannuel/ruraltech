@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -22,6 +25,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
   final _userEmailsCtrl = TextEditingController();
   final List<LatLng> _points = [];
   final LatLng _initialCenter = const LatLng(-23.0, -46.0);
+  final MapController _mapController = MapController();
   bool _isSaving = false;
   bool _didTimeout = false;
 
@@ -46,7 +50,110 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
   void dispose() {
     _nameCtrl.dispose();
     _userEmailsCtrl.dispose();
+    _mapController.dispose();
     super.dispose();
+  }
+
+  List<LatLng> _extractPolygonFromKml(String kml) {
+    final matches = RegExp(
+      r'<coordinates[^>]*>([\s\S]*?)</coordinates>',
+      caseSensitive: false,
+    ).allMatches(kml);
+
+    List<LatLng> best = [];
+    for (final m in matches) {
+      final raw = m.group(1);
+      if (raw == null || raw.trim().isEmpty) continue;
+
+      final points = <LatLng>[];
+      for (final token in raw.trim().split(RegExp(r'\s+'))) {
+        if (token.trim().isEmpty) continue;
+        final parts = token.split(',');
+        if (parts.length < 2) continue;
+        final lon = double.tryParse(parts[0]);
+        final lat = double.tryParse(parts[1]);
+        if (lat == null || lon == null) continue;
+        if (lat < -90 || lat > 90 || lon < -180 || lon > 180) continue;
+        points.add(LatLng(lat, lon));
+      }
+
+      if (points.length >= 3) {
+        final first = points.first;
+        final last = points.last;
+        if ((first.latitude - last.latitude).abs() < 1e-9 &&
+            (first.longitude - last.longitude).abs() < 1e-9) {
+          points.removeLast();
+        }
+      }
+
+      if (points.length >= 3 && points.length > best.length) {
+        best = points;
+      }
+    }
+
+    return best;
+  }
+
+  void _fitToPoints(List<LatLng> points) {
+    if (points.length < 2) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _mapController.fitCamera(
+        CameraFit.bounds(
+          bounds: LatLngBounds.fromPoints(points),
+          padding: const EdgeInsets.all(42),
+        ),
+      );
+    });
+  }
+
+  Future<void> _importKml() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['kml'],
+      withData: true,
+    );
+    if (picked == null || picked.files.isEmpty) return;
+
+    final file = picked.files.first;
+    final bytes = file.bytes;
+    String? kmlText;
+    if (bytes != null && bytes.isNotEmpty) {
+      kmlText = utf8.decode(bytes, allowMalformed: true);
+    } else if (file.path != null && file.path!.isNotEmpty) {
+      try {
+        final rawBytes = await File(file.path!).readAsBytes();
+        if (rawBytes.isNotEmpty) {
+          kmlText = utf8.decode(rawBytes, allowMalformed: true);
+        }
+      } catch (_) {}
+    }
+    if (kmlText == null || kmlText.trim().isEmpty) {
+      await _showMessage(
+        'Erro de arquivo',
+        'Nao foi possivel ler o KML selecionado.',
+      );
+      return;
+    }
+    final imported = _extractPolygonFromKml(kmlText);
+    if (imported.length < 3) {
+      await _showMessage(
+        'KML invalido',
+        'Nao foi encontrado poligono valido com ao menos 3 pontos.',
+      );
+      return;
+    }
+
+    setState(() {
+      _points
+        ..clear()
+        ..addAll(imported);
+    });
+    _fitToPoints(imported);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('KML importado com ${imported.length} pontos.')),
+    );
   }
 
   Future<void> _save() async {
@@ -154,15 +261,30 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
                 ),
               ),
             ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _isSaving ? null : _importKml,
+                    icon: const Icon(Icons.upload_file),
+                    label: const Text('Importar KML'),
+                  ),
+                ),
+              ],
+            ),
+          ),
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(12),
             color: Colors.green.withValues(alpha: 0.08),
             child: Text(
-                'Toque no mapa para desenhar o poligono (${_points.length} pontos)'),
+                'Desenhe no mapa ou importe KML (${_points.length} pontos)'),
           ),
           Expanded(
             child: FlutterMap(
+              mapController: _mapController,
               options: MapOptions(
                 initialCenter: _initialCenter,
                 initialZoom: 15,
