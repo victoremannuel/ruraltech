@@ -4,10 +4,12 @@ import 'dart:math' as math;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_compass/flutter_compass.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
+import '../config/manual_settings.dart';
 import '../models/device_model.dart';
 import '../services/auth_service.dart';
 import '../services/bluetooth_discovery_service.dart';
@@ -33,10 +35,17 @@ class _HomeScreenState extends State<HomeScreen> {
   final MapController _mapController = MapController();
   int _refreshTick = 0;
   StreamSubscription<Position>? _positionSub;
+  StreamSubscription<CompassEvent>? _compassSub;
+  StreamSubscription<GatewayTelemetrySample>? _gatewayTelemetrySub;
+  GatewayService? _boundGatewayService;
   LatLng? _userPosition;
   double _userHeading = 0;
+  bool _initialCountryViewApplied = false;
+  int _lastAppliedFilterRevision = -1;
+  int _lastAppliedFilterSignature = 0;
   String? _lastAuthKey;
   bool _ranLegacyBackfill = false;
+  String? _lastTelemetryRetentionCleanupDayKey;
   String? _selectedAreaId;
   String? _selectedPropertyId;
   LatLng? _selectedPolygonAnchor;
@@ -50,10 +59,75 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _bindGatewayTelemetryStream();
+  }
+
+  @override
   void dispose() {
     _positionSub?.cancel();
+    _compassSub?.cancel();
+    _gatewayTelemetrySub?.cancel();
     _mapController.dispose();
     super.dispose();
+  }
+
+  void _bindGatewayTelemetryStream() {
+    final gateway = context.read<GatewayService>();
+    if (identical(_boundGatewayService, gateway)) return;
+    _boundGatewayService = gateway;
+    _gatewayTelemetrySub?.cancel();
+    _gatewayTelemetrySub = gateway.telemetryStream.listen((sample) {
+      if (!mounted) return;
+      if (sample.gatewayWifiOtaEnabled == false) {
+        // Em LoRa-only o escritor principal deve ser o gateway matriz.
+        return;
+      }
+      unawaited(
+        context.read<FirebaseService>().registerLiveTelemetry(
+              deviceId: sample.deviceId,
+              lat: sample.lat,
+              lon: sample.lon,
+              sourceTimestampSec: sample.sourceTimestampSec,
+              seq: sample.seq,
+              gatewayId: sample.gatewayId,
+              gatewayRole: sample.gatewayRole,
+              gatewayWifiOtaEnabled: sample.gatewayWifiOtaEnabled,
+              sourceType: sample.sourceType ?? 'telemetry',
+              writer: 'app',
+              receivedAtMs: sample.receivedAtMs,
+            ),
+      );
+    });
+  }
+
+  double _normalizeHeading(double heading) {
+    if (!heading.isFinite) return _userHeading;
+    var normalized = heading % 360.0;
+    if (normalized < 0) normalized += 360.0;
+    return normalized;
+  }
+
+  double _angularDiffDegrees(double a, double b) {
+    final diff = (a - b).abs() % 360.0;
+    return diff > 180.0 ? 360.0 - diff : diff;
+  }
+
+  void _applyHeading(double heading) {
+    final next = _normalizeHeading(heading);
+    if (_angularDiffDegrees(next, _userHeading) < 0.5) return;
+    if (!mounted) return;
+    setState(() => _userHeading = next);
+  }
+
+  void _startCompassTracking() {
+    _compassSub?.cancel();
+    _compassSub = FlutterCompass.events?.listen((event) {
+      final heading = event.heading;
+      if (heading == null) return;
+      _applyHeading(heading);
+    });
   }
 
   Future<void> _initUserLocation() async {
@@ -74,9 +148,10 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _userPosition = LatLng(current.latitude, current.longitude);
         if (current.heading.isFinite && current.heading >= 0) {
-          _userHeading = current.heading;
+          _userHeading = _normalizeHeading(current.heading);
         }
       });
+      _applyInitialCountryViewportIfPossible();
     } catch (_) {}
 
     _positionSub?.cancel();
@@ -89,10 +164,36 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       setState(() {
         _userPosition = LatLng(pos.latitude, pos.longitude);
-        if (pos.heading.isFinite && pos.heading >= 0) {
-          _userHeading = pos.heading;
-        }
       });
+      if (pos.heading.isFinite && pos.heading >= 0) {
+        // Fallback when compass stream is unavailable on device.
+        _applyHeading(pos.heading);
+      }
+      _applyInitialCountryViewportIfPossible();
+    });
+    _startCompassTracking();
+  }
+
+  double _countryOverviewZoom(double latitude) {
+    final absLat = latitude.abs();
+    if (absLat >= 55) return 2.4;
+    if (absLat >= 35) return 2.7;
+    return 2.9;
+  }
+
+  void _applyInitialCountryViewportIfPossible() {
+    if (_initialCountryViewApplied) return;
+    final user = _userPosition;
+    if (user == null) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _initialCountryViewApplied) return;
+      final hasFilters = context.read<MapFilterService>().hasAnyFilter;
+      if (hasFilters) return;
+      try {
+        _mapController.move(user, _countryOverviewZoom(user.latitude));
+        _initialCountryViewApplied = true;
+      } catch (_) {}
     });
   }
 
@@ -138,6 +239,68 @@ class _HomeScreenState extends State<HomeScreen> {
     return points;
   }
 
+  String _normalizeRefId(dynamic value) {
+    if (value is DocumentReference) return value.id;
+    if (value is String) {
+      final raw = value.trim();
+      if (raw.isEmpty) return '';
+      if (!raw.contains('/')) return raw;
+      final parts = raw.split('/').where((e) => e.isNotEmpty).toList();
+      return parts.isEmpty ? raw : parts.last;
+    }
+    if (value == null) return '';
+    return value.toString().trim();
+  }
+
+  int _viewPointsSignature(List<LatLng> points) {
+    var hash = points.length;
+    for (final p in points) {
+      hash = hash * 31 + (p.latitude * 10000).round();
+      hash = hash * 31 + (p.longitude * 10000).round();
+    }
+    return hash;
+  }
+
+  void _applyFilterViewportIfNeeded({
+    required MapFilterService filters,
+    required List<LatLng> viewPoints,
+  }) {
+    if (!filters.hasAnyFilter || viewPoints.isEmpty) {
+      _lastAppliedFilterRevision = -1;
+      _lastAppliedFilterSignature = 0;
+      return;
+    }
+
+    final signature = _viewPointsSignature(viewPoints);
+    if (_lastAppliedFilterRevision == filters.revision &&
+        _lastAppliedFilterSignature == signature) {
+      return;
+    }
+    _lastAppliedFilterRevision = filters.revision;
+    _lastAppliedFilterSignature = signature;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      try {
+        if (viewPoints.length >= 2) {
+          _mapController.fitCamera(
+            CameraFit.bounds(
+              bounds: LatLngBounds.fromPoints(viewPoints),
+              padding: const EdgeInsets.all(40),
+            ),
+          );
+        } else {
+          final zoom = _mapController.camera.zoom < 15
+              ? 15.0
+              : _mapController.camera.zoom;
+          _mapController.move(viewPoints.first, zoom);
+        }
+      } catch (_) {
+        // Falha transitória de controller em rebuild; próxima revisão refaz.
+      }
+    });
+  }
+
   bool _isInsidePolygon(LatLng point, List<LatLng> polygon) {
     if (polygon.length < 3) return false;
     var inside = false;
@@ -169,6 +332,34 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _refreshTick++);
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Atualizando dados da Home...')),
+    );
+  }
+
+  String _utcDayKeyNow() {
+    final now = DateTime.now().toUtc();
+    final y = now.year.toString().padLeft(4, '0');
+    final m = now.month.toString().padLeft(2, '0');
+    final d = now.day.toString().padLeft(2, '0');
+    return '$y$m$d';
+  }
+
+  void _scheduleTelemetryRetentionCleanup(List<DeviceModel> devices) {
+    final today = _utcDayKeyNow();
+    if (_lastTelemetryRetentionCleanupDayKey == today) return;
+    _lastTelemetryRetentionCleanupDayKey = today;
+
+    final ids = devices
+        .map((d) {
+          final candidate = (d.deviceId ?? '').trim();
+          if (candidate.isNotEmpty) return candidate;
+          return d.id.trim();
+        })
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    if (ids.isEmpty) return;
+
+    unawaited(
+      context.read<FirebaseService>().cleanupTelemetryRetentionForDevices(ids),
     );
   }
 
@@ -235,9 +426,25 @@ class _HomeScreenState extends State<HomeScreen> {
     return name.contains('matriz');
   }
 
+  String? _normalizeWsHost(String? raw) {
+    final value = (raw ?? '').trim();
+    if (value.isEmpty) return null;
+    if (value.startsWith('ws://') || value.startsWith('wss://')) return value;
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      final uri = Uri.tryParse(value);
+      if (uri == null || uri.host.isEmpty) return null;
+      return 'ws://${uri.host}:81';
+    }
+    if (value.contains('://')) return null;
+    if (value.contains(':')) return 'ws://$value';
+    return 'ws://$value:81';
+  }
+
   Future<void> _openSelectedPolygonEditor(BuildContext context) async {
     final auth = context.read<AuthService>();
     final fb = context.read<FirebaseService>();
+    final uid = auth.user?.uid;
+    if (uid == null) return;
     final areaId = _selectedAreaId;
     final propertyId = _selectedPropertyId;
     if (areaId == null && propertyId == null) return;
@@ -270,22 +477,31 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     if (propertyId != null) {
+      final properties =
+          await fb.getRuralProperties(uid: uid, isAdmin: auth.isAdmin);
+      if (!context.mounted) return;
+      final property = properties.cast<Map<String, dynamic>?>().firstWhere(
+            (p) => p?['id']?.toString() == propertyId,
+            orElse: () => null,
+          );
+      if (property == null) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Propriedade nao encontrada para edicao.'),
+            ),
+          );
+        }
+        return;
+      }
+
       final ok = await Navigator.push<bool>(
         context,
         MaterialPageRoute(
-          builder: (_) => PolygonEditorScreen(
-            title: 'Editar propriedade',
-            initialPoints: _selectedPolygonPoints,
-            onDelete: auth.isAdmin
-                ? () => fb.deleteRuralProperty(id: propertyId)
-                : null,
-            deleteLabel: 'Apagar propriedade',
-            onSave: (points) =>
-                fb.updateRuralPropertyPolygon(id: propertyId, points: points),
-          ),
+          builder: (_) => RuralPropertyEditorScreen(initialProperty: property),
         ),
       );
-      if (ok == true && mounted) {
+      if (ok == true && context.mounted) {
         setState(() {
           _selectedPropertyId = null;
           _selectedPolygonAnchor = null;
@@ -330,7 +546,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final nameCtrl = TextEditingController(text: device.name);
     final statusCtrl = TextEditingController(text: device.status);
-    final gatewayCtrl = TextEditingController();
     bool wifiOtaEnabled = device.wifiOtaEnabled;
     final formKey = GlobalKey<FormState>();
 
@@ -395,30 +610,25 @@ class _HomeScreenState extends State<HomeScreen> {
                     controller: statusCtrl,
                     decoration: const InputDecoration(labelText: 'Status'),
                   ),
-                  TextFormField(
-                    controller: gatewayCtrl,
-                    decoration: const InputDecoration(
-                        labelText: 'Gateway ID (opcional)'),
-                  ),
                   const SizedBox(height: 8),
                   if (auth.isAdmin)
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       value: wifiOtaEnabled,
                       onChanged: (v) => setState(() => wifiOtaEnabled = v),
-                      title: const Text('Modo Wi-Fi/Bluetooth/LoRa'),
+                      title: const Text('Modo LoRa-only'),
                       subtitle: Text(
                         wifiOtaEnabled
-                            ? 'Ativo (padrao). Desative para LoRa-only.'
-                            : 'LoRa-only ativo (Wi-Fi/BLE desligados).',
+                            ? 'Desativado (Wi-Fi/BLE habilitados).'
+                            : 'Ativado (Wi-Fi/BLE desligados).',
                       ),
                     )
                   else
                     ListTile(
                       contentPadding: EdgeInsets.zero,
-                      title: const Text('Modo de conectividade'),
+                      title: const Text('Modo LoRa-only'),
                       subtitle: Text(
-                        wifiOtaEnabled ? 'Wi-Fi/Bluetooth/LoRa' : 'LoRa-only',
+                        wifiOtaEnabled ? 'Desativado' : 'Ativado',
                       ),
                     ),
                   const SizedBox(height: 8),
@@ -496,9 +706,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   lat: selectedPosition!.latitude,
                   lon: selectedPosition!.longitude,
                   ownerUid: ownerUid ?? uid,
-                  gatewayId: gatewayCtrl.text.trim().isEmpty
-                      ? null
-                      : gatewayCtrl.text.trim(),
                   propertyId: propertyId,
                   wifiOtaEnabled: wifiOtaEnabled,
                 );
@@ -519,19 +726,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       );
                     }
                   } else {
-                    if (!gatewayService.isConnected) {
-                      gatewayService.connect();
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Tentando conectar ao gateway para aplicar SET_PARAMS via LoRa...',
-                            ),
-                          ),
-                        );
-                      }
-                    }
-                    gatewayService.sendCommand(
+                    final ok =
+                        await gatewayService.sendCommandEnsuringConnection(
                       deviceId: loraTarget,
                       command: 'SET_PARAMS',
                       payload: {
@@ -541,6 +737,15 @@ class _HomeScreenState extends State<HomeScreen> {
                         'requested_by_admin': true,
                       },
                     );
+                    if (!ok && context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Nao foi possivel enviar comando de modo para a coleira via gateway: ${gatewayService.lastError ?? 'erro desconhecido'}',
+                          ),
+                        ),
+                      );
+                    }
                   }
                 }
                 if (context.mounted) Navigator.pop(context);
@@ -648,21 +853,19 @@ class _HomeScreenState extends State<HomeScreen> {
                       contentPadding: EdgeInsets.zero,
                       value: wifiOtaEnabled,
                       onChanged: (v) => setState(() => wifiOtaEnabled = v),
-                      title: const Text('Modo Wi-Fi/Bluetooth/LoRa'),
+                      title: const Text('Modo LoRa-only'),
                       subtitle: Text(
                         wifiOtaEnabled
-                            ? (isMatrix
-                                ? 'Ativo (padrao da matriz).'
-                                : 'Ativo (padrao). Desative para LoRa-only.')
-                            : 'LoRa-only ativo (Wi-Fi/BLE desligados).',
+                            ? 'Desativado (Wi-Fi/BLE habilitados).'
+                            : 'Ativado (Wi-Fi/BLE desligados).',
                       ),
                     )
                   else
                     ListTile(
                       contentPadding: EdgeInsets.zero,
-                      title: const Text('Modo de conectividade'),
+                      title: const Text('Modo LoRa-only'),
                       subtitle: Text(
-                        wifiOtaEnabled ? 'Wi-Fi/Bluetooth/LoRa' : 'LoRa-only',
+                        wifiOtaEnabled ? 'Desativado' : 'Ativado',
                       ),
                     ),
                   const SizedBox(height: 8),
@@ -750,25 +953,16 @@ class _HomeScreenState extends State<HomeScreen> {
                   isMatrix: isMatrix,
                 );
                 if (auth.isAdmin && modeChanged) {
-                  final host = hostCtrl.text.trim();
-                  if (host.startsWith('ws://') || host.startsWith('wss://')) {
-                    gatewayService.gatewayHost = host;
-                  }
-                  if (!gatewayService.isConnected) {
-                    gatewayService.connect();
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Tentando conectar ao gateway alvo para aplicar SET_PARAMS...',
-                          ),
-                        ),
-                      );
-                    }
-                  }
-                  gatewayService.sendCommand(
+                  final persistedHost = (gateway['host'] ?? '').toString();
+                  final wsHost = _normalizeWsHost(
+                    hostCtrl.text.trim().isEmpty
+                        ? persistedHost
+                        : hostCtrl.text,
+                  );
+                  final ok = await gatewayService.sendCommandEnsuringConnection(
                     deviceId: '0',
                     command: 'SET_PARAMS',
+                    hostOverride: wsHost,
                     payload: {
                       'target': 'gateway',
                       'wifi_ota_enabled': wifiOtaEnabled,
@@ -776,6 +970,15 @@ class _HomeScreenState extends State<HomeScreen> {
                       'requested_by_admin': true,
                     },
                   );
+                  if (!ok && context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Nao foi possivel enviar comando de modo para o gateway: ${gatewayService.lastError ?? 'erro desconhecido'}',
+                        ),
+                      ),
+                    );
+                  }
                 }
                 if (context.mounted) Navigator.pop(context);
               },
@@ -808,20 +1011,11 @@ class _HomeScreenState extends State<HomeScreen> {
         properties.isNotEmpty ? properties.first['id'].toString() : null;
     LatLng? selectedPosition;
     String? selectedDetectedDeviceId;
+    bool manualPositionChosen = false;
     final ownerOptions = users
         .where((u) => (u['uid'] ?? '').isNotEmpty)
         .map((u) => Map<String, String>.from(u))
         .toList();
-    Map<String, String>? findOwnerByEmailOrUid(String raw) {
-      final key = raw.trim().toLowerCase();
-      if (key.isEmpty) return null;
-      for (final u in ownerOptions) {
-        final email = (u['email'] ?? '').trim().toLowerCase();
-        final ownerUid = (u['uid'] ?? '').trim().toLowerCase();
-        if (email == key || ownerUid == key) return u;
-      }
-      return null;
-    }
 
     final Map<String, String> selectedOwner = auth.isAdmin
         ? ownerOptions.firstWhere(
@@ -844,22 +1038,80 @@ class _HomeScreenState extends State<HomeScreen> {
     final statusCtrl = TextEditingController(text: 'active');
     final formKey = GlobalKey<FormState>();
 
-    List<Map<String, String>> filteredOwnerOptions() {
-      if (!auth.isAdmin) return const [];
-      final query = ownerCtrl.text.trim().toLowerCase();
-      final iterable = query.isEmpty
-          ? ownerOptions
-          : ownerOptions.where(
-              (u) => (u['email'] ?? '').trim().toLowerCase().contains(query),
-            );
-      return iterable.take(8).toList();
-    }
-
     void selectOwner(Map<String, String> owner) {
       selectedOwnerUid = owner['uid'];
       ownerCtrl.text = (owner['email'] ?? owner['uid'] ?? '').trim();
       ownerCtrl.selection =
           TextSelection.collapsed(offset: ownerCtrl.text.length);
+    }
+
+    Future<void> showOwnerPicker(
+      BuildContext dialogContext,
+      void Function(VoidCallback fn) dialogSetState,
+    ) async {
+      var query = '';
+      final selected = await showDialog<Map<String, String>>(
+        context: dialogContext,
+        builder: (pickerContext) => StatefulBuilder(
+          builder: (pickerContext, pickerSetState) {
+            final matches = ownerOptions.where((u) {
+              final email = (u['email'] ?? '').trim().toLowerCase();
+              return query.isEmpty || email.contains(query);
+            }).toList();
+            return AlertDialog(
+              title: const Text('Selecionar dono da coleira'),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Buscar por email',
+                        prefixIcon: Icon(Icons.search),
+                      ),
+                      onChanged: (v) =>
+                          pickerSetState(() => query = v.trim().toLowerCase()),
+                    ),
+                    const SizedBox(height: 8),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 260),
+                      child: matches.isEmpty
+                          ? const Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text('Nenhum email encontrado.'),
+                            )
+                          : ListView.builder(
+                              shrinkWrap: true,
+                              itemCount: matches.length,
+                              itemBuilder: (_, i) {
+                                final owner = matches[i];
+                                return ListTile(
+                                  dense: true,
+                                  title: Text(
+                                      owner['email'] ?? owner['uid'] ?? ''),
+                                  onTap: () =>
+                                      Navigator.pop(pickerContext, owner),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(pickerContext),
+                  child: const Text('Cancelar'),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+      if (selected == null) return;
+      dialogSetState(() => selectOwner(selected));
     }
 
     String mergeSource(String? current, String next) {
@@ -876,6 +1128,39 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       ordered.addAll(out);
       return ordered.join('+');
+    }
+
+    double? toFiniteCoord(dynamic value) {
+      if (value is num) {
+        final out = value.toDouble();
+        return out.isFinite ? out : null;
+      }
+      if (value is String) {
+        final out = double.tryParse(value.trim());
+        if (out == null || !out.isFinite) return null;
+        return out;
+      }
+      return null;
+    }
+
+    LatLng? positionFromDetectedCollar(
+      String? detectedId,
+      List<Map<String, dynamic>> discovered,
+    ) {
+      if (detectedId == null || detectedId.trim().isEmpty) return null;
+      Map<String, dynamic>? found;
+      for (final item in discovered) {
+        if (item['device_id_str']?.toString() == detectedId) {
+          found = item;
+          break;
+        }
+      }
+      if (found == null) return null;
+      final lat = toFiniteCoord(found['lat']);
+      final lon = toFiniteCoord(found['lon']);
+      if (lat == null || lon == null) return null;
+      if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+      return LatLng(lat, lon);
     }
 
     List<Map<String, dynamic>> mergedDiscoveredCollars() {
@@ -906,11 +1191,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
         current['source_type'] =
             mergeSource(current['source_type']?.toString(), 'ble');
-        if (current['lat'] == null && ble['lat'] is num) {
-          current['lat'] = ble['lat'];
+        final bleLat = toFiniteCoord(ble['lat']);
+        final bleLon = toFiniteCoord(ble['lon']);
+        if (current['lat'] == null && bleLat != null) {
+          current['lat'] = bleLat;
         }
-        if (current['lon'] == null && ble['lon'] is num) {
-          current['lon'] = ble['lon'];
+        if (current['lon'] == null && bleLon != null) {
+          current['lon'] = bleLon;
         }
         if ((current['name']?.toString().trim() ?? '').isEmpty &&
             (ble['name']?.toString().trim() ?? '').isNotEmpty) {
@@ -944,11 +1231,19 @@ class _HomeScreenState extends State<HomeScreen> {
             ? 'Coleira $detectedId'
             : suggested;
       }
-      if (detected['lat'] is num && detected['lon'] is num) {
-        selectedPosition = LatLng(
-          (detected['lat'] as num).toDouble(),
-          (detected['lon'] as num).toDouble(),
-        );
+      final lat = toFiniteCoord(detected['lat']);
+      final lon = toFiniteCoord(detected['lon']);
+      if (lat != null &&
+          lon != null &&
+          lat >= -90 &&
+          lat <= 90 &&
+          lon >= -180 &&
+          lon <= 180) {
+        selectedPosition = LatLng(lat, lon);
+        manualPositionChosen = false;
+      } else if (!manualPositionChosen) {
+        // Evita reaproveitar coordenada antiga de outra coleira detectada.
+        selectedPosition = null;
       }
     }
 
@@ -959,7 +1254,6 @@ class _HomeScreenState extends State<HomeScreen> {
           animation: Listenable.merge([gatewayService, bleService]),
           builder: (context, _) {
             final discoveredCollars = mergedDiscoveredCollars();
-            final ownerMatches = filteredOwnerOptions();
 
             return AlertDialog(
               title: const Text('Incluir coleira'),
@@ -969,60 +1263,31 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      TextFormField(
-                        controller: ownerCtrl,
-                        readOnly: !auth.isAdmin,
-                        decoration: const InputDecoration(
-                          labelText: 'Dono da coleira (email)',
-                        ),
-                        onChanged: auth.isAdmin
-                            ? (_) => setState(() {
-                                  final exact =
-                                      findOwnerByEmailOrUid(ownerCtrl.text);
-                                  selectedOwnerUid = exact?['uid'];
-                                })
-                            : null,
-                        validator: (v) {
-                          if (v == null || v.trim().isEmpty) {
-                            return 'Informe o email do dono';
-                          }
-                          if (!auth.isAdmin) return null;
-                          final exact = findOwnerByEmailOrUid(v);
-                          if (exact == null) {
-                            return 'Selecione um email valido da lista';
-                          }
-                          selectedOwnerUid = exact['uid'];
-                          return null;
-                        },
-                      ),
-                      if (auth.isAdmin && ownerMatches.isNotEmpty)
-                        DropdownButtonFormField<String>(
-                          initialValue: ownerMatches.any(
-                            (u) => (u['uid'] ?? '') == selectedOwnerUid,
-                          )
-                              ? selectedOwnerUid
-                              : null,
-                          items: ownerMatches
-                              .map(
-                                (u) => DropdownMenuItem<String>(
-                                  value: u['uid'],
-                                  child: Text(u['email'] ?? u['uid'] ?? ''),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (v) => setState(() {
-                            if (v == null) return;
-                            final owner = ownerMatches
-                                .cast<Map<String, String>?>()
-                                .firstWhere(
-                                  (u) => u?['uid'] == v,
-                                  orElse: () => null,
-                                );
-                            if (owner == null) return;
-                            selectOwner(owner);
-                          }),
+                      if (auth.isAdmin)
+                        TextFormField(
+                          controller: ownerCtrl,
+                          readOnly: true,
+                          onTap: () => showOwnerPicker(context, setState),
                           decoration: const InputDecoration(
-                            labelText: 'Selecionar email encontrado',
+                            labelText: 'Dono da coleira (email)',
+                            helperText:
+                                'Toque para abrir a lista e pesquisar por email',
+                            suffixIcon: Icon(Icons.arrow_drop_down),
+                          ),
+                          validator: (_) {
+                            if (selectedOwnerUid == null ||
+                                selectedOwnerUid!.trim().isEmpty) {
+                              return 'Selecione o dono da coleira';
+                            }
+                            return null;
+                          },
+                        )
+                      else
+                        TextFormField(
+                          controller: ownerCtrl,
+                          readOnly: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Dono da coleira (email)',
                           ),
                         ),
                       DropdownButtonFormField<String>(
@@ -1038,6 +1303,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         onChanged: (v) => setState(() => propertyId = v),
                         decoration: const InputDecoration(
                             labelText: 'Propriedade rural'),
+                        validator: (v) => (v == null || v.trim().isEmpty)
+                            ? 'Selecione a propriedade rural'
+                            : null,
                       ),
                       const SizedBox(height: 8),
                       Align(
@@ -1050,7 +1318,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                             const SizedBox(height: 4),
                             const Text(
-                              'Opcional: vincule a coleira detectada por Bluetooth ou via Wi-Fi (gateway conectado). '
+                              'Opcional: vincule a coleira detectada por Bluetooth ou via Wi-Fi na rede local. '
                               'Se preferir, apenas selecione o ponto no mapa manualmente.',
                               style: TextStyle(fontSize: 12),
                             ),
@@ -1072,7 +1340,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                             const SizedBox(height: 8),
                             const Text(
-                              'Wi-Fi (gateway conectado)',
+                              'Wi-Fi (rede local)',
                               style: TextStyle(fontWeight: FontWeight.w600),
                             ),
                             const SizedBox(height: 4),
@@ -1082,22 +1350,31 @@ class _HomeScreenState extends State<HomeScreen> {
                               crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
                                 Text(
-                                  gatewayService.isConnected
-                                      ? 'Gateway conectado via Wi-Fi'
-                                      : 'Gateway desconectado',
+                                  gatewayService.isDiscoveringCollars
+                                      ? 'Buscando coleiras na rede local...'
+                                      : (gatewayService.isConnected
+                                          ? 'Gateway conectado para descoberta Wi-Fi'
+                                          : 'Descoberta Wi-Fi direta (sem gateway)'),
                                   style: const TextStyle(fontSize: 12),
                                 ),
                                 OutlinedButton.icon(
-                                  onPressed: gatewayService.connect,
+                                  onPressed: gatewayService.isDiscoveringCollars
+                                      ? null
+                                      : () async {
+                                          await gatewayService
+                                              .requestCollarDiscovery();
+                                        },
                                   icon: Icon(
-                                    gatewayService.isConnected
-                                        ? Icons.wifi
-                                        : Icons.wifi_off,
+                                    gatewayService.isDiscoveringCollars
+                                        ? Icons.wifi_tethering
+                                        : (gatewayService.isConnected
+                                            ? Icons.wifi
+                                            : Icons.wifi_off),
                                   ),
                                   label: Text(
-                                    gatewayService.isConnected
-                                        ? 'Atualizar deteccao via Wi-Fi'
-                                        : 'Conectar gateway via Wi-Fi',
+                                    gatewayService.isDiscoveringCollars
+                                        ? 'Buscando...'
+                                        : 'Buscar coleira por Wi-Fi',
                                   ),
                                 ),
                               ],
@@ -1112,6 +1389,17 @@ class _HomeScreenState extends State<HomeScreen> {
                             padding: const EdgeInsets.only(top: 4),
                             child: Text(
                               'BLE: ${bleService.lastError}',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ),
+                      if ((gatewayService.lastError ?? '').isNotEmpty)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              'Wi-Fi: ${gatewayService.lastError}',
                               style: const TextStyle(fontSize: 12),
                             ),
                           ),
@@ -1132,7 +1420,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                   final extras = <String>[];
                                   final src = collarSourceLabel(d);
                                   if (src.isNotEmpty) extras.add(src);
-                                  if (d['lat'] is num && d['lon'] is num) {
+                                  final lat = toFiniteCoord(d['lat']);
+                                  final lon = toFiniteCoord(d['lon']);
+                                  if (lat != null && lon != null) {
                                     extras.add('GPS');
                                   }
                                   if (extras.isEmpty) {
@@ -1147,6 +1437,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         onChanged: (v) => setState(() {
                           if (v == null || v.isEmpty) {
                             selectedDetectedDeviceId = null;
+                            if (!manualPositionChosen) {
+                              selectedPosition = null;
+                            }
                             return;
                           }
                           final detected = discoveredCollars
@@ -1210,7 +1503,10 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             );
                             if (picked != null) {
-                              setState(() => selectedPosition = picked);
+                              setState(() {
+                                selectedPosition = picked;
+                                manualPositionChosen = true;
+                              });
                             }
                           },
                           child: const Text('Selecionar'),
@@ -1236,32 +1532,49 @@ class _HomeScreenState extends State<HomeScreen> {
                 ElevatedButton(
                   onPressed: () async {
                     if (!formKey.currentState!.validate()) return;
-                    if (auth.isAdmin) {
-                      final owner = findOwnerByEmailOrUid(ownerCtrl.text);
-                      if (owner == null) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'Selecione um email valido para o dono da coleira.',
-                              ),
+                    if (selectedOwnerUid == null ||
+                        selectedOwnerUid!.trim().isEmpty) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Selecione um dono valido para a coleira.',
                             ),
-                          );
-                        }
-                        return;
+                          ),
+                        );
                       }
-                      selectedOwnerUid = owner['uid'];
+                      return;
                     }
 
                     final hasBinding = selectedDetectedDeviceId != null &&
                         selectedDetectedDeviceId!.trim().isNotEmpty;
-                    final hasManualPosition = selectedPosition != null;
-                    if (!hasBinding && !hasManualPosition) {
+                    final liveDetectedPosition = hasBinding
+                        ? positionFromDetectedCollar(
+                            selectedDetectedDeviceId,
+                            discoveredCollars,
+                          )
+                        : null;
+                    final effectivePosition = manualPositionChosen
+                        ? selectedPosition
+                        : (liveDetectedPosition ?? selectedPosition);
+                    if (!hasBinding && effectivePosition == null) {
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
                             content: Text(
                               'Selecione ponto no mapa ou vincule uma coleira detectada (Bluetooth/Wi-Fi).',
+                            ),
+                          ),
+                        );
+                      }
+                      return;
+                    }
+                    if (hasBinding && effectivePosition == null) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Coleira vinculada sem coordenadas GPS. Aguarde a telemetria da coleira ou selecione o ponto manualmente.',
                             ),
                           ),
                         );
@@ -1275,11 +1588,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       status: statusCtrl.text.trim(),
                       deviceId:
                           hasBinding ? selectedDetectedDeviceId!.trim() : null,
-                      lat:
-                          hasManualPosition ? selectedPosition!.latitude : null,
-                      lon: hasManualPosition
-                          ? selectedPosition!.longitude
-                          : null,
+                      lat: effectivePosition?.latitude,
+                      lon: effectivePosition?.longitude,
                       propertyId: propertyId,
                     );
                     if (context.mounted) Navigator.pop(context);
@@ -1308,12 +1618,19 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final properties =
         await fb.getRuralProperties(uid: uid, isAdmin: auth.isAdmin);
-    final users = auth.isAdmin
-        ? await fb.getUserOptions()
-        : const <Map<String, String>>[];
     if (!context.mounted) return;
     String? propertyId =
         properties.isNotEmpty ? properties.first['id'].toString() : null;
+    String propertyLabel(Map<String, dynamic> property) =>
+        (property['name'] ?? property['id']).toString();
+    Map<String, dynamic>? findPropertyById(String? id) {
+      if (id == null || id.trim().isEmpty) return null;
+      return properties.cast<Map<String, dynamic>?>().firstWhere(
+            (p) => p?['id'].toString() == id,
+            orElse: () => null,
+          );
+    }
+
     LatLng? selectedPosition;
     List<Map<String, dynamic>> networkDiscoveredGateways = [];
     final connectedGateway = gatewayService.connectedGatewayCandidate;
@@ -1324,62 +1641,26 @@ class _HomeScreenState extends State<HomeScreen> {
         ? networkDiscoveredGateways.first['gateway_id']?.toString()
         : null;
     bool scanningNearbyGateways = false;
-    final ownerOptions = users
-        .where((u) => (u['uid'] ?? '').isNotEmpty)
-        .map((u) => Map<String, String>.from(u))
-        .toList();
-    Map<String, String>? findOwnerByEmailOrUid(String raw) {
-      final key = raw.trim().toLowerCase();
-      if (key.isEmpty) return null;
-      for (final u in ownerOptions) {
-        final email = (u['email'] ?? '').trim().toLowerCase();
-        final ownerUid = (u['uid'] ?? '').trim().toLowerCase();
-        if (email == key || ownerUid == key) return u;
-      }
-      return null;
-    }
-
-    final Map<String, String> selectedOwner = auth.isAdmin
-        ? ownerOptions.firstWhere(
-            (u) => (u['uid'] ?? '') == uid,
-            orElse: () => ownerOptions.isNotEmpty ? ownerOptions.first : {},
-          )
-        : {
-            'uid': uid,
-            'email': ((auth.user?.email ?? '').trim().isNotEmpty)
-                ? auth.user!.email!.trim().toLowerCase()
-                : uid,
-          };
-    String? selectedOwnerUid = (selectedOwner['uid'] ?? '').trim().isEmpty
-        ? uid
-        : selectedOwner['uid'];
-    final ownerCtrl = TextEditingController(
-      text: (selectedOwner['email'] ?? selectedOwnerUid ?? uid),
-    );
     final gatewayIdCtrl =
         TextEditingController(text: selectedDetectedGatewayId ?? '');
     final nameCtrl = TextEditingController();
     final statusCtrl = TextEditingController(text: 'active');
-    final hostCtrl = TextEditingController(text: 'ws://192.168.4.1:81');
+    final hostCtrl =
+        TextEditingController(text: ManualSettings.defaultGatewayWsHost);
+    final propertyCtrl = TextEditingController(
+      text: findPropertyById(propertyId) == null
+          ? ''
+          : propertyLabel(findPropertyById(propertyId)!),
+    );
     bool isMatrix = false;
     final formKey = GlobalKey<FormState>();
 
-    List<Map<String, String>> filteredOwnerOptions() {
-      if (!auth.isAdmin) return const [];
-      final query = ownerCtrl.text.trim().toLowerCase();
-      final iterable = query.isEmpty
-          ? ownerOptions
-          : ownerOptions.where(
-              (u) => (u['email'] ?? '').trim().toLowerCase().contains(query),
-            );
-      return iterable.take(8).toList();
-    }
-
-    void selectOwner(Map<String, String> owner) {
-      selectedOwnerUid = owner['uid'];
-      ownerCtrl.text = (owner['email'] ?? owner['uid'] ?? '').trim();
-      ownerCtrl.selection =
-          TextSelection.collapsed(offset: ownerCtrl.text.length);
+    void syncPropertyController(String? id) {
+      final selectedProperty = findPropertyById(id);
+      propertyCtrl.text =
+          selectedProperty == null ? '' : propertyLabel(selectedProperty);
+      propertyCtrl.selection =
+          TextSelection.collapsed(offset: propertyCtrl.text.length);
     }
 
     String mergeSource(String? current, String next) {
@@ -1496,7 +1777,6 @@ class _HomeScreenState extends State<HomeScreen> {
           animation: Listenable.merge([gatewayService, bleService]),
           builder: (context, _) {
             final discoveredGateways = mergedDiscoveredGateways();
-            final ownerMatches = filteredOwnerOptions();
 
             return AlertDialog(
               title: const Text('Incluir gateway'),
@@ -1506,75 +1786,27 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      TextFormField(
-                        controller: ownerCtrl,
-                        readOnly: !auth.isAdmin,
-                        decoration: const InputDecoration(
-                          labelText: 'Dono do gateway (email)',
-                        ),
-                        onChanged: auth.isAdmin
-                            ? (_) => setState(() {
-                                  final exact =
-                                      findOwnerByEmailOrUid(ownerCtrl.text);
-                                  selectedOwnerUid = exact?['uid'];
-                                })
-                            : null,
-                        validator: (v) {
-                          if (v == null || v.trim().isEmpty) {
-                            return 'Informe o email do dono';
-                          }
-                          if (!auth.isAdmin) return null;
-                          final exact = findOwnerByEmailOrUid(v);
-                          if (exact == null) {
-                            return 'Selecione um email valido da lista';
-                          }
-                          selectedOwnerUid = exact['uid'];
-                          return null;
-                        },
-                      ),
-                      if (auth.isAdmin && ownerMatches.isNotEmpty)
-                        DropdownButtonFormField<String>(
-                          initialValue: ownerMatches.any(
-                            (u) => (u['uid'] ?? '') == selectedOwnerUid,
-                          )
-                              ? selectedOwnerUid
-                              : null,
-                          items: ownerMatches
-                              .map(
-                                (u) => DropdownMenuItem<String>(
-                                  value: u['uid'],
-                                  child: Text(u['email'] ?? u['uid'] ?? ''),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (v) => setState(() {
-                            if (v == null) return;
-                            final owner = ownerMatches
-                                .cast<Map<String, String>?>()
-                                .firstWhere(
-                                  (u) => u?['uid'] == v,
-                                  orElse: () => null,
-                                );
-                            if (owner == null) return;
-                            selectOwner(owner);
-                          }),
-                          decoration: const InputDecoration(
-                            labelText: 'Selecionar email encontrado',
-                          ),
-                        ),
-                      DropdownButtonFormField<String>(
-                        initialValue: propertyId,
-                        items: properties
+                      DropdownMenu<String>(
+                        controller: propertyCtrl,
+                        width: MediaQuery.of(context).size.width * 0.72,
+                        requestFocusOnTap: true,
+                        enableFilter: true,
+                        enableSearch: true,
+                        label: const Text('Propriedade rural'),
+                        hintText: 'Digite para filtrar',
+                        initialSelection: propertyId,
+                        dropdownMenuEntries: properties
                             .map(
-                              (p) => DropdownMenuItem<String>(
+                              (p) => DropdownMenuEntry<String>(
                                 value: p['id'].toString(),
-                                child: Text((p['name'] ?? p['id']).toString()),
+                                label: propertyLabel(p),
                               ),
                             )
                             .toList(),
-                        onChanged: (v) => setState(() => propertyId = v),
-                        decoration: const InputDecoration(
-                            labelText: 'Propriedade rural'),
+                        onSelected: (v) => setState(() {
+                          propertyId = v;
+                          syncPropertyController(v);
+                        }),
                       ),
                       const SizedBox(height: 8),
                       Align(
@@ -1844,6 +2076,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 ElevatedButton(
                   onPressed: () async {
                     if (!formKey.currentState!.validate()) return;
+                    if (propertyId == null || propertyId!.trim().isEmpty) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Selecione a propriedade rural.'),
+                          ),
+                        );
+                      }
+                      return;
+                    }
                     final hasBinding = selectedDetectedGatewayId != null &&
                         selectedDetectedGatewayId!.trim().isNotEmpty;
                     final hasManualPosition = selectedPosition != null;
@@ -1859,24 +2101,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       }
                       return;
                     }
-                    if (auth.isAdmin) {
-                      final owner = findOwnerByEmailOrUid(ownerCtrl.text);
-                      if (owner == null) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'Selecione um email valido para o dono do gateway.',
-                              ),
-                            ),
-                          );
-                        }
-                        return;
-                      }
-                      selectedOwnerUid = owner['uid'];
-                    }
                     await fb.addGateway(
-                      ownerUid: selectedOwnerUid ?? uid,
                       name: nameCtrl.text.trim(),
                       status: statusCtrl.text.trim(),
                       isMatrix: isMatrix,
@@ -2135,39 +2360,105 @@ class _HomeScreenState extends State<HomeScreen> {
                       final allDevices =
                           devicesSnap.data ?? const <DeviceModel>[];
                       final allGateways = gatewaySnap.data ?? const [];
+                      _scheduleTelemetryRetentionCleanup(allDevices);
 
-                      final properties = filters.propertyIds.isEmpty
+                      final selectedPropertyIds = Set<String>.from(
+                        filters.propertyIds.map(_normalizeRefId),
+                      );
+                      final selectedAreaIds = Set<String>.from(
+                        filters.areaIds.map(_normalizeRefId),
+                      );
+                      final selectedCollarIds = Set<String>.from(
+                        filters.collarIds.map(_normalizeRefId),
+                      );
+                      final selectedGatewayIds = Set<String>.from(
+                        filters.gatewayIds.map(_normalizeRefId),
+                      );
+
+                      final resolvedPropertyIds = <String>{};
+                      if (filters.hasAnyFilter) {
+                        resolvedPropertyIds.addAll(selectedPropertyIds);
+
+                        for (final a in allAreas) {
+                          final areaId = _normalizeRefId(a['id']);
+                          if (!selectedAreaIds.contains(areaId)) continue;
+                          final propertyId = _normalizeRefId(a['propertyId']);
+                          if (propertyId.isNotEmpty) {
+                            resolvedPropertyIds.add(propertyId);
+                          }
+                        }
+
+                        for (final d in allDevices) {
+                          if (!selectedCollarIds.contains(d.id)) continue;
+                          final propertyId = _normalizeRefId(d.propertyId);
+                          if (propertyId.isNotEmpty) {
+                            resolvedPropertyIds.add(propertyId);
+                          }
+                        }
+
+                        for (final g in allGateways) {
+                          final gatewayId = _normalizeRefId(g['id']);
+                          if (!selectedGatewayIds.contains(gatewayId)) continue;
+                          final propertyId = _normalizeRefId(g['propertyId']);
+                          if (propertyId.isNotEmpty) {
+                            resolvedPropertyIds.add(propertyId);
+                          }
+                        }
+                      }
+
+                      final hasResolvedProperties =
+                          resolvedPropertyIds.isNotEmpty;
+
+                      final properties = !filters.hasAnyFilter
                           ? allProperties
-                          : allProperties
-                              .where(
-                                  (p) => filters.propertyIds.contains(p['id']))
-                              .toList();
-                      final devices = filters.collarIds.isEmpty
-                          ? allDevices
-                          : allDevices
-                              .where((d) => filters.collarIds.contains(d.id))
-                              .toList();
-                      final gateways = filters.gatewayIds.isEmpty
-                          ? allGateways
-                          : allGateways
-                              .where(
-                                  (g) => filters.gatewayIds.contains(g['id']))
-                              .toList();
-                      final areas = filters.propertyIds.isEmpty
+                          : allProperties.where((p) {
+                              final id = _normalizeRefId(p['id']);
+                              if (hasResolvedProperties) {
+                                return id.isNotEmpty &&
+                                    resolvedPropertyIds.contains(id);
+                              }
+                              return selectedPropertyIds.contains(id);
+                            }).toList();
+
+                      final filteredAreas = !filters.hasAnyFilter
                           ? allAreas
-                          : allAreas
-                              .where((a) => filters.propertyIds.contains(
-                                    (a['propertyId'] ?? '').toString(),
-                                  ))
-                              .toList();
-                      final filteredAreas = filters.areaIds.isEmpty
-                          ? areas
-                          : areas
-                              .where(
-                                (a) => filters.areaIds
-                                    .contains(a['id'].toString()),
-                              )
-                              .toList();
+                          : allAreas.where((a) {
+                              final areaId = _normalizeRefId(a['id']);
+                              final propertyId =
+                                  _normalizeRefId(a['propertyId']);
+                              if (hasResolvedProperties &&
+                                  propertyId.isNotEmpty &&
+                                  resolvedPropertyIds.contains(propertyId)) {
+                                return true;
+                              }
+                              return selectedAreaIds.contains(areaId);
+                            }).toList();
+
+                      final devices = !filters.hasAnyFilter
+                          ? allDevices
+                          : allDevices.where((d) {
+                              final propertyId = _normalizeRefId(d.propertyId);
+                              if (hasResolvedProperties &&
+                                  propertyId.isNotEmpty &&
+                                  resolvedPropertyIds.contains(propertyId)) {
+                                return true;
+                              }
+                              return selectedCollarIds.contains(d.id);
+                            }).toList();
+
+                      final gateways = !filters.hasAnyFilter
+                          ? allGateways
+                          : allGateways.where((g) {
+                              final gatewayId = _normalizeRefId(g['id']);
+                              final propertyId =
+                                  _normalizeRefId(g['propertyId']);
+                              if (hasResolvedProperties &&
+                                  propertyId.isNotEmpty &&
+                                  resolvedPropertyIds.contains(propertyId)) {
+                                return true;
+                              }
+                              return selectedGatewayIds.contains(gatewayId);
+                            }).toList();
 
                       final markers = <Marker>[
                         ...devices
@@ -2365,14 +2656,26 @@ class _HomeScreenState extends State<HomeScreen> {
 
                       final viewPoints = _collectViewPoints(
                           properties, filteredAreas, markers);
-                      final center = viewPoints.isNotEmpty
+                      final hasFilteredFocusTargets =
+                          filters.hasAnyFilter && viewPoints.isNotEmpty;
+                      _applyFilterViewportIfNeeded(
+                        filters: filters,
+                        viewPoints: viewPoints,
+                      );
+                      final countryCenter =
+                          _userPosition ?? const LatLng(-14.2350, -51.9253);
+                      final center = hasFilteredFocusTargets
                           ? viewPoints.first
-                          : const LatLng(-23.0, -46.0);
-                      final fitBounds = viewPoints.length >= 2
-                          ? LatLngBounds.fromPoints(viewPoints)
-                          : null;
+                          : countryCenter;
+                      final fitBounds =
+                          hasFilteredFocusTargets && viewPoints.length >= 2
+                              ? LatLngBounds.fromPoints(viewPoints)
+                              : null;
+                      final initialZoom = hasFilteredFocusTargets
+                          ? 14.0
+                          : _countryOverviewZoom(center.latitude);
                       final mapKey = ValueKey<String>(
-                        'home-${filters.revision}-${properties.length}-${filteredAreas.length}-${markers.length}-$_refreshTick',
+                        'home-${filters.revision}-${properties.length}-${filteredAreas.length}-${markers.length}-${_userPosition == null ? 'n' : 'u'}-$_refreshTick',
                       );
 
                       return Column(
@@ -2395,7 +2698,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   mapController: _mapController,
                                   options: MapOptions(
                                     initialCenter: center,
-                                    initialZoom: 14,
+                                    initialZoom: initialZoom,
                                     initialCameraFit: fitBounds == null
                                         ? null
                                         : CameraFit.bounds(

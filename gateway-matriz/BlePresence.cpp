@@ -3,9 +3,11 @@
  * @brief BLE advertisement helper for device discovery in mobile app.
  */
 #include "BlePresence.h"
+#include "config.h"
 
 #include <math.h>
 
+#if RT_MATRIX_BLE_ENABLED
 #include <BLEAdvertising.h>
 #include <BLEDevice.h>
 #include <BLEUtils.h>
@@ -156,3 +158,36 @@ void BlePresence::refreshAdvertising() {
   dirty_ = false;
   lastRefreshMs_ = millis();
 }
+#else
+bool BlePresence::begin(
+    BleNodeKind kind,
+    const String& id,
+    const String& advName,
+    uint16_t companyId,
+    const char* serviceUuid) {
+  (void)kind;
+  (void)id;
+  (void)advName;
+  (void)companyId;
+  (void)serviceUuid;
+  started_ = false;
+  return false;
+}
+
+void BlePresence::setPosition(double lat, double lon, bool hasPosition) {
+  (void)lat;
+  (void)lon;
+  (void)hasPosition;
+}
+
+void BlePresence::setFlags(bool wifiEnabled, bool internetConnected) {
+  (void)wifiEnabled;
+  (void)internetConnected;
+}
+
+void BlePresence::setEnabled(bool enabled) { (void)enabled; }
+
+void BlePresence::loop() {}
+
+void BlePresence::refreshAdvertising() {}
+#endif

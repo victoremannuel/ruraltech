@@ -46,6 +46,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '872721218590',
     projectId: 'ruraltech10',
     authDomain: 'ruraltech10.firebaseapp.com',
+    databaseURL: 'https://ruraltech10-default-rtdb.firebaseio.com',
     storageBucket: 'ruraltech10.firebasestorage.app',
     measurementId: 'G-8HVB4MLLEE',
   );
@@ -55,6 +56,7 @@ class DefaultFirebaseOptions {
     appId: '1:872721218590:android:6c131a689af2a9b851820f',
     messagingSenderId: '872721218590',
     projectId: 'ruraltech10',
+    databaseURL: 'https://ruraltech10-default-rtdb.firebaseio.com',
     storageBucket: 'ruraltech10.firebasestorage.app',
   );
 
@@ -63,6 +65,7 @@ class DefaultFirebaseOptions {
     appId: '1:872721218590:ios:20008cba37cbb2c351820f',
     messagingSenderId: '872721218590',
     projectId: 'ruraltech10',
+    databaseURL: 'https://ruraltech10-default-rtdb.firebaseio.com',
     storageBucket: 'ruraltech10.firebasestorage.app',
     iosBundleId: 'com.example.ruraltechApp',
   );
@@ -72,6 +75,7 @@ class DefaultFirebaseOptions {
     appId: '1:872721218590:ios:20008cba37cbb2c351820f',
     messagingSenderId: '872721218590',
     projectId: 'ruraltech10',
+    databaseURL: 'https://ruraltech10-default-rtdb.firebaseio.com',
     storageBucket: 'ruraltech10.firebasestorage.app',
     iosBundleId: 'com.example.ruraltechApp',
   );
@@ -82,7 +86,9 @@ class DefaultFirebaseOptions {
     messagingSenderId: '872721218590',
     projectId: 'ruraltech10',
     authDomain: 'ruraltech10.firebaseapp.com',
+    databaseURL: 'https://ruraltech10-default-rtdb.firebaseio.com',
     storageBucket: 'ruraltech10.firebasestorage.app',
     measurementId: 'G-SR0V580M48',
   );
+
 }

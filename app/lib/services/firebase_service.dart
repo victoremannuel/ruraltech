@@ -1,10 +1,26 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_database/firebase_database.dart';
+import '../config/manual_settings.dart';
 import '../models/device_model.dart';
 
 class FirebaseService {
+  static const String _defaultRtdbUrl = ManualSettings.firebaseRtdbUrl;
+  static const int _telemetryRetentionDays = 365;
+
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  late final FirebaseDatabase _rtdb;
+  final Map<String, int> _telemetryDedupUntilMs = <String, int>{};
+
+  FirebaseService() {
+    final configuredUrl = Firebase.app().options.databaseURL?.trim() ?? '';
+    _rtdb = FirebaseDatabase.instanceFor(
+      app: Firebase.app(),
+      databaseURL: configuredUrl.isNotEmpty ? configuredUrl : _defaultRtdbUrl,
+    );
+  }
 
   List<Map<String, double>> _encodeLatLonPoints(List<List<double>> points) {
     return points
@@ -92,6 +108,113 @@ class FirebaseService {
     }
     if (m['lon'] is num) return (m['lon'] as num).toDouble();
     return null;
+  }
+
+  String _sanitizeRtdbKey(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    return trimmed.replaceAll(RegExp(r'[.#$\[\]/]'), '_');
+  }
+
+  String _dayKeyFromMs(int msEpochUtc) {
+    final dt = DateTime.fromMillisecondsSinceEpoch(msEpochUtc, isUtc: true);
+    final y = dt.year.toString().padLeft(4, '0');
+    final m = dt.month.toString().padLeft(2, '0');
+    final d = dt.day.toString().padLeft(2, '0');
+    return '$y$m$d';
+  }
+
+  bool _registerTelemetryDedupKey(String key, int nowMs) {
+    _telemetryDedupUntilMs.removeWhere((_, until) => until <= nowMs);
+    if (_telemetryDedupUntilMs.containsKey(key)) return false;
+    _telemetryDedupUntilMs[key] = nowMs + 90 * 1000;
+    return true;
+  }
+
+  Future<void> registerLiveTelemetry({
+    required String deviceId,
+    required double lat,
+    required double lon,
+    int? sourceTimestampSec,
+    int? seq,
+    String? gatewayId,
+    String? gatewayRole,
+    bool? gatewayWifiOtaEnabled,
+    String sourceType = 'telemetry',
+    String writer = 'app',
+    int? receivedAtMs,
+  }) async {
+    final sanitizedDeviceId = _sanitizeRtdbKey(deviceId);
+    if (sanitizedDeviceId.isEmpty) return;
+
+    final nowMs = receivedAtMs != null && receivedAtMs > 0
+        ? receivedAtMs
+        : DateTime.now().millisecondsSinceEpoch;
+    final dedupKey = [
+      sanitizedDeviceId,
+      seq?.toString() ?? '-',
+      sourceTimestampSec?.toString() ?? '-',
+      lat.toStringAsFixed(6),
+      lon.toStringAsFixed(6),
+      gatewayId ?? '-',
+    ].join('|');
+    if (!_registerTelemetryDedupKey(dedupKey, nowMs)) return;
+
+    final nowSec = nowMs ~/ 1000;
+    final dayKey = _dayKeyFromMs(nowMs);
+    final oldDayMs =
+        nowMs - (_telemetryRetentionDays + 1) * 24 * 60 * 60 * 1000;
+    final oldDayKey = _dayKeyFromMs(oldDayMs);
+
+    final payload = <String, dynamic>{
+      'deviceId': sanitizedDeviceId,
+      'lat': lat,
+      'lon': lon,
+      'receivedAt': nowSec,
+      'receivedAtMs': nowMs,
+      'sourceType': sourceType,
+      'writer': writer,
+      'retentionDays': _telemetryRetentionDays,
+      if (seq != null) 'seq': seq,
+      if (sourceTimestampSec != null) 'sourceTimestampSec': sourceTimestampSec,
+      if (gatewayId != null && gatewayId.trim().isNotEmpty)
+        'gatewayId': gatewayId.trim(),
+      if (gatewayRole != null && gatewayRole.trim().isNotEmpty)
+        'gatewayRole': gatewayRole.trim(),
+      if (gatewayWifiOtaEnabled != null)
+        'gatewayWifiOtaEnabled': gatewayWifiOtaEnabled,
+    };
+
+    try {
+      await _rtdb.ref('telemetryLatest/$sanitizedDeviceId').set(payload);
+      await _rtdb
+          .ref('telemetryHistory/$sanitizedDeviceId/$dayKey/$nowMs')
+          .set(payload);
+      unawaited(
+        _rtdb.ref('telemetryHistory/$sanitizedDeviceId/$oldDayKey').remove(),
+      );
+    } catch (_) {
+      // A falha de telemetria nao deve interromper o fluxo principal do app.
+    }
+  }
+
+  Future<void> cleanupTelemetryRetentionForDevices(
+    Iterable<String> rawDeviceIds, {
+    int? nowMs,
+  }) async {
+    final baseNowMs = nowMs ?? DateTime.now().millisecondsSinceEpoch;
+    final oldDayMs =
+        baseNowMs - (_telemetryRetentionDays + 1) * 24 * 60 * 60 * 1000;
+    final oldDayKey = _dayKeyFromMs(oldDayMs);
+    final ids =
+        rawDeviceIds.map(_sanitizeRtdbKey).where((id) => id.isNotEmpty).toSet();
+    for (final id in ids) {
+      try {
+        await _rtdb.ref('telemetryHistory/$id/$oldDayKey').remove();
+      } catch (_) {
+        // cleanup best effort.
+      }
+    }
   }
 
   Stream<List<DeviceModel>> streamDevices(
@@ -543,6 +666,64 @@ class FirebaseService {
     });
   }
 
+  Future<void> updateRuralProperty({
+    required String id,
+    required String name,
+    required List<List<double>> points,
+    required String editorUid,
+    required bool isAdmin,
+    List<String> userEmails = const [],
+  }) async {
+    final update = <String, dynamic>{
+      'name': name,
+      'points': _encodeLatLonPoints(points),
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+
+    if (isAdmin) {
+      final snap = await _db.collection('ruralProperties').doc(id).get();
+      final data = snap.data() ?? {};
+      final createdById = _idFromRefOrPath(data['createdByUid']);
+      final ownerUid =
+          createdById.isEmpty ? _idFromRefOrPath(editorUid) : createdById;
+
+      final linkedUsers = <DocumentReference<Map<String, dynamic>>>{};
+      if (ownerUid.isNotEmpty) linkedUsers.add(_userRef(ownerUid));
+
+      final resolvedByEmail = await _resolveUserRefsByEmailsStrict(userEmails);
+      final requestedEmails = userEmails
+          .map((e) => e.trim().toLowerCase())
+          .where((e) => e.isNotEmpty)
+          .toSet();
+      final missingEmails = requestedEmails
+          .where((e) => !resolvedByEmail.containsKey(e))
+          .toList();
+
+      if (missingEmails.isNotEmpty) {
+        throw Exception(
+          'Usuarios nao encontrados para os emails: ${missingEmails.join(', ')}',
+        );
+      }
+
+      linkedUsers.addAll(resolvedByEmail.values);
+      linkedUsers.addAll(await _resolveAdminRefs());
+
+      if (linkedUsers.isEmpty) {
+        throw Exception('Informe ao menos um email de usuario valido.');
+      }
+
+      update['userUids'] = linkedUsers.toList();
+      if (createdById.isEmpty && ownerUid.isNotEmpty) {
+        update['createdByUid'] = _userRef(ownerUid);
+      }
+    }
+
+    await _db
+        .collection('ruralProperties')
+        .doc(id)
+        .set(update, SetOptions(merge: true));
+  }
+
   Future<void> addArea({
     required String ownerUid,
     required String ruralPropertyId,
@@ -565,7 +746,6 @@ class FirebaseService {
     double? lat,
     double? lon,
     String? deviceId,
-    String? gatewayId,
     String? propertyId,
   }) async {
     final normalizedDeviceId = deviceId == null || deviceId.trim().isEmpty
@@ -584,9 +764,7 @@ class FirebaseService {
       'status': status,
       'deviceId': persistedDeviceId,
       'position': position,
-      'gatewayId': gatewayId == null || gatewayId.trim().isEmpty
-          ? null
-          : _db.collection('gateways').doc(_idFromRefOrPath(gatewayId)),
+      'gatewayId': null,
       'propertyId': _propertyRefOrNull(propertyId),
       'wifi_ota_enabled': true,
       'updatedAt': FieldValue.serverTimestamp(),
@@ -595,7 +773,6 @@ class FirebaseService {
   }
 
   Future<void> addGateway({
-    required String ownerUid,
     required String name,
     required String status,
     bool isMatrix = false,
@@ -613,7 +790,7 @@ class FirebaseService {
         : _idFromRefOrPath(gatewayId);
     final position = (lat != null && lon != null) ? [lat, lon] : null;
     final payload = {
-      'ownerUid': _userRef(ownerUid),
+      'ownerUid': null,
       'name': name,
       'status': status,
       'gatewayId': normalizedGatewayId,
@@ -657,7 +834,6 @@ class FirebaseService {
     required double lat,
     required double lon,
     required String ownerUid,
-    String? gatewayId,
     String? propertyId,
     bool? wifiOtaEnabled,
   }) async {
@@ -667,9 +843,7 @@ class FirebaseService {
       'deviceId': _idFromRefOrPath(id),
       'ownerUid': _userRef(ownerUid),
       'position': [lat, lon],
-      'gatewayId': gatewayId == null || gatewayId.trim().isEmpty
-          ? null
-          : _db.collection('gateways').doc(_idFromRefOrPath(gatewayId)),
+      'gatewayId': null,
       'updatedAt': FieldValue.serverTimestamp(),
     };
     if (wifiOtaEnabled != null) {
@@ -704,6 +878,7 @@ class FirebaseService {
       linkedUsers = await _linkedUsersForProperty(propertyId);
     }
     final update = <String, dynamic>{
+      'ownerUid': null,
       'name': name,
       'status': status,
       'gatewayId': _idFromRefOrPath(id),
@@ -962,7 +1137,7 @@ class FirebaseService {
     }
 
     await patchCollection('areas', 'ruralPropertiesID', true);
-    await patchCollection('gateways', 'propertyId', true);
+    await patchCollection('gateways', 'propertyId', false);
   }
 
   Future<void> saveFence(

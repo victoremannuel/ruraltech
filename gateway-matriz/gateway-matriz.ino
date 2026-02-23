@@ -14,19 +14,23 @@
 #include <math.h>
 #include <WiFi.h>
 #include <ArduinoOTA.h>
+#include <WiFiClientSecure.h>
 #include <Wire.h>
 #include <SPI.h>
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
 #include <esp_system.h>
 #include <esp_ota_ops.h>
+#include <time.h>
 #if __has_include(<esp_idf_version.h>)
 #include <esp_idf_version.h>
 #endif
+#include "config.h"
+#if RT_MATRIX_OLED_ENABLED
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#endif
 #include <RTClib.h>
-#include "config.h"
 #include "Logger.h"
 #include "BlePresence.h"
 #include "LoRaGateway.h"
@@ -38,7 +42,9 @@ BlePresence blePresence;
 SdLogger sdlog;
 ApiServer api;
 RTC_DS3231 rtc;
+#if RT_MATRIX_OLED_ENABLED
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
+#endif
 uint32_t seqDown = 1;
 bool wifiOtaEnabled = cfg::WIFI_OTA_DEFAULT_ENABLED;
 bool watchdogTaskRegistered = false;
@@ -46,6 +52,8 @@ bool otaUploadInProgress = false;
 bool wifiApRunning = false;
 uint32_t wifiRecoveryAttemptAtMs = 0;
 uint8_t wifiRecoveryAttemptCount = 0;
+uint32_t cloudBackhaulAttemptAtMs = 0;
+uint32_t cloudLastPublishAtMs = 0;
 static void setWatchdogEnabled(bool enabled);
 
 static const char* otaErrorText(ota_error_t error) {
@@ -105,6 +113,169 @@ static String gatewayApSsid() {
   String ssid = String(cfg::AP_SSID) + "-" + suffix;
   if (ssid.length() > 31) ssid = ssid.substring(0, 31);
   return ssid;
+}
+
+static String sanitizeRtdbKey(String value) {
+  value.trim();
+  if (value.isEmpty()) return value;
+  value.replace('.', '_');
+  value.replace('#', '_');
+  value.replace('$', '_');
+  value.replace('[', '_');
+  value.replace(']', '_');
+  value.replace('/', '_');
+  return value;
+}
+
+static bool cloudTelemetryConfigured() {
+  return cfg::CLOUD_TELEMETRY_ENABLED &&
+         cfg::BACKHAUL_WIFI_SSID[0] != '\0' &&
+         cfg::FIREBASE_RTDB_HOST[0] != '\0' &&
+         cfg::RTDB_WRITER_KEY[0] != '\0';
+}
+
+static String matrixCloudId() {
+  if (cfg::RTDB_MATRIX_ID[0] != '\0') return sanitizeRtdbKey(String(cfg::RTDB_MATRIX_ID));
+  return sanitizeRtdbKey(gatewayNodeId());
+}
+
+static uint32_t unixNowSec() {
+  const time_t wall = time(nullptr);
+  if (wall > 1700000000) return (uint32_t)wall;
+  const DateTime nowRtc = rtc.now();
+  if (nowRtc.year() >= 2023) return nowRtc.unixtime();
+  return millis() / 1000;
+}
+
+static String utcDayKey(uint32_t unixSec) {
+  time_t raw = (time_t)unixSec;
+  struct tm tmUtc;
+  gmtime_r(&raw, &tmUtc);
+  char out[9];
+  snprintf(out, sizeof(out), "%04d%02d%02d", tmUtc.tm_year + 1900,
+           tmUtc.tm_mon + 1, tmUtc.tm_mday);
+  return String(out);
+}
+
+static bool rtdbWrite(const char* method, const String& path, const String& body) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+  if (path.isEmpty()) return false;
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(cfg::CLOUD_HTTP_TIMEOUT_MS);
+  if (!client.connect(cfg::FIREBASE_RTDB_HOST, 443)) return false;
+
+  const String reqPath = String("/") + path + ".json";
+  const size_t bodyLen = body.length();
+  client.print(method);
+  client.print(" ");
+  client.print(reqPath);
+  client.print(" HTTP/1.1\r\nHost: ");
+  client.print(cfg::FIREBASE_RTDB_HOST);
+  client.print("\r\nUser-Agent: ruraltech-matrix\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: ");
+  client.print((unsigned long)bodyLen);
+  client.print("\r\n\r\n");
+  if (bodyLen > 0) client.print(body);
+
+  const String statusLine = client.readStringUntil('\n');
+  bool ok = false;
+  if (statusLine.startsWith("HTTP/1.1 2") || statusLine.startsWith("HTTP/1.0 2")) {
+    ok = true;
+  }
+
+  const uint32_t drainStart = millis();
+  while ((uint32_t)(millis() - drainStart) < 250) {
+    while (client.available()) {
+      client.read();
+    }
+    if (!client.connected()) break;
+    delay(1);
+  }
+  client.stop();
+  return ok;
+}
+
+static bool ensureCloudBackhaulConnected() {
+  if (!cloudTelemetryConfigured()) return false;
+  if (wifiOtaEnabled) return false;
+  if (WiFi.status() == WL_CONNECTED) return true;
+
+  const uint32_t now = millis();
+  if (cloudBackhaulAttemptAtMs != 0 &&
+      (uint32_t)(now - cloudBackhaulAttemptAtMs) < cfg::CLOUD_BACKHAUL_RETRY_MS) {
+    return false;
+  }
+  cloudBackhaulAttemptAtMs = now;
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.begin(cfg::BACKHAUL_WIFI_SSID, cfg::BACKHAUL_WIFI_PASS);
+  LOGI("Backhaul Wi-Fi: tentando conectar em %s", cfg::BACKHAUL_WIFI_SSID);
+  return false;
+}
+
+static void publishTelemetryToCloud(const LoRaFrame& rx) {
+  if (rx.msgType != MsgType::TELEMETRY) return;
+  if (!cloudTelemetryConfigured()) return;
+  if (wifiOtaEnabled) return;
+  if (!ensureCloudBackhaulConnected()) return;
+
+  StaticJsonDocument<256> telemetry;
+  if (deserializeJson(telemetry, rx.payload, rx.payloadLen) != DeserializationError::Ok) {
+    return;
+  }
+
+  const float lat = telemetry["lat"] | NAN;
+  const float lon = telemetry["lon"] | NAN;
+  if (!isfinite(lat) || !isfinite(lon) ||
+      lat < -90.0f || lat > 90.0f || lon < -180.0f || lon > 180.0f) {
+    return;
+  }
+
+  const uint32_t nowSec = unixNowSec();
+  const String matrixId = matrixCloudId();
+  const String deviceId = sanitizeRtdbKey(String(rx.deviceId));
+  if (deviceId.isEmpty()) return;
+
+  StaticJsonDocument<512> payload;
+  payload["deviceId"] = deviceId;
+  payload["lat"] = lat;
+  payload["lon"] = lon;
+  payload["mode"] = telemetry["mode"] | 0;
+  payload["spd"] = telemetry["spd"] | 0.0f;
+  payload["hdop"] = telemetry["hdop"] | 99.9f;
+  payload["sat"] = telemetry["sat"] | 0;
+  payload["rssi"] = telemetry["rssi"] | 0;
+  payload["snr"] = telemetry["snr"] | 0.0f;
+  payload["seq"] = rx.seq;
+  payload["sourceTimestampSec"] = rx.timestamp;
+  payload["receivedAt"] = nowSec;
+  payload["receivedAtMs"] = (uint64_t)nowSec * 1000ULL;
+  payload["gatewayId"] = matrixId;
+  payload["gatewayRole"] = "matrix";
+  payload["gatewayWifiOtaEnabled"] = wifiOtaEnabled;
+  payload["transport"] = "lora";
+  payload["writer"] = "gateway_matrix";
+  payload["matrixId"] = matrixId;
+  payload["writerKey"] = cfg::RTDB_WRITER_KEY;
+  payload["retentionDays"] = cfg::TELEMETRY_RETENTION_DAYS;
+  payload["expiresAt"] = nowSec + (uint32_t)cfg::TELEMETRY_RETENTION_DAYS * 24UL * 60UL * 60UL;
+
+  String body;
+  serializeJson(payload, body);
+
+  const String latestPath = String("telemetryLatest/") + deviceId;
+  const String historyPath =
+      String("telemetryHistory/") + deviceId + "/" + utcDayKey(nowSec) + "/" + String(nowSec);
+
+  const bool latestOk = rtdbWrite("PUT", latestPath, body);
+  const bool historyOk = rtdbWrite("PUT", historyPath, body);
+  if (latestOk && historyOk) {
+    cloudLastPublishAtMs = millis();
+  } else {
+    LOGW("Falha upload RTDB telemetria device=%s latest=%d history=%d",
+         deviceId.c_str(), latestOk ? 1 : 0, historyOk ? 1 : 0);
+  }
 }
 
 static bool setupWiFi() {
@@ -198,6 +369,16 @@ static void onWifiEvent(WiFiEvent_t event) {
     LOGI("Cliente desconectado do AP (n=%d)", WiFi.softAPgetStationNum());
   }
 #endif
+#if defined(ARDUINO_EVENT_WIFI_STA_GOT_IP)
+  if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+    LOGI("Backhaul conectado: %s", WiFi.localIP().toString().c_str());
+  }
+#endif
+#if defined(ARDUINO_EVENT_WIFI_STA_DISCONNECTED)
+  if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED && !wifiOtaEnabled) {
+    LOGW("Backhaul desconectado");
+  }
+#endif
 }
 
 static bool wifiApClientConnected() {
@@ -209,9 +390,7 @@ static bool wifiApClientConnected() {
 
 static bool shouldBlePresenceBeEnabled() {
   if (!wifiOtaEnabled) return false;
-  if (wifiApRunning) return false;
   if (otaUploadInProgress) return false;
-  if (wifiApClientConnected()) return false;
   return true;
 }
 
@@ -520,6 +699,7 @@ static void relayFrameToPeerGateways(const LoRaFrame& rx) {
 }
 
 static void drawStatus(const char* line1, const char* line2) {
+#if RT_MATRIX_OLED_ENABLED
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(WHITE);
@@ -528,6 +708,10 @@ static void drawStatus(const char* line1, const char* line2) {
   display.println(line1);
   display.println(line2);
   display.display();
+#else
+  (void)line1;
+  (void)line2;
+#endif
 }
 
 void setup() {
@@ -545,7 +729,9 @@ void setup() {
   WiFi.onEvent(onWifiEvent);
 
   Wire.begin(cfg::PIN_I2C_SDA, cfg::PIN_I2C_SCL);
+#if RT_MATRIX_OLED_ENABLED
   display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+#endif
   drawStatus("Boot", cfg::FW_VERSION);
 
   if (wifiOtaEnabled) {
@@ -575,6 +761,9 @@ void setup() {
 
 void loop() {
   ensureWifiOtaServices();
+  if (!wifiOtaEnabled) {
+    ensureCloudBackhaulConnected();
+  }
   const bool apClientConnected = wifiApClientConnected();
   if (wifiOtaEnabled && cfg::OTA_ENABLED) {
     ArduinoOTA.handle();
@@ -611,17 +800,23 @@ void loop() {
 
     relayFrameToPeerGateways(rx);
 
-    StaticJsonDocument<256> packet;
+    StaticJsonDocument<512> packet;
     packet["type"] = uplinkTypeLabel(rx.msgType);
     packet["device_id"] = rx.deviceId;
     packet["msg_type"] = (int)rx.msgType;
     packet["seq"] = rx.seq;
+    packet["timestamp"] = rx.timestamp;
+    packet["gateway_id"] = gatewayNodeId();
+    packet["gateway_role"] = "matrix";
+    packet["gateway_wifi_ota_enabled"] = wifiOtaEnabled;
     packet["payload"] = String((char*)rx.payload).substring(0, rx.payloadLen);
     String out;
     serializeJson(packet, out);
     api.broadcastTelemetry(out);
     sdlog.log(String("UL|") + out);
     drawStatus("RX LoRa", out.substring(0, 16).c_str());
+
+    publishTelemetryToCloud(rx);
   }
 
   if (api.hasPendingCommand()) {

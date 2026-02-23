@@ -4,6 +4,19 @@
  */
 #pragma once
 #include <Arduino.h>
+#include "manual_settings.h"
+
+// 0 = economiza flash removendo bibliotecas OLED do build da matriz.
+// Defina 1 se precisar da tela local.
+#ifndef RT_MATRIX_OLED_ENABLED
+#define RT_MATRIX_OLED_ENABLED 0
+#endif
+
+// 0 = remove BLE da matriz para reduzir tamanho do binário em builds min_spiffs.
+// Defina 1 se precisar descoberta BLE da matriz.
+#ifndef RT_MATRIX_BLE_ENABLED
+#define RT_MATRIX_BLE_ENABLED 0
+#endif
 
 namespace cfg {
 constexpr char FW_VERSION[] = "gateway-matriz-1.0.0";
@@ -18,19 +31,33 @@ constexpr int PIN_LORA_DIO1 = 33;
 constexpr int PIN_SD_CS = 13;
 constexpr int PIN_I2C_SDA = 21;
 constexpr int PIN_I2C_SCL = 22;
+constexpr bool OLED_ENABLED = RT_MATRIX_OLED_ENABLED;
 
 constexpr float LORA_FREQ_MHZ = 915.0;
 constexpr uint16_t WS_PORT = 81;
-constexpr char AP_SSID[] = "RuralTech-Matriz";
-constexpr char AP_PASS[] = "ruraltechota";
+constexpr const char* AP_SSID = cfg_manual::AP_SSID;
+constexpr const char* AP_PASS = cfg_manual::AP_PASS;
 constexpr bool OTA_ENABLED = true;
 constexpr bool WIFI_OTA_DEFAULT_ENABLED = true;
-constexpr char OTA_HOSTNAME[] = "ruraltech-matriz";
-constexpr char OTA_PASSWORD[] = "ruraltechota";
+constexpr const char* OTA_HOSTNAME = cfg_manual::OTA_HOSTNAME;
+constexpr const char* OTA_PASSWORD = cfg_manual::OTA_PASSWORD;
 constexpr uint32_t OTA_HANDSHAKE_TIMEOUT_MS = 120000;
 
+// Telemetria em nuvem (gateway matriz como escritor em modo LoRa-only)
+// Configure antes de compilar para habilitar a escrita direta no RTDB.
+constexpr bool CLOUD_TELEMETRY_ENABLED = true;
+// Backhaul precisa ter acesso a internet para o gateway matriz escrever no Firebase.
+constexpr const char* BACKHAUL_WIFI_SSID = cfg_manual::BACKHAUL_WIFI_SSID;
+constexpr const char* BACKHAUL_WIFI_PASS = cfg_manual::BACKHAUL_WIFI_PASS;
+constexpr const char* FIREBASE_RTDB_HOST = cfg_manual::FIREBASE_RTDB_HOST;
+constexpr const char* RTDB_MATRIX_ID = cfg_manual::RTDB_MATRIX_ID;
+constexpr const char* RTDB_WRITER_KEY = cfg_manual::RTDB_WRITER_KEY;
+constexpr uint16_t CLOUD_HTTP_TIMEOUT_MS = 3500;
+constexpr uint32_t CLOUD_BACKHAUL_RETRY_MS = 10000;
+constexpr uint16_t TELEMETRY_RETENTION_DAYS = 365;
+
 // BLE discovery for app onboarding
-constexpr bool BLE_PRESENCE_ENABLED = true;
+constexpr bool BLE_PRESENCE_ENABLED = RT_MATRIX_BLE_ENABLED;
 constexpr char BLE_DEVICE_PREFIX[] = "RT-M";
 constexpr uint16_t BLE_COMPANY_ID = 0x1234;
 constexpr char BLE_SERVICE_UUID[] = "7f920001-0a26-4d09-a606-0cfef4f9a1f0";

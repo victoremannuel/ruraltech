@@ -170,6 +170,24 @@
       "languageVersion": "3.4"
     },
     {
+      "name": "firebase_database",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/firebase_database-11.3.10",
+      "packageUri": "lib/",
+      "languageVersion": "3.2"
+    },
+    {
+      "name": "firebase_database_platform_interface",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/firebase_database_platform_interface-0.2.6+10",
+      "packageUri": "lib/",
+      "languageVersion": "3.2"
+    },
+    {
+      "name": "firebase_database_web",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/firebase_database_web-0.2.6+16",
+      "packageUri": "lib/",
+      "languageVersion": "3.4"
+    },
+    {
       "name": "fixnum",
       "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/fixnum-1.1.1",
       "packageUri": "lib/",
@@ -216,6 +234,12 @@
       "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/flutter_blue_plus_web-7.0.2",
       "packageUri": "lib/",
       "languageVersion": "3.3"
+    },
+    {
+      "name": "flutter_compass",
+      "rootUri": "file:///Users/victor/.pub-cache/hosted/pub.dev/flutter_compass-0.8.1",
+      "packageUri": "lib/",
+      "languageVersion": "2.12"
     },
     {
       "name": "flutter_launcher_icons",

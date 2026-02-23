@@ -32,12 +32,12 @@ class PolygonMetrics {
 
   static String areaTextInline(List<LatLng> polygon) {
     final areaM2 = areaSquareMeters(polygon);
-    return '${_formatMeters(areaM2)} m2 | ${_formatHectares(areaM2)} ha';
+    return '${_formatMeters(areaM2)} m² | ${_formatHectares(areaM2)} ha';
   }
 
   static String areaTextMultiline(List<LatLng> polygon) {
     final areaM2 = areaSquareMeters(polygon);
-    return '${_formatMeters(areaM2)} m2\n${_formatHectares(areaM2)} ha';
+    return '${_formatMeters(areaM2)} m²\n${_formatHectares(areaM2)} ha';
   }
 
   static PolygonLabelPlacement labelPlacement(List<LatLng> polygon) {
@@ -90,11 +90,34 @@ class PolygonMetrics {
   }
 
   static String _formatMeters(double areaM2) {
-    return areaM2.toStringAsFixed(areaM2 >= 100 ? 0 : 2);
+    return _formatLocalizedNumber(
+      areaM2,
+      decimals: areaM2 >= 100 ? 0 : 2,
+    );
   }
 
   static String _formatHectares(double areaM2) {
-    return (areaM2 / 10000.0).toStringAsFixed(2);
+    return _formatLocalizedNumber(areaM2 / 10000.0, decimals: 2);
+  }
+
+  static String _formatLocalizedNumber(
+    double value, {
+    required int decimals,
+  }) {
+    final negative = value.isNegative;
+    final fixed = value.abs().toStringAsFixed(decimals);
+    final parts = fixed.split('.');
+    final integerPart = parts.first.replaceAllMapped(
+      RegExp(r'\B(?=(\d{3})+(?!\d))'),
+      (_) => '.',
+    );
+    if (decimals == 0) {
+      return negative ? '-$integerPart' : integerPart;
+    }
+    final decimalPart =
+        parts.length > 1 ? parts[1] : ''.padRight(decimals, '0');
+    final formatted = '$integerPart,$decimalPart';
+    return negative ? '-$formatted' : formatted;
   }
 
   static double _haversineMeters(LatLng a, LatLng b) {

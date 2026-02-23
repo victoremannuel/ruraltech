@@ -122,7 +122,8 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read: if signedIn() && (uid() == userId || isAdmin());
+      // Required by profile filters to resolve owner emails for related entities.
+      allow read: if signedIn();
       allow create: if signedIn() &&
         uid() == userId &&
         request.resource.data.role == 'user';

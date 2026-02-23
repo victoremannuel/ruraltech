@@ -209,9 +209,7 @@ static bool wifiApClientConnected() {
 
 static bool shouldBlePresenceBeEnabled() {
   if (!wifiOtaEnabled) return false;
-  if (wifiApRunning) return false;
   if (otaUploadInProgress) return false;
-  if (wifiApClientConnected()) return false;
   return true;
 }
 
@@ -611,11 +609,15 @@ void loop() {
 
     relayFrameToPeerGateways(rx);
 
-    StaticJsonDocument<256> packet;
+    StaticJsonDocument<512> packet;
     packet["type"] = uplinkTypeLabel(rx.msgType);
     packet["device_id"] = rx.deviceId;
     packet["msg_type"] = (int)rx.msgType;
     packet["seq"] = rx.seq;
+    packet["timestamp"] = rx.timestamp;
+    packet["gateway_id"] = gatewayNodeId();
+    packet["gateway_role"] = "gateway";
+    packet["gateway_wifi_ota_enabled"] = wifiOtaEnabled;
     packet["payload"] = String((char*)rx.payload).substring(0, rx.payloadLen);
     String out;
     serializeJson(packet, out);

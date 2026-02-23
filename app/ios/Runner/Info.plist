@@ -32,6 +32,13 @@
 	<string>Usamos Bluetooth para detectar coleiras e gateways proximos.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>Usamos Bluetooth para detectar coleiras e gateways proximos.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Usamos a rede local para descobrir coleiras e gateways via Wi-Fi.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_http._tcp</string>
+		<string>_arduino._tcp</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -1,8 +1,36 @@
-import 'dart:math' as math;
+import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
+import '../config/manual_settings.dart';
+
+class GatewayTelemetrySample {
+  const GatewayTelemetrySample({
+    required this.deviceId,
+    required this.lat,
+    required this.lon,
+    required this.receivedAtMs,
+    this.seq,
+    this.sourceTimestampSec,
+    this.gatewayId,
+    this.gatewayRole,
+    this.gatewayWifiOtaEnabled,
+    this.sourceType,
+  });
+
+  final String deviceId;
+  final double lat;
+  final double lon;
+  final int receivedAtMs;
+  final int? seq;
+  final int? sourceTimestampSec;
+  final String? gatewayId;
+  final String? gatewayRole;
+  final bool? gatewayWifiOtaEnabled;
+  final String? sourceType;
+}
 
 class GatewayService extends ChangeNotifier {
   static const int maxLoraPayloadBytes = 128;
@@ -13,9 +41,16 @@ class GatewayService extends ChangeNotifier {
 
   WebSocketChannel? _channel;
   final List<Map<String, dynamic>> messages = [];
-  String gatewayHost = 'ws://192.168.4.1:81';
+  final Map<String, Map<String, dynamic>> _networkDiscoveredCollars = {};
+  final StreamController<GatewayTelemetrySample> _telemetryController =
+      StreamController<GatewayTelemetrySample>.broadcast();
+  String gatewayHost = ManualSettings.defaultGatewayWsHost;
   bool isConnected = false;
+  bool isDiscoveringCollars = false;
   String? lastError;
+
+  Stream<GatewayTelemetrySample> get telemetryStream =>
+      _telemetryController.stream;
 
   void connect() {
     _channel?.sink.close();
@@ -30,6 +65,8 @@ class GatewayService extends ChangeNotifier {
           final parsed = jsonDecode(event as String) as Map<String, dynamic>;
           messages.insert(0, parsed);
           if (messages.length > 200) messages.removeLast();
+          final sample = _extractTelemetrySample(parsed);
+          if (sample != null) _telemetryController.add(sample);
           isConnected = true;
           lastError = null;
           notifyListeners();
@@ -49,6 +86,32 @@ class GatewayService extends ChangeNotifier {
       lastError = e.toString();
       notifyListeners();
     }
+  }
+
+  Future<bool> ensureConnected({
+    String? hostOverride,
+    Duration timeout = const Duration(seconds: 4),
+  }) async {
+    final trimmedHost = hostOverride?.trim();
+    if (trimmedHost != null && trimmedHost.isNotEmpty) {
+      gatewayHost = trimmedHost;
+    }
+
+    if (isConnected && _channel != null) return true;
+    connect();
+
+    final deadline = DateTime.now().add(timeout);
+    while ((!isConnected || _channel == null) &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 180));
+    }
+
+    if (!isConnected || _channel == null) {
+      lastError = 'gateway_not_connected';
+      notifyListeners();
+      return false;
+    }
+    return true;
   }
 
   void _pushLocalCommandResult({
@@ -161,6 +224,58 @@ class GatewayService extends ChangeNotifier {
     return null;
   }
 
+  GatewayTelemetrySample? _extractTelemetrySample(Map<String, dynamic> msg) {
+    final type = (msg['type'] ?? '').toString().toLowerCase();
+    if (type != 'telemetry') return null;
+
+    final payload = _decodePayloadMap(msg['payload']);
+    final deviceId = _extractDeviceId(msg, payload);
+    if (deviceId == null || deviceId <= 0) return null;
+
+    double? lat = _toFiniteDouble(payload?['lat']);
+    double? lon = _toFiniteDouble(payload?['lon']);
+    final gps = payload?['gps'];
+    if (gps is Map<String, dynamic>) {
+      lat ??= _toFiniteDouble(gps['lat']);
+      lon ??= _toFiniteDouble(gps['lon']);
+    }
+    if (lat == null ||
+        lon == null ||
+        lat < -90.0 ||
+        lat > 90.0 ||
+        lon < -180.0 ||
+        lon > 180.0) {
+      return null;
+    }
+
+    final connectedHost = connectedGatewayCandidate;
+    final gatewayId = (msg['gateway_id'] ??
+            msg['gatewayId'] ??
+            connectedHost?['gateway_id'] ??
+            connectedHost?['gateway_id_raw'])
+        ?.toString();
+    final gatewayRole = (msg['gateway_role'] ?? msg['gatewayRole'])?.toString();
+    final wifiOtaFlag = msg['gateway_wifi_ota_enabled'];
+    final gatewayWifiOtaEnabled = wifiOtaFlag is bool ? wifiOtaFlag : null;
+
+    return GatewayTelemetrySample(
+      deviceId: deviceId.toString(),
+      lat: lat,
+      lon: lon,
+      receivedAtMs: DateTime.now().millisecondsSinceEpoch,
+      seq: _toInt(msg['seq']),
+      sourceTimestampSec: _toInt(msg['timestamp']),
+      gatewayId: gatewayId == null || gatewayId.trim().isEmpty
+          ? null
+          : gatewayId.trim(),
+      gatewayRole: gatewayRole == null || gatewayRole.trim().isEmpty
+          ? null
+          : gatewayRole.trim(),
+      gatewayWifiOtaEnabled: gatewayWifiOtaEnabled,
+      sourceType: type,
+    );
+  }
+
   String _sanitizeDocId(String raw) {
     final cleaned = raw.trim().replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '-');
     return cleaned.isEmpty ? 'gateway-unknown' : cleaned;
@@ -177,18 +292,39 @@ class GatewayService extends ChangeNotifier {
   }
 
   List<String> _hostsToProbe({int maxHosts = 40}) {
-    final uri = Uri.tryParse(gatewayHost);
-    if (uri == null || uri.host.isEmpty) return const [];
-    final host = uri.host.trim();
-    if (!_isValidIpv4(host)) return [host];
-
-    final parts = host.split('.');
-    final prefix = '${parts[0]}.${parts[1]}.${parts[2]}';
-    final hosts = <String>{host};
+    final hosts = <String>{};
     final limit = maxHosts.clamp(1, 254);
-    for (var i = 1; i <= limit; i++) {
-      hosts.add('$prefix.$i');
+
+    void addSubnet(String prefix, int hostLimit) {
+      final bounded = hostLimit.clamp(1, 254);
+      for (var i = 1; i <= bounded; i++) {
+        hosts.add('$prefix.$i');
+      }
     }
+
+    final uri = Uri.tryParse(gatewayHost);
+    if (uri != null && uri.host.isNotEmpty) {
+      final host = uri.host.trim();
+      if (_isValidIpv4(host)) {
+        hosts.add(host);
+        final parts = host.split('.');
+        final prefix = '${parts[0]}.${parts[1]}.${parts[2]}';
+        addSubnet(prefix, limit);
+      } else {
+        hosts.add(host);
+      }
+    }
+
+    // Sub-redes locais de onboarding dos firmwares (coleira/gateway).
+    for (final subnet in ManualSettings.onboardingSubnets) {
+      final trimmedSubnet = subnet.trim();
+      if (trimmedSubnet.isEmpty) continue;
+      addSubnet(
+        trimmedSubnet,
+        math.min(limit, ManualSettings.onboardingSubnetProbeLimit),
+      );
+    }
+
     return hosts.toList()..sort();
   }
 
@@ -244,6 +380,57 @@ class GatewayService extends ChangeNotifier {
     }
   }
 
+  Future<Map<String, dynamic>?> _probeCollar(String host) async {
+    try {
+      final resp = await http
+          .get(Uri.parse('http://$host/status'))
+          .timeout(_gatewayProbeTimeout);
+      if (resp.statusCode != 200) return null;
+
+      final decoded = jsonDecode(resp.body);
+      if (decoded is! Map<String, dynamic>) return null;
+      final service = (decoded['service']?.toString().toLowerCase() ?? '');
+      if (service != 'collar') {
+        return null;
+      }
+
+      final rawId = (decoded['device_id'] ??
+              decoded['deviceId'] ??
+              decoded['id'] ??
+              decoded['ap_ssid'] ??
+              host)
+          .toString();
+      final deviceId = _sanitizeDocId(rawId);
+
+      double? lat = _toFiniteDouble(decoded['lat']);
+      double? lon = _toFiniteDouble(decoded['lon']);
+      final gps = decoded['gps'];
+      if (gps is Map<String, dynamic>) {
+        lat ??= _toFiniteDouble(gps['lat']);
+        lon ??= _toFiniteDouble(gps['lon']);
+      }
+      if (lat != null &&
+          lon != null &&
+          (lat < -90 || lat > 90 || lon < -180 || lon > 180)) {
+        lat = null;
+        lon = null;
+      }
+
+      return {
+        'device_id': int.tryParse(deviceId) ?? deviceId,
+        'device_id_str': deviceId,
+        'lat': lat,
+        'lon': lon,
+        'name': decoded['name']?.toString() ?? decoded['ap_ssid']?.toString(),
+        'host_http': 'http://$host',
+        'ip': host,
+        'source_type': 'wifi',
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<List<Map<String, dynamic>>> discoverGatewaysOnLocalNetwork(
       {int maxHosts = 120}) async {
     final hosts = _hostsToProbe(maxHosts: maxHosts);
@@ -274,8 +461,95 @@ class GatewayService extends ChangeNotifier {
     return result;
   }
 
+  Future<List<Map<String, dynamic>>> discoverCollarsOnLocalNetwork({
+    int maxHosts = 120,
+  }) async {
+    final hosts = _hostsToProbe(maxHosts: maxHosts);
+    if (hosts.isEmpty) return const [];
+
+    final byId = <String, Map<String, dynamic>>{};
+
+    for (var i = 0; i < hosts.length; i += _gatewayProbeBatchSize) {
+      final end = math.min(i + _gatewayProbeBatchSize, hosts.length);
+      final batch = hosts.sublist(i, end);
+      await Future.wait(
+        batch.map((host) async {
+          final found = await _probeCollar(host);
+          if (found == null) return;
+          final id = found['device_id_str']?.toString();
+          if (id == null || id.isEmpty) return;
+          byId[id] = found;
+        }),
+      );
+    }
+
+    _networkDiscoveredCollars
+      ..clear()
+      ..addAll(byId);
+
+    final result = _networkDiscoveredCollars.values.toList();
+    result.sort(
+      (a, b) => (a['device_id_str'] as String)
+          .compareTo(b['device_id_str'] as String),
+    );
+    for (final found in result) {
+      final id = found['device_id_str']?.toString();
+      final lat = _toFiniteDouble(found['lat']);
+      final lon = _toFiniteDouble(found['lon']);
+      if (id == null || id.isEmpty || lat == null || lon == null) continue;
+      _telemetryController.add(
+        GatewayTelemetrySample(
+          deviceId: id,
+          lat: lat,
+          lon: lon,
+          receivedAtMs: DateTime.now().millisecondsSinceEpoch,
+          gatewayId: found['ip']?.toString(),
+          gatewayRole: 'collar',
+          gatewayWifiOtaEnabled: true,
+          sourceType: 'status_poll',
+        ),
+      );
+    }
+    notifyListeners();
+    return result;
+  }
+
+  Future<void> requestCollarDiscovery() async {
+    if (isDiscoveringCollars) return;
+    isDiscoveringCollars = true;
+    lastError = null;
+    notifyListeners();
+
+    try {
+      await discoverCollarsOnLocalNetwork(maxHosts: 120);
+      if (_networkDiscoveredCollars.isEmpty) {
+        lastError = 'nenhuma_coleira_wifi_encontrada';
+      } else {
+        lastError = null;
+      }
+    } finally {
+      isDiscoveringCollars = false;
+      notifyListeners();
+    }
+  }
+
+  int? _extractDeviceId(
+    Map<String, dynamic> msg,
+    Map<String, dynamic>? payload,
+  ) {
+    final fromMessage = _toInt(msg['device_id']) ??
+        _toInt(msg['deviceId']) ??
+        _toInt(msg['device_id_str']) ??
+        _toInt(msg['id']);
+    if (fromMessage != null) return fromMessage;
+
+    return _toInt(payload?['device_id']) ??
+        _toInt(payload?['deviceId']) ??
+        _toInt(payload?['id']);
+  }
+
   List<Map<String, dynamic>> get discoveredCollars {
-    final byDeviceId = <int, Map<String, dynamic>>{};
+    final byDeviceId = <String, Map<String, dynamic>>{};
 
     for (final msg in messages) {
       final type = (msg['type'] ?? '').toString().toLowerCase();
@@ -287,26 +561,45 @@ class GatewayService extends ChangeNotifier {
         continue;
       }
 
-      final deviceId = _toInt(msg['device_id']);
-      if (deviceId == null || deviceId <= 0) continue;
-      if (byDeviceId.containsKey(deviceId)) continue;
-
       final payload = _decodePayloadMap(msg['payload']);
+      final deviceId = _extractDeviceId(msg, payload);
+      if (deviceId == null || deviceId <= 0) continue;
+      final deviceIdStr = deviceId.toString();
+      if (byDeviceId.containsKey(deviceIdStr)) continue;
+
       final lat = _toFiniteDouble(payload?['lat']);
       final lon = _toFiniteDouble(payload?['lon']);
 
-      byDeviceId[deviceId] = {
+      byDeviceId[deviceIdStr] = {
         'device_id': deviceId,
-        'device_id_str': deviceId.toString(),
+        'device_id_str': deviceIdStr,
         'lat': lat,
         'lon': lon,
-        'source_type': type,
+        'source_type': 'wifi',
       };
+    }
+
+    for (final net in _networkDiscoveredCollars.values) {
+      final id = net['device_id_str']?.toString();
+      if (id == null || id.isEmpty) continue;
+      final current = byDeviceId[id];
+      if (current == null) {
+        byDeviceId[id] = Map<String, dynamic>.from(net);
+        continue;
+      }
+      current['source_type'] = 'wifi';
+      current['lat'] ??= net['lat'];
+      current['lon'] ??= net['lon'];
+      if ((current['name']?.toString().trim() ?? '').isEmpty &&
+          (net['name']?.toString().trim() ?? '').isNotEmpty) {
+        current['name'] = net['name'];
+      }
     }
 
     final discovered = byDeviceId.values.toList();
     discovered.sort(
-      (a, b) => (a['device_id'] as int).compareTo(b['device_id'] as int),
+      (a, b) => (a['device_id_str'] as String)
+          .compareTo(b['device_id_str'] as String),
     );
     return discovered;
   }
@@ -348,5 +641,30 @@ class GatewayService extends ChangeNotifier {
       'payload': payload
     };
     _channel?.sink.add(jsonEncode(msg));
+  }
+
+  Future<bool> sendCommandEnsuringConnection({
+    required String deviceId,
+    required String command,
+    required Map<String, dynamic> payload,
+    String? hostOverride,
+    Duration timeout = const Duration(seconds: 4),
+  }) async {
+    final connected =
+        await ensureConnected(hostOverride: hostOverride, timeout: timeout);
+    if (!connected) return false;
+
+    lastError = null;
+    sendCommand(deviceId: deviceId, command: command, payload: payload);
+    final immediateError = lastError ?? '';
+    return immediateError.isEmpty ||
+        !immediateError.startsWith('[send_command]');
+  }
+
+  @override
+  void dispose() {
+    _channel?.sink.close();
+    _telemetryController.close();
+    super.dispose();
   }
 }

@@ -10,6 +10,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include "manual_settings.h"
 
 namespace cfg {
 constexpr char FW_VERSION[] = "coleira-1.0.0";
@@ -43,18 +44,18 @@ constexpr uint8_t LORA_SYNC_WORD = 0x12;
 // Wi-Fi / OTA (manutenção)
 constexpr bool OTA_ENABLED = true;
 constexpr bool WIFI_OTA_DEFAULT_ENABLED = true;
-constexpr char WIFI_SSID[] = "RuralTech-Gateway";
-constexpr char WIFI_PASS[] = "ruraltechota";
-constexpr char OTA_HOSTNAME[] = "ruraltech-coleira";
-constexpr char OTA_PASSWORD[] = "ruraltechota";
+constexpr const char* WIFI_SSID = cfg_manual::WIFI_SSID;
+constexpr const char* WIFI_PASS = cfg_manual::WIFI_PASS;
+constexpr const char* OTA_HOSTNAME = cfg_manual::OTA_HOSTNAME;
+constexpr const char* OTA_PASSWORD = cfg_manual::OTA_PASSWORD;
 constexpr uint32_t OTA_CONNECT_TIMEOUT_MS = 12000;
 constexpr uint32_t OTA_ARDUINO_TIMEOUT_MS = 60000;
 constexpr uint32_t OTA_HANDSHAKE_TIMEOUT_MS = 120000;
 constexpr uint32_t OTA_WINDOW_MS = 300000;
 constexpr bool OTA_AP_FALLBACK_ENABLED = true;
 constexpr bool OTA_FORCE_AP_ONLY = true;
-constexpr char OTA_AP_SSID[] = "RuralTech-Coleira-OTA";
-constexpr char OTA_AP_PASS[] = "ruraltechota";
+constexpr const char* OTA_AP_SSID = cfg_manual::OTA_AP_SSID;
+constexpr const char* OTA_AP_PASS = cfg_manual::OTA_AP_PASS;
 constexpr uint8_t OTA_AP_CHANNEL = 6;
 constexpr uint8_t OTA_AP_MAX_CLIENTS = 2;
 constexpr uint32_t OTA_DISABLE_GUARD_MS = 300000;

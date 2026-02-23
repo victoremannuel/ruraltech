@@ -44,8 +44,12 @@ class BluetoothDiscoveryService extends ChangeNotifier {
   }
 
   bool _isEligibleForOnboarding(Map<String, dynamic> d) {
-    // Dispositivo só entra na descoberta BLE quando o próprio firmware
-    // sinaliza Wi-Fi/OTA ativo no payload de manufacturer data.
+    // Coleiras podem aparecer via nome/serviço mesmo quando o app ainda não
+    // conseguiu ler manufacturer data completo.
+    final kind = (d['kind'] ?? '').toString().toLowerCase();
+    if (kind == 'collar') return true;
+
+    // Gateways permanecem condicionados ao sinal de Wi-Fi/OTA ativo.
     final wifiEnabled = d['wifi_enabled'];
     return wifiEnabled is bool && wifiEnabled;
   }
@@ -171,27 +175,43 @@ class BluetoothDiscoveryService extends ChangeNotifier {
 
     for (final entry in msd.entries) {
       final bytes = entry.value;
-      if (entry.key != manufacturerId || bytes.length < 6) continue;
-      if (!_matchesSignature(bytes)) continue;
+      if (entry.key != manufacturerId && entry.key != _swap16(manufacturerId)) {
+        continue;
+      }
+      if (bytes.length < 6) continue;
+      var payloadOffset = 0;
+      if (_matchesSignature(bytes)) {
+        payloadOffset = 0;
+      } else if (bytes.length >= 8 &&
+          _matchesEmbeddedCompanyId(bytes) &&
+          _matchesSignature(bytes.sublist(2))) {
+        // Alguns stacks retornam companyId também dentro do payload.
+        payloadOffset = 2;
+      } else {
+        continue;
+      }
 
-      final kindCode = bytes[4];
-      final idLen = bytes[5];
+      final kindCode = bytes[payloadOffset + 4];
+      final idLen = bytes[payloadOffset + 5];
       if (idLen <= 0) continue;
 
-      final requiredLength = 6 + idLen + 1 + 8;
+      final requiredLength = payloadOffset + 6 + idLen + 1 + 8;
       if (bytes.length < requiredLength) continue;
 
-      final id = ascii.decode(bytes.sublist(6, 6 + idLen), allowInvalid: true);
+      final id = ascii.decode(
+        bytes.sublist(payloadOffset + 6, payloadOffset + 6 + idLen),
+        allowInvalid: true,
+      );
       final normalizedId = _normalizeId(id);
       if (normalizedId.isEmpty) continue;
 
-      final flags = bytes[6 + idLen];
+      final flags = bytes[payloadOffset + 6 + idLen];
       final hasPosition = (flags & 0x01) != 0;
       final wifiEnabled = (flags & 0x02) != 0;
       final internetConnected = (flags & 0x04) != 0;
 
-      final latRaw = _readInt32LE(bytes, 7 + idLen);
-      final lonRaw = _readInt32LE(bytes, 11 + idLen);
+      final latRaw = _readInt32LE(bytes, payloadOffset + 7 + idLen);
+      final lonRaw = _readInt32LE(bytes, payloadOffset + 11 + idLen);
       final lat = hasPosition ? latRaw / 1e6 : null;
       final lon = hasPosition ? lonRaw / 1e6 : null;
       final kind = _kindFromCode(kindCode);
@@ -258,6 +278,18 @@ class BluetoothDiscoveryService extends ChangeNotifier {
       if (bytes[i] != _signature[i]) return false;
     }
     return true;
+  }
+
+  bool _matchesEmbeddedCompanyId(List<int> bytes) {
+    if (bytes.length < 2) return false;
+    const lo = manufacturerId & 0xFF;
+    const hi = (manufacturerId >> 8) & 0xFF;
+    return (bytes[0] == lo && bytes[1] == hi) ||
+        (bytes[0] == hi && bytes[1] == lo);
+  }
+
+  int _swap16(int value) {
+    return ((value & 0xFF) << 8) | ((value >> 8) & 0xFF);
   }
 
   int _readInt32LE(List<int> bytes, int offset) {

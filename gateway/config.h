@@ -4,6 +4,7 @@
  */
 #pragma once
 #include <Arduino.h>
+#include "manual_settings.h"
 
 namespace cfg {
 constexpr char FW_VERSION[] = "gateway-1.0.0";
@@ -21,12 +22,12 @@ constexpr int PIN_I2C_SCL = 22;
 
 constexpr float LORA_FREQ_MHZ = 915.0;
 constexpr uint16_t WS_PORT = 81;
-constexpr char AP_SSID[] = "RuralTech-Gateway";
-constexpr char AP_PASS[] = "ruraltechota";
+constexpr const char* AP_SSID = cfg_manual::AP_SSID;
+constexpr const char* AP_PASS = cfg_manual::AP_PASS;
 constexpr bool OTA_ENABLED = true;
 constexpr bool WIFI_OTA_DEFAULT_ENABLED = true;
-constexpr char OTA_HOSTNAME[] = "ruraltech-gateway";
-constexpr char OTA_PASSWORD[] = "ruraltechota";
+constexpr const char* OTA_HOSTNAME = cfg_manual::OTA_HOSTNAME;
+constexpr const char* OTA_PASSWORD = cfg_manual::OTA_PASSWORD;
 constexpr uint32_t OTA_HANDSHAKE_TIMEOUT_MS = 120000;
 
 // BLE discovery for app onboarding

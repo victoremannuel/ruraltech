@@ -14,6 +14,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <WiFi.h>
+#include <WebServer.h>
 #include <ArduinoOTA.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
@@ -44,6 +45,7 @@ LoRaManager lora;
 BlePresence blePresence;
 HerdingController herding;
 StateMachine stateMachine;
+WebServer statusServer(80);
 
 uint32_t seq = 1;
 uint32_t lastCycle = 0;
@@ -59,6 +61,8 @@ uint32_t otaRecoveryAttemptAtMs = 0;
 uint8_t otaRecoveryAttemptCount = 0;
 Preferences prefs_;
 bool prefsReady_ = false;
+GpsData lastGpsForStatus_;
+bool hasLastGpsForStatus_ = false;
 static void logEvent(EventType type, int32_t d1, int32_t d2);
 
 struct FenceChunkRxState {
@@ -120,6 +124,40 @@ static String collarApSsid() {
   String ssid = String(cfg::OTA_AP_SSID) + "-" + suffix;
   if (ssid.length() > 31) ssid = ssid.substring(0, 31);
   return ssid;
+}
+
+static void setupStatusServer() {
+  statusServer.on("/status", HTTP_GET, []() {
+    StaticJsonDocument<384> doc;
+    doc["ok"] = true;
+    doc["service"] = "collar";
+    doc["fw"] = cfg::FW_VERSION;
+    doc["deviceId"] = (uint32_t)cfg::DEVICE_ID;
+    doc["device_id"] = String((uint32_t)cfg::DEVICE_ID);
+    const String apSsid = WiFi.softAPSSID();
+    doc["ap_ssid"] = apSsid.isEmpty() ? collarApSsid() : apSsid;
+    doc["ap_ip"] = WiFi.softAPIP().toString();
+    doc["ota"] = cfg::OTA_ENABLED;
+    doc["wifi_ota_enabled"] = wifiOtaEnabled;
+    doc["ota_mode_active"] = otaModeActive;
+    doc["gps_valid"] = hasLastGpsForStatus_;
+    if (hasLastGpsForStatus_) {
+      doc["lat"] = lastGpsForStatus_.lat;
+      doc["lon"] = lastGpsForStatus_.lon;
+      JsonObject gps = doc.createNestedObject("gps");
+      gps["valid"] = true;
+      gps["lat"] = lastGpsForStatus_.lat;
+      gps["lon"] = lastGpsForStatus_.lon;
+      gps["sats"] = lastGpsForStatus_.sats;
+      gps["hdop"] = lastGpsForStatus_.hdop;
+      gps["speed_kmph"] = lastGpsForStatus_.speedKmph;
+      gps["gps_time"] = lastGpsForStatus_.gpsTime;
+    }
+    String out;
+    serializeJson(doc, out);
+    statusServer.send(200, "application/json", out);
+  });
+  statusServer.begin();
 }
 
 static bool otaDisableGuardActive() {
@@ -566,12 +604,7 @@ static bool otaApClientConnected() {
 
 static bool shouldBlePresenceBeEnabled() {
   if (!wifiOtaEnabled) return false;
-  if (otaModeActive) return false;
   if (otaUploadInProgress) return false;
-  const wifi_mode_t mode = WiFi.getMode();
-  if ((mode == WIFI_AP || mode == WIFI_AP_STA) && otaApClientConnected()) {
-    return false;
-  }
   return true;
 }
 
@@ -863,6 +896,7 @@ void setup() {
   WiFi.onEvent(onWifiEvent);
 
   setupWifiOtaMaintenance();
+  setupStatusServer();
   if (cfg::BLE_PRESENCE_ENABLED) {
     const String nodeId = collarNodeId();
     blePresence.begin(
@@ -886,6 +920,9 @@ void setup() {
 
 void loop() {
   ensureWifiOtaMaintenance();
+  if (wifiOtaEnabled && WiFi.getMode() != WIFI_OFF) {
+    statusServer.handleClient();
+  }
 
   const bool apClientConnected = otaApClientConnected();
   if (wifiOtaEnabled && otaModeActive) {
@@ -925,6 +962,8 @@ void loop() {
   lastCycle = now;
 
   const Telemetry t = sensors.readTelemetry(stateMachine.mode(), now / 1000, lora.lastRssi(), lora.lastSnr());
+  lastGpsForStatus_ = t.gps;
+  hasLastGpsForStatus_ = t.gps.valid;
   if (cfg::BLE_PRESENCE_ENABLED) {
     blePresence.setPosition(t.gps.lat, t.gps.lon, t.gps.valid);
   }

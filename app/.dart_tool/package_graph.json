@@ -12,8 +12,10 @@
         "file_picker",
         "firebase_auth",
         "firebase_core",
+        "firebase_database",
         "flutter",
         "flutter_blue_plus",
+        "flutter_compass",
         "flutter_map",
         "geolocator",
         "http",
@@ -66,6 +68,18 @@
       ]
     },
     {
+      "name": "flutter_blue_plus",
+      "version": "1.36.8",
+      "dependencies": [
+        "flutter",
+        "flutter_blue_plus_android",
+        "flutter_blue_plus_darwin",
+        "flutter_blue_plus_linux",
+        "flutter_blue_plus_platform_interface",
+        "flutter_blue_plus_web"
+      ]
+    },
+    {
       "name": "file_picker",
       "version": "8.3.7",
       "dependencies": [
@@ -78,6 +92,13 @@
         "plugin_platform_interface",
         "web",
         "win32"
+      ]
+    },
+    {
+      "name": "flutter_compass",
+      "version": "0.8.1",
+      "dependencies": [
+        "flutter"
       ]
     },
     {
@@ -332,6 +353,49 @@
         "stream_channel",
         "string_scanner",
         "term_glyph"
+      ]
+    },
+    {
+      "name": "flutter_blue_plus_web",
+      "version": "7.0.2",
+      "dependencies": [
+        "flutter",
+        "flutter_blue_plus_platform_interface",
+        "flutter_web_plugins",
+        "web"
+      ]
+    },
+    {
+      "name": "flutter_blue_plus_linux",
+      "version": "7.0.3",
+      "dependencies": [
+        "bluez",
+        "flutter",
+        "flutter_blue_plus_platform_interface",
+        "rxdart"
+      ]
+    },
+    {
+      "name": "flutter_blue_plus_darwin",
+      "version": "7.0.3",
+      "dependencies": [
+        "flutter",
+        "flutter_blue_plus_platform_interface"
+      ]
+    },
+    {
+      "name": "flutter_blue_plus_android",
+      "version": "7.0.4",
+      "dependencies": [
+        "flutter",
+        "flutter_blue_plus_platform_interface"
+      ]
+    },
+    {
+      "name": "flutter_blue_plus_platform_interface",
+      "version": "7.0.0",
+      "dependencies": [
+        "flutter"
       ]
     },
     {
@@ -659,6 +723,18 @@
       ]
     },
     {
+      "name": "rxdart",
+      "version": "0.28.0",
+      "dependencies": []
+    },
+    {
+      "name": "bluez",
+      "version": "0.8.3",
+      "dependencies": [
+        "dbus"
+      ]
+    },
+    {
       "name": "uuid",
       "version": "4.5.2",
       "dependencies": [
@@ -720,6 +796,16 @@
       "dependencies": []
     },
     {
+      "name": "dbus",
+      "version": "0.7.12",
+      "dependencies": [
+        "args",
+        "ffi",
+        "meta",
+        "xml"
+      ]
+    },
+    {
       "name": "fixnum",
       "version": "1.1.1",
       "dependencies": []
@@ -739,81 +825,39 @@
       ]
     },
     {
-      "name": "flutter_blue_plus",
-      "version": "1.36.8",
+      "name": "firebase_database",
+      "version": "11.3.10",
       "dependencies": [
-        "flutter",
-        "flutter_blue_plus_android",
-        "flutter_blue_plus_darwin",
-        "flutter_blue_plus_linux",
-        "flutter_blue_plus_platform_interface",
-        "flutter_blue_plus_web"
-      ]
-    },
-    {
-      "name": "flutter_blue_plus_web",
-      "version": "7.0.2",
-      "dependencies": [
-        "flutter",
-        "flutter_blue_plus_platform_interface",
-        "flutter_web_plugins",
-        "web"
-      ]
-    },
-    {
-      "name": "flutter_blue_plus_platform_interface",
-      "version": "7.0.0",
-      "dependencies": [
+        "firebase_core",
+        "firebase_core_platform_interface",
+        "firebase_database_platform_interface",
+        "firebase_database_web",
         "flutter"
       ]
     },
     {
-      "name": "flutter_blue_plus_linux",
-      "version": "7.0.3",
+      "name": "firebase_database_platform_interface",
+      "version": "0.2.6+10",
       "dependencies": [
-        "bluez",
+        "_flutterfire_internals",
+        "collection",
+        "firebase_core",
         "flutter",
-        "flutter_blue_plus_platform_interface",
-        "rxdart"
-      ]
-    },
-    {
-      "name": "flutter_blue_plus_darwin",
-      "version": "7.0.3",
-      "dependencies": [
-        "flutter",
-        "flutter_blue_plus_platform_interface"
-      ]
-    },
-    {
-      "name": "flutter_blue_plus_android",
-      "version": "7.0.4",
-      "dependencies": [
-        "flutter",
-        "flutter_blue_plus_platform_interface"
-      ]
-    },
-    {
-      "name": "bluez",
-      "version": "0.8.3",
-      "dependencies": [
-        "dbus"
-      ]
-    },
-    {
-      "name": "dbus",
-      "version": "0.7.12",
-      "dependencies": [
-        "args",
-        "ffi",
         "meta",
-        "xml"
+        "plugin_platform_interface"
       ]
     },
     {
-      "name": "rxdart",
-      "version": "0.28.0",
-      "dependencies": []
+      "name": "firebase_database_web",
+      "version": "0.2.6+16",
+      "dependencies": [
+        "collection",
+        "firebase_core",
+        "firebase_core_web",
+        "firebase_database_platform_interface",
+        "flutter",
+        "flutter_web_plugins"
+      ]
     }
   ],
   "configVersion": 1

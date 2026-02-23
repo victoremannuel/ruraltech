@@ -1,0 +1,32 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "matrixWriterKeys": {
+      ".read": "auth != null",
+      "$matrixId": {
+        ".write": "auth != null",
+        ".validate": "newData.isString() && newData.val().length >= 8"
+      }
+    },
+    "telemetryLatest": {
+      "$deviceId": {
+        ".read": "auth != null",
+        ".write": "auth != null || (auth == null && newData.child('writer').val() === 'gateway_matrix' && newData.child('matrixId').isString() && newData.child('writerKey').isString() && root.child('matrixWriterKeys').child(newData.child('matrixId').val()).val() === newData.child('writerKey').val())",
+        ".validate": "newData.hasChildren(['deviceId','lat','lon','receivedAt','writer']) && newData.child('lat').isNumber() && newData.child('lat').val() >= -90 && newData.child('lat').val() <= 90 && newData.child('lon').isNumber() && newData.child('lon').val() >= -180 && newData.child('lon').val() <= 180 && newData.child('receivedAt').isNumber()"
+      }
+    },
+    "telemetryHistory": {
+      "$deviceId": {
+        "$dayKey": {
+          ".indexOn": ["receivedAt"],
+          "$entryId": {
+            ".read": "auth != null",
+            ".write": "auth != null || (auth == null && newData.child('writer').val() === 'gateway_matrix' && newData.child('matrixId').isString() && newData.child('writerKey').isString() && root.child('matrixWriterKeys').child(newData.child('matrixId').val()).val() === newData.child('writerKey').val())",
+            ".validate": "newData.hasChildren(['deviceId','lat','lon','receivedAt','writer']) && newData.child('lat').isNumber() && newData.child('lat').val() >= -90 && newData.child('lat').val() <= 90 && newData.child('lon').isNumber() && newData.child('lon').val() >= -180 && newData.child('lon').val() <= 180 && newData.child('receivedAt').isNumber()"
+          }
+        }
+      }
+    }
+  }
+}
