@@ -69,6 +69,7 @@ GpsData lastGpsForStatus_;
 bool hasLastGpsForStatus_ = false;
 static void logEvent(EventType type, int32_t d1, int32_t d2);
 static bool beginPrefs();
+static void refreshBlePositionForOnboarding();
 static void runSmartGpsSelfTest();
 
 struct FenceChunkRxState {
@@ -670,6 +671,26 @@ static bool shouldBlePresenceBeEnabled() {
   return true;
 }
 
+static void refreshBlePositionForOnboarding() {
+  if (!cfg::BLE_PRESENCE_ENABLED) return;
+
+  // Prioriza última posição oficial já validada (inclusive restaurada da EEPROM).
+  if (smartGps.hasLastGoodFix()) {
+    const GpsData& lastGood = smartGps.lastGoodFix();
+    blePresence.setPosition(lastGood.lat, lastGood.lon, lastGood.valid);
+    return;
+  }
+
+  // Sem last-good ainda: usa fix vivo somente se cumprir o mesmo gate de qualidade.
+  const GpsData live = sensors.readGpsSnapshot();
+  const bool hasUsableFix =
+      live.valid &&
+      isfinite(live.hdop) &&
+      live.hdop <= cfg::MAX_HDOP &&
+      live.sats >= cfg::MIN_SATS;
+  blePresence.setPosition(live.lat, live.lon, hasUsableFix);
+}
+
 static void setupWifiOtaMaintenance() {
   if (!wifiOtaEnabled || !cfg::OTA_ENABLED || otaModeActive) return;
   wifiOtaEnabledAtMs = millis();
@@ -1088,6 +1109,7 @@ void setup() {
   safety.begin();
   storage.begin();
   smartGps.begin();
+  refreshBlePositionForOnboarding();
   lora.begin();
   setWatchdogEnabled(wifiOtaEnabled);
 
@@ -1134,6 +1156,7 @@ void loop() {
   }
 
   sensors.tick();
+  refreshBlePositionForOnboarding();
 
   const uint32_t now = millis();
   if (now - lastCycle < stateMachine.intervalMs()) {

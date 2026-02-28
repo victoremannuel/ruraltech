@@ -44,3 +44,6 @@
 .DS_Store
 /gateway-matriz/manual_settings.local.h
 /app/android/key.properties
+
+.build_*/
+.*

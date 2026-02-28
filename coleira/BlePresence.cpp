@@ -12,6 +12,11 @@
 
 namespace {
 constexpr uint32_t kMinRefreshMs = 900;
+constexpr uint8_t kAdvMaxBytes = 31;
+constexpr uint8_t kAdStructureOverhead = 2;  // length + type
+constexpr uint8_t kMaxMfgDataBytes = kAdvMaxBytes - kAdStructureOverhead;
+// companyId(2) + "RTB1"(4) + kind(1) + idLen(1) + flags(1) + latE6(4) + lonE6(4)
+constexpr uint8_t kMfgFixedBytes = 17;
 
 void writeInt32LE(uint8_t* out, int32_t value) {
   out[0] = (uint8_t)(value & 0xFF);
@@ -41,10 +46,7 @@ bool BlePresence::begin(
   serviceUuid_ = serviceUuid ? String(serviceUuid) : String();
 
   BLEDevice::init(advName_.c_str());
-  BLEAdvertising* adv = BLEDevice::getAdvertising();
-  if (!serviceUuid_.isEmpty()) {
-    adv->addServiceUUID(serviceUuid_.c_str());
-  }
+  BLEDevice::getAdvertising();
 
   started_ = true;
   enabled_ = true;
@@ -108,7 +110,7 @@ void BlePresence::loop() {
 void BlePresence::refreshAdvertising() {
   if (!started_ || !enabled_) return;
 
-  uint8_t raw[36] = {};
+  uint8_t raw[kMaxMfgDataBytes] = {};
   size_t i = 0;
 
   // Manufacturer specific data = company id + custom payload.
@@ -120,7 +122,9 @@ void BlePresence::refreshAdvertising() {
   raw[i++] = '1';
   raw[i++] = (uint8_t)kind_;
 
-  const uint8_t idLen = (uint8_t)min((size_t)18, id_.length());
+  const uint8_t maxIdLen =
+      kMaxMfgDataBytes > kMfgFixedBytes ? (kMaxMfgDataBytes - kMfgFixedBytes) : 0;
+  const uint8_t idLen = (uint8_t)min((size_t)maxIdLen, id_.length());
   raw[i++] = idLen;
   for (uint8_t n = 0; n < idLen; ++n) {
     raw[i++] = (uint8_t)id_[n];
@@ -138,7 +142,6 @@ void BlePresence::refreshAdvertising() {
   i += 4;
 
   BLEAdvertisementData advData;
-  advData.setFlags(0x06);
   String mfgData;
   mfgData.reserve(i);
   mfgData.concat((const char*)raw, i);

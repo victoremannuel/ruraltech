@@ -14,6 +14,7 @@ class SensorsManager {
  public:
   void begin();
   void tick();
+  GpsData readGpsSnapshot();
   Telemetry readTelemetry(CollarMode mode, uint32_t uptimeSec, int16_t rssi, float snr);
   bool gpsHealthy(const GpsData& gps) const;
 

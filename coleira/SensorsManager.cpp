@@ -28,6 +28,20 @@ void SensorsManager::tick() {
   }
 }
 
+GpsData SensorsManager::readGpsSnapshot() {
+  GpsData gps;
+  gps.valid = gps_.location.isValid();
+  if (!gps.valid) return gps;
+
+  gps.lat = gps_.location.lat();
+  gps.lon = gps_.location.lng();
+  gps.speedKmph = gps_.speed.kmph();
+  gps.hdop = gps_.hdop.isValid() ? gps_.hdop.hdop() : 99.9f;
+  gps.sats = gps_.satellites.isValid() ? gps_.satellites.value() : 0;
+  gps.gpsTime = gps_.time.isValid() ? gps_.time.value() : 0;
+  return gps;
+}
+
 Telemetry SensorsManager::readTelemetry(CollarMode mode, uint32_t uptimeSec, int16_t rssi, float snr) {
   Telemetry t;
   t.temperatureC = mlx_.readObjectTempC();
@@ -37,15 +51,7 @@ Telemetry SensorsManager::readTelemetry(CollarMode mode, uint32_t uptimeSec, int
   t.snr = snr;
   t.mode = mode;
 
-  t.gps.valid = gps_.location.isValid();
-  if (t.gps.valid) {
-    t.gps.lat = gps_.location.lat();
-    t.gps.lon = gps_.location.lng();
-    t.gps.speedKmph = gps_.speed.kmph();
-    t.gps.hdop = gps_.hdop.isValid() ? gps_.hdop.hdop() : 99.9f;
-    t.gps.sats = gps_.satellites.isValid() ? gps_.satellites.value() : 0;
-    t.gps.gpsTime = gps_.time.isValid() ? gps_.time.value() : 0;
-  }
+  t.gps = readGpsSnapshot();
   return t;
 }
 
