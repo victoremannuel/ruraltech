@@ -18,7 +18,11 @@ enum class EventType : uint8_t {
   NO_MOTION = 6,
   HERD_START = 7,
   HERD_PHASE_CHANGE = 8,
-  HERD_DONE = 9
+  HERD_DONE = 9,
+  GPS_INVALID_FIX = 10,
+  GPS_OUTLIER = 11,
+  GPS_LOCKED = 12,
+  GPS_UNLOCKED = 13
 };
 enum class MsgType : uint8_t {
   TELEMETRY = 1,
@@ -42,6 +46,10 @@ struct GpsData {
   float hdop = 99.9f;
   uint8_t sats = 0;
   uint32_t gpsTime = 0;
+  bool filtered = false;
+  bool locked = false;
+  bool outlierDropped = false;
+  uint32_t sampleMs = 0;
 };
 
 struct Telemetry {

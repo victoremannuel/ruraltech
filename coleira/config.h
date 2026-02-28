@@ -87,18 +87,28 @@ constexpr uint8_t MAX_PULSES_PER_10_MIN = 3;
 constexpr uint32_t PULSE_WINDOW_MS = 600000;
 constexpr uint32_t MIN_PULSE_GAP_MS = 120000;
 constexpr uint32_t PULSE_DURATION_MS = 250;
-constexpr float MAX_HDOP_FOR_PULSE = 2.5f;
+constexpr float MAX_HDOP = 2.0f;
+constexpr float MAX_HDOP_FOR_PULSE = MAX_HDOP;
 constexpr uint32_t VIOLATION_PERSIST_MS = 45000;
 
 // Sensores
 constexpr uint32_t NO_MOTION_MS = 90000;
 constexpr float MOTION_THRESHOLD_G = 0.20f;
-constexpr uint8_t MIN_SATS = 4;
+constexpr uint8_t MIN_SATS = 7;
+constexpr float OUTLIER_MAX_SPEED = 15.0f;  // m/s
+constexpr uint8_t MEDIAN_WINDOW = 5;
+constexpr float EMA_ALPHA_STOP = 0.2f;
+constexpr float EMA_ALPHA_MOVE = 0.6f;
+constexpr uint32_t STOP_DETECT_MS = 30000;
+constexpr float LOCK_RADIUS_M = 5.0f;
+constexpr float GPS_SPEED_MOVE_THRESHOLD_KMPH = 1.2f;
+constexpr bool SMART_GPS_TEST_MODE = false;
 
 // Persistência
 constexpr uint16_t EEPROM_SIZE = 2048;
 constexpr uint16_t EEPROM_EVENT_START = 64;
 constexpr uint8_t EEPROM_EVENT_SLOTS = 20;
+constexpr uint16_t EEPROM_LAST_GOOD_FIX_ADDR = 1792;
 
 // Geofence e condução
 constexpr uint8_t MAX_POLYGON_POINTS = 32;

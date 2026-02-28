@@ -29,6 +29,7 @@
 #include "config.h"
 #include "Logger.h"
 #include "SensorsManager.h"
+#include "SmartGps.h"
 #include "Geofence.h"
 #include "SafetyController.h"
 #include "StorageQueue.h"
@@ -38,6 +39,7 @@
 #include "StateMachine.h"
 
 SensorsManager sensors;
+SmartGps smartGps;
 Geofence geofence;
 SafetyController safety;
 StorageQueue storage;
@@ -67,6 +69,7 @@ GpsData lastGpsForStatus_;
 bool hasLastGpsForStatus_ = false;
 static void logEvent(EventType type, int32_t d1, int32_t d2);
 static bool beginPrefs();
+static void runSmartGpsSelfTest();
 
 struct FenceChunkRxState {
   bool active = false;
@@ -183,7 +186,7 @@ static String collarApSsid() {
 
 static void setupStatusServer() {
   statusServer.on("/status", HTTP_GET, []() {
-    StaticJsonDocument<384> doc;
+    StaticJsonDocument<512> doc;
     doc["ok"] = true;
     doc["service"] = "collar";
     doc["fw"] = cfg::FW_VERSION;
@@ -207,6 +210,9 @@ static void setupStatusServer() {
       gps["hdop"] = lastGpsForStatus_.hdop;
       gps["speed_kmph"] = lastGpsForStatus_.speedKmph;
       gps["gps_time"] = lastGpsForStatus_.gpsTime;
+      gps["filtered"] = lastGpsForStatus_.filtered;
+      gps["locked"] = lastGpsForStatus_.locked;
+      gps["outlier_dropped"] = lastGpsForStatus_.outlierDropped;
     }
     String out;
     serializeJson(doc, out);
@@ -830,6 +836,10 @@ static uint8_t buildTelemetryPayload(const Telemetry& t, uint8_t* out, size_t ma
   doc["spd"] = t.gps.speedKmph;
   doc["hdop"] = t.gps.hdop;
   doc["sat"] = t.gps.sats;
+  doc["gok"] = t.gps.valid;
+  doc["flt"] = t.gps.filtered;
+  doc["lck"] = t.gps.locked;
+  doc["od"] = t.gps.outlierDropped;
   return serializeJson(doc, out, max);
 }
 
@@ -936,6 +946,108 @@ static void applyDownlink(const LoRaFrame& frame) {
   }
 }
 
+static void runSmartGpsSelfTest() {
+  LOGI("SMART_GPS_TEST_MODE ativo: simulando raw vs official");
+  const double baseLat = -20.123456;
+  const double baseLon = -43.987654;
+  const float jitter[] = {0.0f, 0.000002f, -0.000003f, 0.000001f, -0.000002f, 0.000003f, -0.000001f, 0.000002f};
+  uint32_t nowMs = 0;
+
+  for (uint8_t i = 0; i < (sizeof(jitter) / sizeof(jitter[0])); ++i) {
+    GpsData raw;
+    raw.valid = true;
+    raw.lat = baseLat + (double)jitter[i];
+    raw.lon = baseLon - (double)jitter[i];
+    raw.speedKmph = 0.4f;
+    raw.hdop = 0.9f;
+    raw.sats = 10;
+    raw.gpsTime = 120000 + i;
+    nowMs += 5000;
+
+    const SmartFixResult smart = smartGps.update(raw, false, nowMs);
+    Serial.printf(
+        "[SMART_TEST] jitter i=%u raw=(%.6f,%.6f hdop=%.2f sat=%u) off=(%.6f,%.6f) valid=%d flt=%d lck=%d out=%d invalid=%d\n",
+        i,
+        raw.lat,
+        raw.lon,
+        raw.hdop,
+        raw.sats,
+        smart.officialFix.lat,
+        smart.officialFix.lon,
+        smart.officialFix.valid ? 1 : 0,
+        smart.officialFix.filtered ? 1 : 0,
+        smart.officialFix.locked ? 1 : 0,
+        smart.flags.outlierDropped ? 1 : 0,
+        smart.flags.invalidFixRejected ? 1 : 0);
+  }
+
+  {
+    GpsData raw;
+    raw.valid = true;
+    raw.lat = baseLat + 0.0200;
+    raw.lon = baseLon + 0.0200;
+    raw.speedKmph = 0.3f;
+    raw.hdop = 0.9f;
+    raw.sats = 10;
+    raw.gpsTime = 130000;
+    nowMs += 5000;
+
+    const SmartFixResult smart = smartGps.update(raw, false, nowMs);
+    Serial.printf(
+        "[SMART_TEST] outlier raw=(%.6f,%.6f) off=(%.6f,%.6f) lck=%d out=%d speed=%.2f\n",
+        raw.lat,
+        raw.lon,
+        smart.officialFix.lat,
+        smart.officialFix.lon,
+        smart.officialFix.locked ? 1 : 0,
+        smart.flags.outlierDropped ? 1 : 0,
+        smart.flags.outlierSpeedMps);
+  }
+
+  {
+    GpsData raw;
+    raw.valid = true;
+    raw.lat = baseLat + 0.000001;
+    raw.lon = baseLon - 0.000001;
+    raw.speedKmph = 0.2f;
+    raw.hdop = 4.5f;
+    raw.sats = 9;
+    raw.gpsTime = 131000;
+    nowMs += 5000;
+
+    const SmartFixResult smart = smartGps.update(raw, false, nowMs);
+    Serial.printf(
+        "[SMART_TEST] bad-hdop raw_hdop=%.2f off=(%.6f,%.6f) valid=%d invalid=%d\n",
+        raw.hdop,
+        smart.officialFix.lat,
+        smart.officialFix.lon,
+        smart.officialFix.valid ? 1 : 0,
+        smart.flags.invalidFixRejected ? 1 : 0);
+  }
+
+  {
+    GpsData raw;
+    raw.valid = true;
+    raw.lat = baseLat + 0.000150;
+    raw.lon = baseLon + 0.000120;
+    raw.speedKmph = 4.0f;
+    raw.hdop = 0.8f;
+    raw.sats = 12;
+    raw.gpsTime = 132000;
+    nowMs += 5000;
+
+    const SmartFixResult smart = smartGps.update(raw, true, nowMs);
+    Serial.printf(
+        "[SMART_TEST] moving raw=(%.6f,%.6f) off=(%.6f,%.6f) lck=%d changed=%d\n",
+        raw.lat,
+        raw.lon,
+        smart.officialFix.lat,
+        smart.officialFix.lon,
+        smart.officialFix.locked ? 1 : 0,
+        smart.flags.lockStateChanged ? 1 : 0);
+  }
+}
+
 void setup() {
   Serial.begin(cfg::SERIAL_BAUD);
   LOGI("Boot reset_reason=%d", (int)esp_reset_reason());
@@ -949,6 +1061,13 @@ void setup() {
   esp_task_wdt_init(cfg::TASK_WDT_TIMEOUT_SEC, true);
 #endif
   loadPersistedConfig();
+
+  if (cfg::SMART_GPS_TEST_MODE) {
+    smartGps.begin();
+    runSmartGpsSelfTest();
+    return;
+  }
+
   WiFi.onEvent(onWifiEvent);
 
   setupWifiOtaMaintenance();
@@ -968,6 +1087,7 @@ void setup() {
   sensors.begin();
   safety.begin();
   storage.begin();
+  smartGps.begin();
   lora.begin();
   setWatchdogEnabled(wifiOtaEnabled);
 
@@ -975,6 +1095,11 @@ void setup() {
 }
 
 void loop() {
+  if (cfg::SMART_GPS_TEST_MODE) {
+    delay(2000);
+    return;
+  }
+
   ensureWifiOtaMaintenance();
   if (wifiOtaEnabled && WiFi.getMode() != WIFI_OFF) {
     statusServer.handleClient();
@@ -1017,11 +1142,33 @@ void loop() {
   }
   lastCycle = now;
 
-  const Telemetry t = sensors.readTelemetry(stateMachine.mode(), now / 1000, lora.lastRssi(), lora.lastSnr());
+  const Telemetry rawTelemetry = sensors.readTelemetry(stateMachine.mode(), now / 1000, lora.lastRssi(), lora.lastSnr());
+  const bool movingByGpsSpeed =
+      rawTelemetry.gps.valid &&
+      rawTelemetry.gps.sats >= cfg::MIN_SATS &&
+      rawTelemetry.gps.hdop <= cfg::MAX_HDOP &&
+      rawTelemetry.gps.speedKmph >= cfg::GPS_SPEED_MOVE_THRESHOLD_KMPH;
+  const bool movingForSmartFix = rawTelemetry.moving || movingByGpsSpeed;
+  const SmartFixResult smartFix = smartGps.update(rawTelemetry.gps, movingForSmartFix, now);
+
+  Telemetry t = rawTelemetry;
+  t.gps = smartFix.officialFix;
+  t.moving = movingForSmartFix;
+
   lastGpsForStatus_ = t.gps;
   hasLastGpsForStatus_ = t.gps.valid;
   if (cfg::BLE_PRESENCE_ENABLED) {
     blePresence.setPosition(t.gps.lat, t.gps.lon, t.gps.valid);
+  }
+
+  if (smartFix.flags.invalidFixRejected) {
+    logEvent(EventType::GPS_INVALID_FIX, (int32_t)lround(rawTelemetry.gps.hdop * 100.0f), rawTelemetry.gps.sats);
+  }
+  if (smartFix.flags.outlierDropped) {
+    logEvent(EventType::GPS_OUTLIER, (int32_t)lround(smartFix.flags.outlierSpeedMps * 100.0f), 0);
+  }
+  if (smartFix.flags.lockStateChanged) {
+    logEvent(t.gps.locked ? EventType::GPS_LOCKED : EventType::GPS_UNLOCKED);
   }
   if (!t.gps.valid) logEvent(EventType::GPS_FAIL);
 
