@@ -7,6 +7,7 @@ import '../config/manual_settings.dart';
 import '../services/auth_service.dart';
 import '../services/firebase_service.dart';
 import '../services/gateway_service.dart';
+import '../utils/top_feedback.dart';
 
 class HerdingScreen extends StatefulWidget {
   final String deviceId;
@@ -120,8 +121,7 @@ class _HerdingScreenState extends State<HerdingScreen> {
   }
 
   void _showSnack(String message) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    AppFeedback.show(message);
   }
 
   void _addMapPoint(LatLng point) {

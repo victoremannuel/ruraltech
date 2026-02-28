@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
+import '../utils/top_feedback.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -43,9 +44,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final email = _email.text.trim();
     final pass = _pass.text;
     if (email.isEmpty || pass.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Preencha email e senha.')),
-      );
+      AppFeedback.error('Preencha email e senha.');
       return;
     }
     setState(() => _loading = true);
@@ -53,9 +52,7 @@ class _LoginScreenState extends State<LoginScreen> {
       await action();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_authErrorMessage(e))),
-      );
+      AppFeedback.error(_authErrorMessage(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }

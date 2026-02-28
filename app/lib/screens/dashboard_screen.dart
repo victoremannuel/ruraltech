@@ -18,6 +18,7 @@ import '../services/firebase_service.dart';
 import '../services/gateway_service.dart';
 import '../services/map_filter_service.dart';
 import '../utils/polygon_metrics.dart';
+import '../utils/top_feedback.dart';
 import 'area_editor_screen.dart';
 import 'events_screen.dart';
 import 'map_point_picker_screen.dart';
@@ -54,6 +55,7 @@ class _HomeScreenState extends State<HomeScreen> {
   LatLng? _selectedPolygonAnchor;
   List<LatLng> _selectedPolygonPoints = const [];
   List<LatLng> _selectedPolygonBoundary = const [];
+  final Map<String, LatLng> _latestTelemetryPositionsByDeviceId = {};
 
   @override
   void initState() {
@@ -84,6 +86,18 @@ class _HomeScreenState extends State<HomeScreen> {
     _gatewayTelemetrySub?.cancel();
     _gatewayMessageSub?.cancel();
     _gatewayTelemetrySub = gateway.telemetryStream.listen((sample) {
+      final normalizedTelemetryDeviceId =
+          _normalizeNumericDeviceId(sample.deviceId);
+      if (normalizedTelemetryDeviceId.isNotEmpty &&
+          sample.lat.isFinite &&
+          sample.lon.isFinite &&
+          sample.lat >= -90 &&
+          sample.lat <= 90 &&
+          sample.lon >= -180 &&
+          sample.lon <= 180) {
+        _latestTelemetryPositionsByDeviceId[normalizedTelemetryDeviceId] =
+            LatLng(sample.lat, sample.lon);
+      }
       if (!mounted) return;
       final gatewayRole = sample.gatewayRole?.trim().toLowerCase();
       if (gatewayRole == 'matrix') {
@@ -327,6 +341,36 @@ class _HomeScreenState extends State<HomeScreen> {
     return value.toString().trim();
   }
 
+  String _normalizeNumericDeviceId(String? raw) {
+    if (raw == null) return '';
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    final parsed = int.tryParse(trimmed);
+    if (parsed == null || parsed <= 0) return '';
+    return parsed.toString();
+  }
+
+  LatLng? _telemetryPositionForDeviceId(String? rawDeviceId) {
+    final normalized = _normalizeNumericDeviceId(rawDeviceId);
+    if (normalized.isEmpty) return null;
+    return _latestTelemetryPositionsByDeviceId[normalized];
+  }
+
+  void _mergeTelemetryCacheFromDevices(List<DeviceModel> devices) {
+    for (final device in devices) {
+      final normalized = _normalizeNumericDeviceId(
+        device.loraDeviceId ?? device.deviceId ?? device.id,
+      );
+      if (normalized.isEmpty) continue;
+      final lat = device.lat;
+      final lon = device.lon;
+      if (lat == null || lon == null) continue;
+      if (!lat.isFinite || !lon.isFinite) continue;
+      if (lat < -90 || lat > 90 || lon < -180 || lon > 180) continue;
+      _latestTelemetryPositionsByDeviceId[normalized] = LatLng(lat, lon);
+    }
+  }
+
   int _viewPointsSignature(List<LatLng> points) {
     var hash = points.length;
     for (final p in points) {
@@ -405,9 +449,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _refreshFromDatabase() {
     setState(() => _refreshTick++);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Atualizando dados da Home...')),
-    );
+    AppFeedback.warning('Atualizando dados da Home...');
   }
 
   String _utcDayKeyNow() {
@@ -445,10 +487,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void _centerOnUser() {
     final user = _userPosition;
     if (user == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('Localizacao do dispositivo indisponivel.')),
-      );
+      AppFeedback.warning('Localizacao do dispositivo indisponivel.');
       return;
     }
     final zoom =
@@ -480,10 +519,8 @@ class _HomeScreenState extends State<HomeScreen> {
     return confirmed == true;
   }
 
-  void _showActionError(BuildContext context, Object error) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Falha na operacao: $error')),
-    );
+  void _showActionError(Object error) {
+    AppFeedback.error('Falha na operacao: $error');
   }
 
   bool _isLikelyMatrixGateway(Map<String, dynamic> gateway) {
@@ -561,11 +598,7 @@ class _HomeScreenState extends State<HomeScreen> {
           );
       if (property == null) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Propriedade nao encontrada para edicao.'),
-            ),
-          );
+          AppFeedback.error('Propriedade nao encontrada para edicao.');
         }
         return;
       }
@@ -873,7 +906,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     Navigator.pop(context);
                   } catch (e) {
                     if (!context.mounted) return;
-                    _showActionError(context, e);
+                    _showActionError(e);
                   }
                 },
                 style: TextButton.styleFrom(
@@ -893,12 +926,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 final normalizedLoraId = normalizeLoraDeviceId(loraIdCtrl.text);
                 if (normalizedLoraId == null) {
                   if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'Informe um ID LoRa numerico maior que zero para a coleira.',
-                        ),
-                      ),
+                    AppFeedback.error(
+                      'Informe um ID LoRa numerico maior que zero para a coleira.',
                     );
                   }
                   return;
@@ -934,12 +963,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     },
                   );
                   if (!ok && context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Nao foi possivel enviar comando de modo para a coleira via gateway: ${gatewayService.lastError ?? 'erro desconhecido'}',
-                        ),
-                      ),
+                    AppFeedback.warning(
+                      'Nao foi possivel enviar comando de modo para a coleira via gateway: ${gatewayService.lastError ?? 'erro desconhecido'}',
                     );
                   }
                 }
@@ -1118,7 +1143,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     Navigator.pop(context);
                   } catch (e) {
                     if (!context.mounted) return;
-                    _showActionError(context, e);
+                    _showActionError(e);
                   }
                 },
                 style: TextButton.styleFrom(
@@ -1171,12 +1196,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     },
                   );
                   if (!ok && context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Nao foi possivel enviar comando de modo para o gateway: ${gatewayService.lastError ?? 'erro desconhecido'}',
-                        ),
-                      ),
+                    AppFeedback.warning(
+                      'Nao foi possivel enviar comando de modo para o gateway: ${gatewayService.lastError ?? 'erro desconhecido'}',
                     );
                   }
                 }
@@ -1398,7 +1419,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       out.add(next);
       final ordered = <String>[];
-      for (final preferred in const ['wifi', 'ble']) {
+      for (final preferred in const ['telemetry', 'wifi', 'ble']) {
         if (out.remove(preferred)) ordered.add(preferred);
       }
       ordered.addAll(out);
@@ -1490,6 +1511,27 @@ class _HomeScreenState extends State<HomeScreen> {
         byId[id] = current;
       }
 
+      for (final entry in _latestTelemetryPositionsByDeviceId.entries) {
+        final id = entry.key.trim();
+        if (id.isEmpty) continue;
+        final current = byId[id];
+        if (current == null) {
+          byId[id] = {
+            'device_id': int.tryParse(id),
+            'device_id_str': id,
+            'lat': entry.value.latitude,
+            'lon': entry.value.longitude,
+            'source_type': 'telemetry',
+          };
+          continue;
+        }
+        current['source_type'] =
+            mergeSource(current['source_type']?.toString(), 'telemetry');
+        current['lat'] ??= entry.value.latitude;
+        current['lon'] ??= entry.value.longitude;
+        byId[id] = current;
+      }
+
       final out = byId.values.toList();
       out.sort((a, b) => (a['device_id_str'] as String)
           .compareTo(b['device_id_str'] as String));
@@ -1498,6 +1540,19 @@ class _HomeScreenState extends State<HomeScreen> {
 
     String collarSourceLabel(Map<String, dynamic> d) {
       final source = (d['source_type'] ?? '').toString();
+      if (source == 'telemetry') return 'Telemetria';
+      if (source == 'telemetry+wifi') return 'Telemetria+Wi-Fi';
+      if (source == 'wifi+telemetry') return 'Wi-Fi+Telemetria';
+      if (source == 'telemetry+ble') return 'Telemetria+BLE';
+      if (source == 'ble+telemetry') return 'BLE+Telemetria';
+      if (source == 'telemetry+wifi+ble' ||
+          source == 'telemetry+ble+wifi' ||
+          source == 'wifi+telemetry+ble' ||
+          source == 'wifi+ble+telemetry' ||
+          source == 'ble+telemetry+wifi' ||
+          source == 'ble+wifi+telemetry') {
+        return 'Telemetria+Wi-Fi+BLE';
+      }
       if (source == 'wifi+ble' || source == 'ble+wifi') return 'Wi-Fi+BLE';
       if (source == 'wifi') return 'Wi-Fi';
       if (source == 'ble') return 'BLE';
@@ -1527,8 +1582,8 @@ class _HomeScreenState extends State<HomeScreen> {
         selectedPosition = LatLng(lat, lon);
         manualPositionChosen = false;
       } else if (!manualPositionChosen) {
-        // Evita reaproveitar coordenada antiga de outra coleira detectada.
-        selectedPosition = null;
+        // Reaproveita telemetria recente do mesmo ID quando BLE/Wi-Fi nao traz GPS.
+        selectedPosition = _telemetryPositionForDeviceId(detectedId);
       }
     }
 
@@ -1634,11 +1689,11 @@ class _HomeScreenState extends State<HomeScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text(
-                              'Vinculacao da coleira (Bluetooth/Wi-Fi)',
+                              'Vinculacao da coleira (Telemetria/Bluetooth/Wi-Fi)',
                             ),
                             const SizedBox(height: 4),
                             const Text(
-                              'Opcional: vincule a coleira detectada por Bluetooth ou via Wi-Fi na rede local. '
+                              'Opcional: vincule a coleira detectada por telemetria, Bluetooth ou via Wi-Fi na rede local. '
                               'Se preferir, apenas selecione o ponto no mapa manualmente.',
                               style: TextStyle(fontSize: 12),
                             ),
@@ -1775,14 +1830,15 @@ class _HomeScreenState extends State<HomeScreen> {
                           applyDetectedCollar(detected);
                         }),
                         decoration: const InputDecoration(
-                          labelText: 'Coleira detectada (Bluetooth/Wi-Fi)',
+                          labelText:
+                              'Coleira detectada (Telemetria/Bluetooth/Wi-Fi)',
                         ),
                       ),
                       if (discoveredCollars.isEmpty)
                         const Padding(
                           padding: EdgeInsets.only(top: 6, bottom: 2),
                           child: Text(
-                            'Nenhuma coleira detectada ainda. Continue no modo manual ou tente Bluetooth/Wi-Fi.',
+                            'Nenhuma coleira detectada ainda. Continue no modo manual ou tente telemetria/Bluetooth/Wi-Fi.',
                           ),
                         ),
                       TextFormField(
@@ -1858,7 +1914,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       const Align(
                         alignment: Alignment.centerLeft,
                         child: Text(
-                          'Obrigatorio escolher uma opcao: ponto manual no mapa ou vinculacao por Bluetooth/Wi-Fi.',
+                          'Obrigatorio escolher uma opcao: ponto manual no mapa ou vinculacao por telemetria/Bluetooth/Wi-Fi.',
                           style: TextStyle(fontSize: 12),
                         ),
                       ),
@@ -1878,12 +1934,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     if (selectedOwnerUid == null ||
                         selectedOwnerUid!.trim().isEmpty) {
                       if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Selecione um dono valido para a coleira.',
-                            ),
-                          ),
+                        AppFeedback.error(
+                          'Selecione um dono valido para a coleira.',
                         );
                       }
                       return;
@@ -1893,12 +1945,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         normalizeLoraDeviceId(loraIdCtrl.text);
                     if (normalizedLoraId == null) {
                       if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Informe um ID LoRa numerico maior que zero para a coleira.',
-                            ),
-                          ),
+                        AppFeedback.error(
+                          'Informe um ID LoRa numerico maior que zero para a coleira.',
                         );
                       }
                       return;
@@ -1912,29 +1960,25 @@ class _HomeScreenState extends State<HomeScreen> {
                             discoveredCollars,
                           )
                         : null;
+                    final telemetryPosition =
+                        _telemetryPositionForDeviceId(normalizedLoraId);
                     final effectivePosition = manualPositionChosen
                         ? selectedPosition
-                        : (liveDetectedPosition ?? selectedPosition);
+                        : (liveDetectedPosition ??
+                            telemetryPosition ??
+                            selectedPosition);
                     if (!hasBinding && effectivePosition == null) {
                       if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Selecione ponto no mapa ou vincule uma coleira detectada (Bluetooth/Wi-Fi).',
-                            ),
-                          ),
+                        AppFeedback.error(
+                          'Selecione ponto no mapa ou vincule uma coleira detectada (telemetria/Bluetooth/Wi-Fi).',
                         );
                       }
                       return;
                     }
                     if (hasBinding && effectivePosition == null) {
                       if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Coleira vinculada sem coordenadas GPS. Aguarde a telemetria da coleira ou selecione o ponto manualmente.',
-                            ),
-                          ),
+                        AppFeedback.warning(
+                          'Coleira vinculada sem coordenadas GPS. Aguarde telemetria, tente Bluetooth/Wi-Fi novamente ou selecione o ponto manualmente.',
                         );
                       }
                       return;
@@ -1954,9 +1998,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       if (context.mounted) Navigator.pop(context);
                     } catch (e) {
                       if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Erro ao salvar coleira: $e')),
-                      );
+                      AppFeedback.error('Erro ao salvar coleira: $e');
                     }
                   },
                   child: const Text('Salvar'),
@@ -2453,11 +2495,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     if (!formKey.currentState!.validate()) return;
                     if (propertyId == null || propertyId!.trim().isEmpty) {
                       if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Selecione a propriedade rural.'),
-                          ),
-                        );
+                        AppFeedback.error('Selecione a propriedade rural.');
                       }
                       return;
                     }
@@ -2466,12 +2504,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     final hasManualPosition = selectedPosition != null;
                     if (!hasBinding && !hasManualPosition) {
                       if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Selecione ponto no mapa ou vincule um gateway detectado (Wi-Fi/Bluetooth).',
-                            ),
-                          ),
+                        AppFeedback.error(
+                          'Selecione ponto no mapa ou vincule um gateway detectado (Wi-Fi/Bluetooth).',
                         );
                       }
                       return;
@@ -2554,8 +2588,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   if (context.mounted) Navigator.pop(context);
                 } catch (e) {
                   if (!context.mounted) return;
-                  ScaffoldMessenger.of(context)
-                      .showSnackBar(SnackBar(content: Text(e.toString())));
+                  AppFeedback.error(e.toString());
                 }
               },
               child: const Text('Salvar'),
@@ -2749,6 +2782,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       final allDevices =
                           devicesSnap.data ?? const <DeviceModel>[];
                       final allGateways = gatewaySnap.data ?? const [];
+                      _mergeTelemetryCacheFromDevices(allDevices);
                       _scheduleTelemetryRetentionCleanup(allDevices);
 
                       final selectedPropertyIds = Set<String>.from(

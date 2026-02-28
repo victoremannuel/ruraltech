@@ -7,6 +7,7 @@ import '../config/manual_settings.dart';
 import '../services/auth_service.dart';
 import '../services/firebase_service.dart';
 import '../services/gateway_service.dart';
+import '../utils/top_feedback.dart';
 
 class GeofenceScreen extends StatefulWidget {
   final String deviceId;
@@ -65,10 +66,7 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
 
   Future<void> _publishFence() async {
     if (_polygonPoints.length < 3) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('Adicione ao menos 3 pontos ao poligono.')),
-      );
+      AppFeedback.error('Adicione ao menos 3 pontos ao poligono.');
       return;
     }
 
@@ -93,19 +91,13 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
 
     if (!mounted) return;
     if (sent) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cerca publicada com sucesso.')),
-      );
+      AppFeedback.success('Cerca publicada com sucesso.');
       return;
     }
 
     final reason = gateway.lastError ?? 'gateway_not_connected';
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Cerca salva, mas falhou o envio para a coleira ($reason).',
-        ),
-      ),
+    AppFeedback.warning(
+      'Cerca salva, mas falhou o envio para a coleira ($reason).',
     );
   }
 
@@ -131,11 +123,8 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
                 initialZoom: 16,
                 onTap: (_, point) {
                   if (_polygonPoints.length >= _maxFencePoints) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                            'Limite da coleira: máximo de $_maxFencePoints pontos na geofence.'),
-                      ),
+                    AppFeedback.error(
+                      'Limite da coleira: máximo de $_maxFencePoints pontos na geofence.',
                     );
                     return;
                   }

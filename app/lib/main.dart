@@ -10,6 +10,7 @@ import 'services/bluetooth_discovery_service.dart';
 import 'services/firebase_service.dart';
 import 'services/gateway_service.dart';
 import 'services/map_filter_service.dart';
+import 'utils/top_feedback.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,6 +37,9 @@ class RuralTechApp extends StatelessWidget {
     if (bootstrapError != null) {
       return MaterialApp(
         title: 'RuralTech',
+        builder: (context, child) => AppFeedbackHost(
+          child: child ?? const SizedBox.shrink(),
+        ),
         home: Scaffold(
           appBar: AppBar(title: const Text('RuralTech')),
           body: Padding(
@@ -70,6 +74,9 @@ class RuralTechApp extends StatelessWidget {
       ],
       child: MaterialApp(
         title: 'RuralTech',
+        builder: (context, child) => AppFeedbackHost(
+          child: child ?? const SizedBox.shrink(),
+        ),
         theme: ThemeData(
           useMaterial3: true,
           scaffoldBackgroundColor: Colors.white,

@@ -7,6 +7,7 @@ import '../config/manual_settings.dart';
 import '../services/auth_service.dart';
 import '../services/firebase_service.dart';
 import '../services/gateway_service.dart';
+import '../utils/top_feedback.dart';
 
 class AreaEditorScreen extends StatefulWidget {
   const AreaEditorScreen({super.key});
@@ -110,23 +111,15 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
 
   Future<void> _save() async {
     if (_selectedPropertyId == null || _selectedPropertyId!.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Selecione uma propriedade rural.')),
-      );
+      AppFeedback.error('Selecione uma propriedade rural.');
       return;
     }
     if (_points.length < 3) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Desenhe ao menos 3 pontos no poligono.')),
-      );
+      AppFeedback.error('Desenhe ao menos 3 pontos no poligono.');
       return;
     }
     if (_points.length > _maxAreaPoints) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Permitido apenas $_maxAreaPoints pontos por area.'),
-        ),
-      );
+      AppFeedback.error('Permitido apenas $_maxAreaPoints pontos por area.');
       return;
     }
 
@@ -189,24 +182,16 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
                   initialZoom: 15,
                   onTap: (_, p) {
                     if (_points.length >= _maxAreaPoints) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Permitido apenas $_maxAreaPoints pontos por area.',
-                          ),
-                        ),
+                      AppFeedback.error(
+                        'Permitido apenas $_maxAreaPoints pontos por area.',
                       );
                       return;
                     }
                     final propertyPolygon = _selectedPropertyPolygon;
                     if (propertyPolygon.length < 3) return;
                     if (!_isPointInsidePolygon(p, propertyPolygon)) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Ponto fora do perimetro da propriedade selecionada.',
-                          ),
-                        ),
+                      AppFeedback.error(
+                        'Ponto fora do perimetro da propriedade selecionada.',
                       );
                       return;
                     }

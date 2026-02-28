@@ -5,6 +5,7 @@ import 'dart:math' as math;
 
 import '../config/manual_settings.dart';
 import '../utils/polygon_metrics.dart';
+import '../utils/top_feedback.dart';
 
 class PolygonEditorScreen extends StatefulWidget {
   const PolygonEditorScreen({
@@ -133,18 +134,11 @@ class _PolygonEditorScreenState extends State<PolygonEditorScreen> {
   Future<void> _save() async {
     if (_saving || _deleting) return;
     if (_points.length < 3) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('O poligono precisa de pelo menos 3 pontos.')),
-      );
+      AppFeedback.error('O poligono precisa de pelo menos 3 pontos.');
       return;
     }
     if (widget.maxPoints != null && _points.length > widget.maxPoints!) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Permitido apenas ${widget.maxPoints} pontos.'),
-        ),
-      );
+      AppFeedback.error('Permitido apenas ${widget.maxPoints} pontos.');
       return;
     }
     setState(() => _saving = true);
@@ -156,9 +150,7 @@ class _PolygonEditorScreenState extends State<PolygonEditorScreen> {
       Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao salvar poligono: $e')),
-      );
+      AppFeedback.error('Erro ao salvar poligono: $e');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -195,9 +187,7 @@ class _PolygonEditorScreenState extends State<PolygonEditorScreen> {
       Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao apagar: $e')),
-      );
+      AppFeedback.error('Erro ao apagar: $e');
     } finally {
       if (mounted) setState(() => _deleting = false);
     }
@@ -206,9 +196,7 @@ class _PolygonEditorScreenState extends State<PolygonEditorScreen> {
   void _onMapTap(LatLng p) {
     final mustStayInside = widget.boundary.length >= 3;
     if (mustStayInside && !_isInsidePolygon(p, widget.boundary)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ponto fora do limite permitido.')),
-      );
+      AppFeedback.error('Ponto fora do limite permitido.');
       return;
     }
 
@@ -223,22 +211,15 @@ class _PolygonEditorScreenState extends State<PolygonEditorScreen> {
     final edge = _nearestEdgeIndex(p, _points);
     if (edge != null) {
       if (widget.maxPoints != null && _points.length >= widget.maxPoints!) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Permitido apenas ${widget.maxPoints} pontos.'),
-          ),
-        );
+        AppFeedback.error('Permitido apenas ${widget.maxPoints} pontos.');
         return;
       }
       setState(() => _points.insert(edge + 1, p));
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content:
-            Text('Toque em um ponto para mover, ou no perimetro para inserir.'),
-      ),
+    AppFeedback.warning(
+      'Toque em um ponto para mover, ou no perimetro para inserir.',
     );
   }
 

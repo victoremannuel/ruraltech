@@ -12,6 +12,7 @@ import 'package:provider/provider.dart';
 import '../config/manual_settings.dart';
 import '../services/auth_service.dart';
 import '../services/firebase_service.dart';
+import '../utils/top_feedback.dart';
 
 class RuralPropertyEditorScreen extends StatefulWidget {
   final Map<String, dynamic>? initialProperty;
@@ -297,9 +298,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
     });
     _fitToPoints(imported);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('KML importado com ${imported.length} pontos.')),
-    );
+    AppFeedback.success('KML importado com ${imported.length} pontos.');
   }
 
   String _emailForUid(String uid) {
