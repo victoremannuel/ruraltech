@@ -320,6 +320,19 @@ class _PolygonEditorScreenState extends State<PolygonEditorScreen> {
                       )
                       .toList(),
                 ),
+                const Scalebar(
+                  alignment: Alignment.bottomRight,
+                  padding: EdgeInsets.only(
+                    right: 12,
+                    bottom: 12,
+                  ),
+                  lineColor: Color(0xFF173120),
+                  textStyle: TextStyle(
+                    color: Color(0xFF173120),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ],
             ),
           ),
