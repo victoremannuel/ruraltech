@@ -3,6 +3,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
+import '../config/manual_settings.dart';
 import '../services/auth_service.dart';
 import '../services/firebase_service.dart';
 import '../services/gateway_service.dart';
@@ -152,6 +153,7 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
             child: _loadingProperties
                 ? const LinearProgressIndicator()
                 : DropdownButtonFormField<String>(
+                    key: const Key('area_property_dropdown'),
                     initialValue: _selectedPropertyId,
                     items: _properties
                         .map(
@@ -215,7 +217,8 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
                   TileLayer(
                     urlTemplate:
                         'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'com.example.ruraltechApp',
+                    userAgentPackageName:
+                        ManualSettings.mapUserAgentPackageName,
                   ),
                   PolygonLayer(
                     polygons: [
@@ -264,6 +267,7 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
               children: [
                 Expanded(
                   child: OutlinedButton(
+                    key: const Key('area_undo_button'),
                     onPressed: _points.isEmpty
                         ? null
                         : () => setState(() => _points.removeLast()),
@@ -273,6 +277,7 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: OutlinedButton(
+                    key: const Key('area_clear_button'),
                     onPressed: _points.isEmpty
                         ? null
                         : () => setState(() => _points.clear()),
@@ -282,6 +287,7 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: ElevatedButton(
+                    key: const Key('area_save_button'),
                     onPressed: _save,
                     child: const Text('Salvar'),
                   ),

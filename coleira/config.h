@@ -73,6 +73,8 @@ constexpr char PREF_NAMESPACE[] = "collar_cfg";
 constexpr char PREF_KEY_WIFI_OTA[] = "wifi_ota";
 constexpr char PREF_KEY_FENCE[] = "fence";
 constexpr char PREF_KEY_HERD[] = "herd";
+constexpr char PREF_KEY_LORA_SEQ_HI[] = "lora_seq_hi";
+constexpr uint16_t LORA_SEQ_RESERVE_WINDOW = 128;
 
 // Intervalos (ms)
 constexpr uint32_t NORMAL_INTERVAL_MS = 180000;

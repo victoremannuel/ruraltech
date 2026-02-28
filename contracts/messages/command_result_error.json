@@ -1,0 +1,7 @@
+{
+  "type": "command_result",
+  "ok": false,
+  "device_id": 101,
+  "command": "SET_PARAMS",
+  "reason": "admin_required_for_lora_only"
+}

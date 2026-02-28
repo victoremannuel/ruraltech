@@ -18,6 +18,12 @@ Também concentra dados para envio posterior ao backend (ex.: Firebase), via app
 4. `SdLogger.*`: log local em SD com hash chain.
 5. `LoRaProtocol.*` + `CryptoEngine.*`: serialização segura dos frames LoRa.
 
+## 2.1) Segredos e configuracao local
+
+1. `manual_settings.h` no repositório contem somente defaults/placeholders.
+2. Credenciais sensiveis devem ficar em `manual_settings.local.h` (nao versionado).
+3. Base recomendada: `manual_settings.local.example.h`.
+
 ## 3) Inicialização (padrão)
 
 1. Sobe watchdog.
@@ -32,8 +38,8 @@ Também concentra dados para envio posterior ao backend (ex.: Firebase), via app
 ### HTTP
 
 1. `GET /status`: status do gateway matriz (fw, ssid, ip, ota, role).
-2. `GET /devices`: placeholder atual (`[]`).
-3. `GET /logs`: orientação para consulta no SD local.
+2. `GET /devices`: lista JSON dos dispositivos rastreados em memoria (ordenados por atividade recente), com `device_id`, `online`, `age_ms`, `seq`, `timestamp` e `lat/lon` quando disponivel. Aceita `?limit=<n>`.
+3. `GET /logs`: ultimas linhas do buffer de logs em memoria (`text/plain`). Aceita `?limit=<n>` (padrao 30).
 
 ### WebSocket (`ws://<gateway-ip>:81`)
 

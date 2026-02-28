@@ -4,6 +4,7 @@
  */
 #pragma once
 #include <RadioLib.h>
+#include <Preferences.h>
 #include "config.h"
 #include "LoRaProtocol.h"
 #include "CryptoEngine.h"
@@ -20,6 +21,8 @@ class LoRaManager {
  private:
   SX1276 radio_;
   CryptoEngine crypto_;
+  Preferences replayPrefs_;
+  bool replayPrefsReady_ = false;
   uint32_t lastSeqSeen_ = 0;
   int16_t lastRssi_ = -120;
   float lastSnr_ = 0.0f;

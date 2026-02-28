@@ -6,6 +6,13 @@ import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../config/manual_settings.dart';
 
+typedef GatewayWebSocketConnector = WebSocketChannel Function(Uri uri);
+typedef GatewayHttpGet = Future<http.Response> Function(
+  Uri uri, {
+  Map<String, String>? headers,
+});
+typedef GatewayClock = DateTime Function();
+
 class GatewayTelemetrySample {
   const GatewayTelemetrySample({
     required this.deviceId,
@@ -39,9 +46,37 @@ class GatewayService extends ChangeNotifier {
   static const Duration _gatewayProbeTimeout = Duration(milliseconds: 500);
   static const int _gatewayProbeBatchSize = 24;
 
+  GatewayService({
+    GatewayWebSocketConnector? webSocketConnector,
+    GatewayHttpGet? httpGet,
+    GatewayClock? clock,
+    String? initialGatewayHost,
+  })  : _webSocketConnector = webSocketConnector ?? _defaultWebSocketConnector,
+        _httpGet = httpGet ?? _defaultHttpGet,
+        _clock = clock ?? _defaultClock {
+    if (initialGatewayHost != null && initialGatewayHost.trim().isNotEmpty) {
+      gatewayHost = initialGatewayHost.trim();
+    }
+  }
+
+  static WebSocketChannel _defaultWebSocketConnector(Uri uri) =>
+      WebSocketChannel.connect(uri);
+  static Future<http.Response> _defaultHttpGet(
+    Uri uri, {
+    Map<String, String>? headers,
+  }) =>
+      http.get(uri, headers: headers);
+  static DateTime _defaultClock() => DateTime.now();
+
+  final GatewayWebSocketConnector _webSocketConnector;
+  final GatewayHttpGet _httpGet;
+  final GatewayClock _clock;
+
   WebSocketChannel? _channel;
   final List<Map<String, dynamic>> messages = [];
   final Map<String, Map<String, dynamic>> _networkDiscoveredCollars = {};
+  final StreamController<Map<String, dynamic>> _messageController =
+      StreamController<Map<String, dynamic>>.broadcast();
   final StreamController<GatewayTelemetrySample> _telemetryController =
       StreamController<GatewayTelemetrySample>.broadcast();
   String gatewayHost = ManualSettings.defaultGatewayWsHost;
@@ -51,6 +86,7 @@ class GatewayService extends ChangeNotifier {
 
   Stream<GatewayTelemetrySample> get telemetryStream =>
       _telemetryController.stream;
+  Stream<Map<String, dynamic>> get messageStream => _messageController.stream;
 
   void connect() {
     _channel?.sink.close();
@@ -59,12 +95,13 @@ class GatewayService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      _channel = WebSocketChannel.connect(Uri.parse(gatewayHost));
+      _channel = _webSocketConnector(Uri.parse(gatewayHost));
       _channel!.stream.listen(
         (event) {
           final parsed = jsonDecode(event as String) as Map<String, dynamic>;
           messages.insert(0, parsed);
           if (messages.length > 200) messages.removeLast();
+          _messageController.add(Map<String, dynamic>.from(parsed));
           final sample = _extractTelemetrySample(parsed);
           if (sample != null) _telemetryController.add(sample);
           isConnected = true;
@@ -100,9 +137,8 @@ class GatewayService extends ChangeNotifier {
     if (isConnected && _channel != null) return true;
     connect();
 
-    final deadline = DateTime.now().add(timeout);
-    while ((!isConnected || _channel == null) &&
-        DateTime.now().isBefore(deadline)) {
+    final deadline = _clock().add(timeout);
+    while ((!isConnected || _channel == null) && _clock().isBefore(deadline)) {
       await Future<void>.delayed(const Duration(milliseconds: 180));
     }
 
@@ -262,7 +298,7 @@ class GatewayService extends ChangeNotifier {
       deviceId: deviceId.toString(),
       lat: lat,
       lon: lon,
-      receivedAtMs: DateTime.now().millisecondsSinceEpoch,
+      receivedAtMs: _clock().millisecondsSinceEpoch,
       seq: _toInt(msg['seq']),
       sourceTimestampSec: _toInt(msg['timestamp']),
       gatewayId: gatewayId == null || gatewayId.trim().isEmpty
@@ -346,8 +382,7 @@ class GatewayService extends ChangeNotifier {
 
   Future<Map<String, dynamic>?> _probeGateway(String host) async {
     try {
-      final resp = await http
-          .get(Uri.parse('http://$host/status'))
+      final resp = await _httpGet(Uri.parse('http://$host/status'))
           .timeout(_gatewayProbeTimeout);
       if (resp.statusCode != 200) return null;
 
@@ -382,8 +417,7 @@ class GatewayService extends ChangeNotifier {
 
   Future<Map<String, dynamic>?> _probeCollar(String host) async {
     try {
-      final resp = await http
-          .get(Uri.parse('http://$host/status'))
+      final resp = await _httpGet(Uri.parse('http://$host/status'))
           .timeout(_gatewayProbeTimeout);
       if (resp.statusCode != 200) return null;
 
@@ -502,7 +536,7 @@ class GatewayService extends ChangeNotifier {
           deviceId: id,
           lat: lat,
           lon: lon,
-          receivedAtMs: DateTime.now().millisecondsSinceEpoch,
+          receivedAtMs: _clock().millisecondsSinceEpoch,
           gatewayId: found['ip']?.toString(),
           gatewayRole: 'collar',
           gatewayWifiOtaEnabled: true,
@@ -604,10 +638,11 @@ class GatewayService extends ChangeNotifier {
     return discovered;
   }
 
-  void sendCommand(
-      {required String deviceId,
-      required String command,
-      required Map<String, dynamic> payload}) {
+  bool sendCommand({
+    required String deviceId,
+    required String command,
+    required Map<String, dynamic> payload,
+  }) {
     final parsedDeviceId = int.tryParse(deviceId.trim());
     if (parsedDeviceId == null) {
       lastError = '[send_command] invalid_device_id';
@@ -618,7 +653,7 @@ class GatewayService extends ChangeNotifier {
         reason: 'invalid_device_id',
       );
       notifyListeners();
-      return;
+      return false;
     }
 
     final validationError = _validatePayloadByCommand(command, payload);
@@ -631,7 +666,19 @@ class GatewayService extends ChangeNotifier {
         reason: validationError,
       );
       notifyListeners();
-      return;
+      return false;
+    }
+
+    if (!isConnected || _channel == null) {
+      lastError = '[send_command] gateway_not_connected';
+      _pushLocalCommandResult(
+        deviceId: parsedDeviceId,
+        command: command,
+        ok: false,
+        reason: 'gateway_not_connected',
+      );
+      notifyListeners();
+      return false;
     }
 
     final msg = {
@@ -640,7 +687,21 @@ class GatewayService extends ChangeNotifier {
       'command': command,
       'payload': payload
     };
-    _channel?.sink.add(jsonEncode(msg));
+    try {
+      _channel!.sink.add(jsonEncode(msg));
+      lastError = null;
+      return true;
+    } catch (e) {
+      lastError = '[send_command] send_failed: $e';
+      _pushLocalCommandResult(
+        deviceId: parsedDeviceId,
+        command: command,
+        ok: false,
+        reason: 'send_failed',
+      );
+      notifyListeners();
+      return false;
+    }
   }
 
   Future<bool> sendCommandEnsuringConnection({
@@ -654,16 +715,13 @@ class GatewayService extends ChangeNotifier {
         await ensureConnected(hostOverride: hostOverride, timeout: timeout);
     if (!connected) return false;
 
-    lastError = null;
-    sendCommand(deviceId: deviceId, command: command, payload: payload);
-    final immediateError = lastError ?? '';
-    return immediateError.isEmpty ||
-        !immediateError.startsWith('[send_command]');
+    return sendCommand(deviceId: deviceId, command: command, payload: payload);
   }
 
   @override
   void dispose() {
     _channel?.sink.close();
+    _messageController.close();
     _telemetryController.close();
     super.dispose();
   }

@@ -19,10 +19,17 @@ flutter pub get
 2. Ative Authentication (email/senha).
 3. Ative Cloud Firestore.
 4. Gere arquivos de configuração (`google-services.json` e `GoogleService-Info.plist`).
-5. Publique regras:
+5. Publique regras (Firestore + RTDB):
 ```bash
-firebase deploy --only firestore:rules --project <seu_project_id>
+firebase deploy --only firestore:rules,database --project <seu_project_id>
 ```
+6. Provisione a `writerKey` da matriz para liberar escrita sem auth no RTDB:
+```bash
+./scripts/provision_matrix_writer_key.sh --project <seu_project_id>
+```
+Observação:
+- O script lê `RT_CFG_RTDB_MATRIX_ID` e `RT_CFG_RTDB_WRITER_KEY` de `../gateway-matriz/manual_settings.local.h`.
+- Se o arquivo local não existir, copie de `../gateway-matriz/manual_settings.local.example.h`.
 
 ## Executar em Debug
 
@@ -132,6 +139,12 @@ flutter run --release -d linux
 ```
 
 ## Build distribuível (opcional)
+
+Antes do release Android, configure assinatura:
+```bash
+cp android/key.properties.example android/key.properties
+```
+Depois edite `android/key.properties` com keystore real (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`).
 
 ### Android APK
 ```bash

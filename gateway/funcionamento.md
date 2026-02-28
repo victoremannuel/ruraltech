@@ -30,8 +30,8 @@ Também é o nó que pode concentrar dados para posterior envio ao backend (ex.:
 ### HTTP
 
 1. `GET /status`: status do gateway (fw, ssid, ip, ota).
-2. `GET /devices`: placeholder atual (`[]`).
-3. `GET /logs`: orientação para consulta no SD local.
+2. `GET /devices`: lista JSON dos dispositivos rastreados em memoria (ordenados por atividade recente), com `device_id`, `online`, `age_ms`, `seq`, `timestamp` e `lat/lon` quando disponivel. Aceita `?limit=<n>`.
+3. `GET /logs`: ultimas linhas do buffer de logs em memoria (`text/plain`). Aceita `?limit=<n>` (padrao 30).
 
 ### WebSocket (`ws://<gateway-ip>:81`)
 

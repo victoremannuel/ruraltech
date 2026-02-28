@@ -4,7 +4,10 @@ Este arquivo centraliza onde alterar configuracoes manuais para rodar o projeto 
 
 ## 1) Gateway matriz (ESP32)
 
-Arquivo: `gateway-matriz/manual_settings.h`
+Arquivos:
+- `gateway-matriz/manual_settings.h` (defaults/publico)
+- `gateway-matriz/manual_settings.local.h` (segredos, nao versionado)
+- `gateway-matriz/manual_settings.local.example.h` (template)
 
 Campos principais:
 - `BACKHAUL_WIFI_SSID`
@@ -16,7 +19,21 @@ Campos principais:
 - `OTA_HOSTNAME`, `OTA_PASSWORD`
 
 Observacao:
-- `gateway-matriz/config.h` agora apenas referencia esse arquivo.
+- Crie o arquivo local antes de compilar em producao:
+  ```bash
+  cp gateway-matriz/manual_settings.local.example.h gateway-matriz/manual_settings.local.h
+  ```
+- Preencha no arquivo local os campos sensiveis:
+  - `RT_CFG_BACKHAUL_WIFI_SSID`
+  - `RT_CFG_BACKHAUL_WIFI_PASS`
+  - `RT_CFG_RTDB_MATRIX_ID`
+  - `RT_CFG_RTDB_WRITER_KEY`
+- `gateway-matriz/config.h` referencia `manual_settings.h`, que aplica override automatico do arquivo local.
+- Depois de atualizar `RTDB_MATRIX_ID`/`RTDB_WRITER_KEY`, provisione no RTDB:
+  ```bash
+  cd /Users/victor/Downloads/code/ruraltech/app
+  ./scripts/provision_matrix_writer_key.sh --project <seu_project_id>
+  ```
 
 ## 2) Gateway comum (ESP32)
 

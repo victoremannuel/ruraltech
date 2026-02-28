@@ -11,6 +11,14 @@ bool LoRaManager::begin() {
     LOGE("Falha LoRa begin=%d", state);
     return false;
   }
+  replayPrefsReady_ = replayPrefs_.begin("lora_rx", false);
+  if (!replayPrefsReady_) {
+    LOGW("NVS indisponivel para anti-replay da coleira (RAM only).");
+    return true;
+  }
+
+  lastSeqSeen_ = replayPrefs_.getULong("last_seq", 0);
+  LOGI("Anti-replay downlink restaurado last_seq=%lu", lastSeqSeen_);
   return true;
 }
 
@@ -63,6 +71,10 @@ bool LoRaManager::receiveFrame(LoRaFrame& frame, uint32_t windowMs) {
         continue;
       }
       lastSeqSeen_ = frame.seq;
+      if (replayPrefsReady_ &&
+          replayPrefs_.putULong("last_seq", lastSeqSeen_) != sizeof(uint32_t)) {
+        LOGW("Falha ao persistir anti-replay da coleira seq=%lu", lastSeqSeen_);
+      }
       return true;
     }
     delay(5);

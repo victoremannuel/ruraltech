@@ -1,0 +1,4 @@
+storeFile=/ABSOLUTE/PATH/TO/release-keystore.jks
+storePassword=CHANGE_ME
+keyAlias=release
+keyPassword=CHANGE_ME

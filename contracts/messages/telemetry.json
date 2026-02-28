@@ -1,0 +1,11 @@
+{
+  "type": "telemetry",
+  "device_id": 101,
+  "msg_type": 1,
+  "seq": 41822,
+  "timestamp": 1760000100,
+  "gateway_id": "RT-GW-001",
+  "gateway_role": "gateway",
+  "gateway_wifi_ota_enabled": true,
+  "payload": "{\"lat\":-20.1234,\"lon\":-43.9876,\"spd\":1.2,\"sat\":7}"
+}

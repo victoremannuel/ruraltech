@@ -80,11 +80,13 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 18),
                 TextField(
+                  key: const Key('login_email_input'),
                   controller: _email,
                   decoration: const InputDecoration(labelText: 'Email'),
                 ),
                 const SizedBox(height: 10),
                 TextField(
+                  key: const Key('login_password_input'),
                   controller: _pass,
                   obscureText: true,
                   decoration: const InputDecoration(labelText: 'Senha'),
@@ -93,6 +95,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
+                    key: const Key('login_signin_button'),
                     onPressed: _loading
                         ? null
                         : () => _runAuth(
@@ -108,6 +111,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
                 TextButton(
+                  key: const Key('login_signup_button'),
                   onPressed: _loading
                       ? null
                       : () =>

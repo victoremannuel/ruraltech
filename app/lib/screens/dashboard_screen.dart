@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -23,6 +24,7 @@ import 'map_point_picker_screen.dart';
 import 'polygon_editor_screen.dart';
 import 'profile_screen.dart';
 import 'rural_property_editor_screen.dart';
+import 'device_details_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -37,6 +39,7 @@ class _HomeScreenState extends State<HomeScreen> {
   StreamSubscription<Position>? _positionSub;
   StreamSubscription<CompassEvent>? _compassSub;
   StreamSubscription<GatewayTelemetrySample>? _gatewayTelemetrySub;
+  StreamSubscription<Map<String, dynamic>>? _gatewayMessageSub;
   GatewayService? _boundGatewayService;
   LatLng? _userPosition;
   double _userHeading = 0;
@@ -69,6 +72,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _positionSub?.cancel();
     _compassSub?.cancel();
     _gatewayTelemetrySub?.cancel();
+    _gatewayMessageSub?.cancel();
     _mapController.dispose();
     super.dispose();
   }
@@ -78,8 +82,14 @@ class _HomeScreenState extends State<HomeScreen> {
     if (identical(_boundGatewayService, gateway)) return;
     _boundGatewayService = gateway;
     _gatewayTelemetrySub?.cancel();
+    _gatewayMessageSub?.cancel();
     _gatewayTelemetrySub = gateway.telemetryStream.listen((sample) {
       if (!mounted) return;
+      final gatewayRole = sample.gatewayRole?.trim().toLowerCase();
+      if (gatewayRole == 'matrix') {
+        // Gateway matriz ja publica cada uplink no RTDB.
+        return;
+      }
       if (sample.gatewayWifiOtaEnabled == false) {
         // Em LoRa-only o escritor principal deve ser o gateway matriz.
         return;
@@ -100,6 +110,71 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
       );
     });
+    _gatewayMessageSub = gateway.messageStream.listen(_persistCriticalEvent);
+  }
+
+  int? _asInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value.trim());
+    return null;
+  }
+
+  Map<String, dynamic>? _decodePayloadMap(dynamic raw) {
+    if (raw is Map<String, dynamic>) return raw;
+    if (raw is! String || raw.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) return decoded;
+    } catch (_) {}
+    return null;
+  }
+
+  void _persistCriticalEvent(Map<String, dynamic> message) {
+    if (!mounted) return;
+    final type = (message['type'] ?? '').toString().trim().toLowerCase();
+    if (type != 'event') return;
+
+    final uid = context.read<AuthService>().user?.uid;
+    if (uid == null || uid.trim().isEmpty) return;
+
+    final deviceId = _asInt(
+      message['device_id'] ??
+          message['deviceId'] ??
+          message['device_id_str'] ??
+          message['id'],
+    );
+    if (deviceId == null || deviceId <= 0) return;
+
+    final payload = _decodePayloadMap(message['payload']);
+    final gatewayId =
+        (message['gateway_id'] ?? message['gatewayId'])?.toString().trim();
+    final gatewayRole =
+        (message['gateway_role'] ?? message['gatewayRole'])?.toString().trim();
+    final eventType = (payload == null
+            ? null
+            : (payload['type'] ?? payload['event_type'] ?? payload['reason']))
+        ?.toString()
+        .trim();
+
+    final event = <String, dynamic>{
+      'ownerUid': FirebaseFirestore.instance.collection('users').doc(uid),
+      'deviceId': deviceId.toString(),
+      'type': type,
+      'seq': _asInt(message['seq']),
+      'sourceTimestampSec': _asInt(message['timestamp']),
+      'receivedAtMs': DateTime.now().millisecondsSinceEpoch,
+      if (gatewayId != null && gatewayId.isNotEmpty) 'gatewayId': gatewayId,
+      if (gatewayRole != null && gatewayRole.isNotEmpty)
+        'gatewayRole': gatewayRole,
+      if (message['gateway_wifi_ota_enabled'] is bool)
+        'gatewayWifiOtaEnabled': message['gateway_wifi_ota_enabled'],
+      if (payload != null) 'payload': payload,
+      if (eventType != null && eventType.isNotEmpty) 'eventType': eventType,
+      'raw': message,
+    };
+
+    unawaited(context.read<FirebaseService>().saveCriticalEvent(event));
   }
 
   double _normalizeHeading(double heading) {
@@ -521,11 +596,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final properties =
         await fb.getRuralProperties(uid: uid, isAdmin: auth.isAdmin);
+    final gateways =
+        await fb.streamGateways(uid: uid, isAdmin: auth.isAdmin).first;
     final users = auth.isAdmin
         ? await fb.getUserOptions()
         : const <Map<String, String>>[];
     if (!context.mounted) return;
     String? propertyId = device.propertyId;
+    String? selectedGatewayId = device.gatewayId;
     String? ownerUid = device.ownerUid;
     LatLng? selectedPosition = (device.lat != null && device.lon != null)
         ? LatLng(device.lat!, device.lon!)
@@ -546,8 +624,42 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final nameCtrl = TextEditingController(text: device.name);
     final statusCtrl = TextEditingController(text: device.status);
+    final loraIdCtrl = TextEditingController(
+      text: (() {
+        final raw = (device.deviceId ?? '').trim();
+        if (raw.isNotEmpty) return raw;
+        return device.loraDeviceId ?? '';
+      })(),
+    );
     bool wifiOtaEnabled = device.wifiOtaEnabled;
     final formKey = GlobalKey<FormState>();
+
+    String? normalizeLoraDeviceId(String? raw) {
+      if (raw == null) return null;
+      final trimmed = raw.trim();
+      if (trimmed.isEmpty) return null;
+      final parsed = int.tryParse(trimmed);
+      if (parsed == null || parsed <= 0) return null;
+      return parsed.toString();
+    }
+
+    List<Map<String, dynamic>> gatewaysForProperty(String? selectedPropertyId) {
+      final normalizedProperty = _normalizeRefId(selectedPropertyId);
+      if (normalizedProperty.isEmpty) {
+        return gateways;
+      }
+      return gateways.where((g) {
+        final gatewayProperty = _normalizeRefId(g['propertyId']);
+        return gatewayProperty == normalizedProperty;
+      }).toList();
+    }
+
+    String gatewayLabel(Map<String, dynamic> gateway) {
+      final id = _normalizeRefId(gateway['id']);
+      final name = (gateway['name'] ?? '').toString().trim();
+      if (name.isEmpty) return id;
+      return '$name ($id)';
+    }
 
     await showDialog<void>(
       context: context,
@@ -560,19 +672,81 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  DropdownButtonFormField<String>(
-                    initialValue: propertyId,
-                    items: properties
-                        .map(
-                          (p) => DropdownMenuItem<String>(
-                            value: p['id'].toString(),
-                            child: Text((p['name'] ?? p['id']).toString()),
+                  Builder(
+                    builder: (_) {
+                      final availableGateways = gatewaysForProperty(propertyId);
+                      final hasSelectedGateway =
+                          (selectedGatewayId ?? '').trim().isNotEmpty;
+                      final selectedGatewayInList = hasSelectedGateway &&
+                          availableGateways.any(
+                            (g) =>
+                                _normalizeRefId(g['id']) ==
+                                _normalizeRefId(selectedGatewayId),
+                          );
+
+                      return Column(
+                        children: [
+                          DropdownButtonFormField<String>(
+                            key: const Key('edit_device_property_dropdown'),
+                            initialValue: propertyId,
+                            items: properties
+                                .map(
+                                  (p) => DropdownMenuItem<String>(
+                                    value: p['id'].toString(),
+                                    child:
+                                        Text((p['name'] ?? p['id']).toString()),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (v) => setState(() {
+                              propertyId = v;
+                              final stillAvailable = gatewaysForProperty(v).any(
+                                (g) =>
+                                    _normalizeRefId(g['id']) ==
+                                    _normalizeRefId(selectedGatewayId),
+                              );
+                              if (!stillAvailable) {
+                                selectedGatewayId = null;
+                              }
+                            }),
+                            decoration: const InputDecoration(
+                              labelText: 'Propriedade rural',
+                            ),
                           ),
-                        )
-                        .toList(),
-                    onChanged: (v) => setState(() => propertyId = v),
-                    decoration:
-                        const InputDecoration(labelText: 'Propriedade rural'),
+                          DropdownButtonFormField<String>(
+                            key: const Key('edit_device_gateway_dropdown'),
+                            initialValue:
+                                hasSelectedGateway ? selectedGatewayId : null,
+                            items: <DropdownMenuItem<String>>[
+                              const DropdownMenuItem<String>(
+                                value: '',
+                                child: Text('Sem gateway vinculado'),
+                              ),
+                              if (hasSelectedGateway && !selectedGatewayInList)
+                                DropdownMenuItem<String>(
+                                  value: selectedGatewayId,
+                                  child: Text(
+                                    'Gateway atual (${selectedGatewayId!})',
+                                  ),
+                                ),
+                              ...availableGateways.map(
+                                (g) => DropdownMenuItem<String>(
+                                  value: _normalizeRefId(g['id']),
+                                  child: Text(gatewayLabel(g)),
+                                ),
+                              ),
+                            ],
+                            onChanged: (v) => setState(
+                              () => selectedGatewayId =
+                                  (v == null || v.trim().isEmpty) ? null : v,
+                            ),
+                            decoration: const InputDecoration(
+                              labelText: 'Gateway vinculado',
+                            ),
+                          ),
+                        ],
+                      );
+                    },
                   ),
                   if (ownerOptions.isEmpty)
                     TextFormField(
@@ -584,6 +758,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     )
                   else
                     DropdownButtonFormField<String>(
+                      key: const Key('edit_device_owner_dropdown'),
                       initialValue: ownerUid,
                       items: ownerOptions
                           .map(
@@ -599,6 +774,21 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                   TextFormField(
+                    key: const Key('edit_device_lora_id_input'),
+                    controller: loraIdCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'ID LoRa da coleira',
+                    ),
+                    validator: (v) {
+                      if (normalizeLoraDeviceId(v) == null) {
+                        return 'Informe um ID LoRa numerico maior que zero';
+                      }
+                      return null;
+                    },
+                  ),
+                  TextFormField(
+                    key: const Key('edit_device_name_input'),
                     controller: nameCtrl,
                     decoration:
                         const InputDecoration(labelText: 'Nome da coleira'),
@@ -607,6 +797,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         : null,
                   ),
                   TextFormField(
+                    key: const Key('edit_device_status_input'),
                     controller: statusCtrl,
                     decoration: const InputDecoration(labelText: 'Status'),
                   ),
@@ -695,57 +886,61 @@ class _HomeScreenState extends State<HomeScreen> {
               child: const Text('Cancelar'),
             ),
             ElevatedButton(
+              key: const Key('edit_device_save_button'),
               onPressed: () async {
                 if (!formKey.currentState!.validate()) return;
                 if (selectedPosition == null) return;
+                final normalizedLoraId = normalizeLoraDeviceId(loraIdCtrl.text);
+                if (normalizedLoraId == null) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'Informe um ID LoRa numerico maior que zero para a coleira.',
+                        ),
+                      ),
+                    );
+                  }
+                  return;
+                }
                 final modeChanged = wifiOtaEnabled != device.wifiOtaEnabled;
                 await fb.updateDevice(
                   id: device.id,
+                  deviceId: normalizedLoraId,
                   name: nameCtrl.text.trim(),
                   status: statusCtrl.text.trim(),
                   lat: selectedPosition!.latitude,
                   lon: selectedPosition!.longitude,
                   ownerUid: ownerUid ?? uid,
                   propertyId: propertyId,
+                  gatewayId: selectedGatewayId,
                   wifiOtaEnabled: wifiOtaEnabled,
                 );
                 if (auth.isAdmin && modeChanged) {
-                  final loraTarget = (() {
-                    final d = (device.deviceId ?? '').trim();
-                    if (d.isNotEmpty) return d;
-                    return device.id.trim();
-                  })();
-                  if (int.tryParse(loraTarget) == null) {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Modo salvo no cadastro, mas o ID LoRa da coleira nao e numerico para enviar SET_PARAMS.',
-                          ),
+                  final loraTarget = normalizedLoraId;
+                  final gatewayWsHost = await fb.resolveGatewayWsHostForDevice(
+                    deviceId: loraTarget,
+                    fallbackGatewayId: selectedGatewayId ?? device.gatewayId,
+                  );
+                  final ok = await gatewayService.sendCommandEnsuringConnection(
+                    deviceId: loraTarget,
+                    command: 'SET_PARAMS',
+                    hostOverride: gatewayWsHost,
+                    payload: {
+                      'target': 'collars',
+                      'wifi_ota_enabled': wifiOtaEnabled,
+                      'requested_by_role': 'adm',
+                      'requested_by_admin': true,
+                    },
+                  );
+                  if (!ok && context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Nao foi possivel enviar comando de modo para a coleira via gateway: ${gatewayService.lastError ?? 'erro desconhecido'}',
                         ),
-                      );
-                    }
-                  } else {
-                    final ok =
-                        await gatewayService.sendCommandEnsuringConnection(
-                      deviceId: loraTarget,
-                      command: 'SET_PARAMS',
-                      payload: {
-                        'target': 'collars',
-                        'wifi_ota_enabled': wifiOtaEnabled,
-                        'requested_by_role': 'adm',
-                        'requested_by_admin': true,
-                      },
+                      ),
                     );
-                    if (!ok && context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            'Nao foi possivel enviar comando de modo para a coleira via gateway: ${gatewayService.lastError ?? 'erro desconhecido'}',
-                          ),
-                        ),
-                      );
-                    }
                   }
                 }
                 if (context.mounted) Navigator.pop(context);
@@ -801,6 +996,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   DropdownButtonFormField<String>(
+                    key: const Key('edit_gateway_property_dropdown'),
                     initialValue: propertyId,
                     items: properties
                         .map(
@@ -815,6 +1011,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         const InputDecoration(labelText: 'Propriedade rural'),
                   ),
                   TextFormField(
+                    key: const Key('edit_gateway_name_input'),
                     controller: nameCtrl,
                     decoration:
                         const InputDecoration(labelText: 'Nome do gateway'),
@@ -823,10 +1020,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         : null,
                   ),
                   TextFormField(
+                    key: const Key('edit_gateway_status_input'),
                     controller: statusCtrl,
                     decoration: const InputDecoration(labelText: 'Status'),
                   ),
                   TextFormField(
+                    key: const Key('edit_gateway_host_input'),
                     controller: hostCtrl,
                     decoration:
                         const InputDecoration(labelText: 'Host (opcional)'),
@@ -932,6 +1131,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: const Text('Cancelar'),
             ),
             ElevatedButton(
+              key: const Key('edit_gateway_save_button'),
               onPressed: () async {
                 if (!formKey.currentState!.validate()) return;
                 if (selectedPosition == null) return;
@@ -990,6 +1190,59 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Future<void> _openDeviceMarkerActions(
+      BuildContext context, DeviceModel device) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.tune),
+              title: const Text('Comandos da coleira'),
+              subtitle: const Text('Geofence e plano de conducao'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => DeviceDetailsScreen(device: device),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit),
+              title: const Text('Editar coleira'),
+              onTap: () async {
+                Navigator.pop(sheetContext);
+                await _showEditDeviceDialog(context, device);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openGatewayMarkerActions(
+      BuildContext context, Map<String, dynamic> gateway) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: ListTile(
+          leading: const Icon(Icons.edit),
+          title: const Text('Editar gateway'),
+          onTap: () async {
+            Navigator.pop(sheetContext);
+            await _showEditGatewayDialog(context, gateway);
+          },
+        ),
+      ),
+    );
+  }
+
   Future<void> _showAddDeviceDialog(BuildContext context) async {
     final auth = context.read<AuthService>();
     final fb = context.read<FirebaseService>();
@@ -1003,12 +1256,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final properties =
         await fb.getRuralProperties(uid: uid, isAdmin: auth.isAdmin);
+    final gateways =
+        await fb.streamGateways(uid: uid, isAdmin: auth.isAdmin).first;
     final users = auth.isAdmin
         ? await fb.getUserOptions()
         : const <Map<String, String>>[];
     if (!context.mounted) return;
     String? propertyId =
         properties.isNotEmpty ? properties.first['id'].toString() : null;
+    String? selectedGatewayId;
     LatLng? selectedPosition;
     String? selectedDetectedDeviceId;
     bool manualPositionChosen = false;
@@ -1036,7 +1292,26 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     final nameCtrl = TextEditingController();
     final statusCtrl = TextEditingController(text: 'active');
+    final loraIdCtrl = TextEditingController();
     final formKey = GlobalKey<FormState>();
+
+    List<Map<String, dynamic>> gatewaysForProperty(String? selectedPropertyId) {
+      final normalizedProperty = _normalizeRefId(selectedPropertyId);
+      if (normalizedProperty.isEmpty) {
+        return gateways;
+      }
+      return gateways.where((g) {
+        final gatewayProperty = _normalizeRefId(g['propertyId']);
+        return gatewayProperty == normalizedProperty;
+      }).toList();
+    }
+
+    String gatewayLabel(Map<String, dynamic> gateway) {
+      final id = _normalizeRefId(gateway['id']);
+      final name = (gateway['name'] ?? '').toString().trim();
+      if (name.isEmpty) return id;
+      return '$name ($id)';
+    }
 
     void selectOwner(Map<String, String> owner) {
       selectedOwnerUid = owner['uid'];
@@ -1143,6 +1418,15 @@ class _HomeScreenState extends State<HomeScreen> {
       return null;
     }
 
+    String? normalizeLoraDeviceId(String? raw) {
+      if (raw == null) return null;
+      final trimmed = raw.trim();
+      if (trimmed.isEmpty) return null;
+      final parsed = int.tryParse(trimmed);
+      if (parsed == null || parsed <= 0) return null;
+      return parsed.toString();
+    }
+
     LatLng? positionFromDetectedCollar(
       String? detectedId,
       List<Map<String, dynamic>> discovered,
@@ -1224,6 +1508,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final detectedId = detected['device_id_str']?.toString();
       if (detectedId == null || detectedId.isEmpty) return;
       selectedDetectedDeviceId = detectedId;
+      loraIdCtrl.text = detectedId;
       if (nameCtrl.text.trim().isEmpty ||
           nameCtrl.text.startsWith('Coleira ')) {
         final suggested = detected['name']?.toString().trim();
@@ -1265,6 +1550,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       if (auth.isAdmin)
                         TextFormField(
+                          key: const Key('add_device_owner_picker'),
                           controller: ownerCtrl,
                           readOnly: true,
                           onTap: () => showOwnerPicker(context, setState),
@@ -1291,6 +1577,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                       DropdownButtonFormField<String>(
+                        key: const Key('add_device_property_dropdown'),
                         initialValue: propertyId,
                         items: properties
                             .map(
@@ -1300,12 +1587,45 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             )
                             .toList(),
-                        onChanged: (v) => setState(() => propertyId = v),
+                        onChanged: (v) => setState(() {
+                          propertyId = v;
+                          final stillAvailable = gatewaysForProperty(v).any(
+                            (g) =>
+                                _normalizeRefId(g['id']) ==
+                                _normalizeRefId(selectedGatewayId),
+                          );
+                          if (!stillAvailable) {
+                            selectedGatewayId = null;
+                          }
+                        }),
                         decoration: const InputDecoration(
                             labelText: 'Propriedade rural'),
                         validator: (v) => (v == null || v.trim().isEmpty)
                             ? 'Selecione a propriedade rural'
                             : null,
+                      ),
+                      DropdownButtonFormField<String>(
+                        key: const Key('add_device_gateway_dropdown'),
+                        initialValue: selectedGatewayId,
+                        items: <DropdownMenuItem<String>>[
+                          const DropdownMenuItem<String>(
+                            value: '',
+                            child: Text('Sem gateway vinculado'),
+                          ),
+                          ...gatewaysForProperty(propertyId).map(
+                            (g) => DropdownMenuItem<String>(
+                              value: _normalizeRefId(g['id']),
+                              child: Text(gatewayLabel(g)),
+                            ),
+                          ),
+                        ],
+                        onChanged: (v) => setState(
+                          () => selectedGatewayId =
+                              (v == null || v.trim().isEmpty) ? null : v,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'Gateway vinculado',
+                        ),
                       ),
                       const SizedBox(height: 8),
                       Align(
@@ -1324,6 +1644,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                             const SizedBox(height: 8),
                             OutlinedButton.icon(
+                              key: const Key('add_device_scan_ble_button'),
                               onPressed: bleService.isScanning
                                   ? null
                                   : () => bleService.startScan(),
@@ -1358,6 +1679,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   style: const TextStyle(fontSize: 12),
                                 ),
                                 OutlinedButton.icon(
+                                  key: const Key('add_device_scan_wifi_button'),
                                   onPressed: gatewayService.isDiscoveringCollars
                                       ? null
                                       : () async {
@@ -1405,6 +1727,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                       DropdownButtonFormField<String>(
+                        key: const Key('add_device_detected_dropdown'),
                         initialValue: selectedDetectedDeviceId ?? '',
                         items: <DropdownMenuItem<String>>[
                           const DropdownMenuItem<String>(
@@ -1463,6 +1786,24 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                       TextFormField(
+                        key: const Key('add_device_lora_id_input'),
+                        controller: loraIdCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: 'ID LoRa da coleira',
+                          helperText: selectedDetectedDeviceId == null
+                              ? 'Obrigatorio: informe o ID numerico da coleira.'
+                              : 'Preenchido pela coleira detectada; ajuste se necessario.',
+                        ),
+                        validator: (v) {
+                          if (normalizeLoraDeviceId(v) == null) {
+                            return 'Informe um ID LoRa numerico maior que zero';
+                          }
+                          return null;
+                        },
+                      ),
+                      TextFormField(
+                        key: const Key('add_device_name_input'),
                         controller: nameCtrl,
                         decoration:
                             const InputDecoration(labelText: 'Nome da coleira'),
@@ -1471,6 +1812,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             : null,
                       ),
                       TextFormField(
+                        key: const Key('add_device_status_input'),
                         controller: statusCtrl,
                         decoration: const InputDecoration(labelText: 'Status'),
                       ),
@@ -1530,6 +1872,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: const Text('Cancelar'),
                 ),
                 ElevatedButton(
+                  key: const Key('add_device_save_button'),
                   onPressed: () async {
                     if (!formKey.currentState!.validate()) return;
                     if (selectedOwnerUid == null ||
@@ -1539,6 +1882,21 @@ class _HomeScreenState extends State<HomeScreen> {
                           const SnackBar(
                             content: Text(
                               'Selecione um dono valido para a coleira.',
+                            ),
+                          ),
+                        );
+                      }
+                      return;
+                    }
+
+                    final normalizedLoraId =
+                        normalizeLoraDeviceId(loraIdCtrl.text);
+                    if (normalizedLoraId == null) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Informe um ID LoRa numerico maior que zero para a coleira.',
                             ),
                           ),
                         );
@@ -1582,17 +1940,24 @@ class _HomeScreenState extends State<HomeScreen> {
                       return;
                     }
 
-                    await fb.addDevice(
-                      ownerUid: selectedOwnerUid ?? uid,
-                      name: nameCtrl.text.trim(),
-                      status: statusCtrl.text.trim(),
-                      deviceId:
-                          hasBinding ? selectedDetectedDeviceId!.trim() : null,
-                      lat: effectivePosition?.latitude,
-                      lon: effectivePosition?.longitude,
-                      propertyId: propertyId,
-                    );
-                    if (context.mounted) Navigator.pop(context);
+                    try {
+                      await fb.addDevice(
+                        ownerUid: selectedOwnerUid ?? uid,
+                        name: nameCtrl.text.trim(),
+                        status: statusCtrl.text.trim(),
+                        deviceId: normalizedLoraId,
+                        lat: effectivePosition?.latitude,
+                        lon: effectivePosition?.longitude,
+                        propertyId: propertyId,
+                        gatewayId: selectedGatewayId,
+                      );
+                      if (context.mounted) Navigator.pop(context);
+                    } catch (e) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Erro ao salvar coleira: $e')),
+                      );
+                    }
                   },
                   child: const Text('Salvar'),
                 ),
@@ -1787,6 +2152,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       DropdownMenu<String>(
+                        key: const Key('add_gateway_property_dropdown'),
                         controller: propertyCtrl,
                         width: MediaQuery.of(context).size.width * 0.72,
                         requestFocusOnTap: true,
@@ -1822,6 +2188,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   : 'Gateway desconectado',
                             ),
                             OutlinedButton.icon(
+                              key: const Key('add_gateway_connect_button'),
                               onPressed: gatewayService.connect,
                               icon: Icon(
                                 gatewayService.isConnected
@@ -1835,6 +2202,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                             OutlinedButton.icon(
+                              key: const Key('add_gateway_scan_ble_button'),
                               onPressed: bleService.isScanning
                                   ? null
                                   : () => bleService.startScan(),
@@ -1870,6 +2238,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           spacing: 10,
                           children: [
                             OutlinedButton.icon(
+                              key: const Key('add_gateway_scan_network_button'),
                               onPressed: scanningNearbyGateways
                                   ? null
                                   : () async {
@@ -1927,6 +2296,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                       DropdownButtonFormField<String>(
+                        key: const Key('add_gateway_detected_dropdown'),
                         initialValue: selectedDetectedGatewayId ?? '',
                         items: <DropdownMenuItem<String>>[
                           const DropdownMenuItem<String>(
@@ -1981,6 +2351,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                       TextFormField(
+                        key: const Key('add_gateway_id_input'),
                         controller: gatewayIdCtrl,
                         decoration:
                             const InputDecoration(labelText: 'ID do gateway'),
@@ -1989,6 +2360,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             : null,
                       ),
                       TextFormField(
+                        key: const Key('add_gateway_name_input'),
                         controller: nameCtrl,
                         decoration:
                             const InputDecoration(labelText: 'Nome do gateway'),
@@ -1997,10 +2369,12 @@ class _HomeScreenState extends State<HomeScreen> {
                             : null,
                       ),
                       TextFormField(
+                        key: const Key('add_gateway_status_input'),
                         controller: statusCtrl,
                         decoration: const InputDecoration(labelText: 'Status'),
                       ),
                       TextFormField(
+                        key: const Key('add_gateway_host_input'),
                         controller: hostCtrl,
                         decoration:
                             const InputDecoration(labelText: 'Host (opcional)'),
@@ -2074,6 +2448,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: const Text('Cancelar'),
                 ),
                 ElevatedButton(
+                  key: const Key('add_gateway_save_button'),
                   onPressed: () async {
                     if (!formKey.currentState!.validate()) return;
                     if (propertyId == null || propertyId!.trim().isEmpty) {
@@ -2144,12 +2519,14 @@ class _HomeScreenState extends State<HomeScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
+                key: const Key('role_update_email_input'),
                 controller: emailCtrl,
                 decoration:
                     const InputDecoration(labelText: 'Email do usuario'),
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
+                key: const Key('role_update_role_dropdown'),
                 initialValue: role,
                 items: const [
                   DropdownMenuItem(value: 'adm', child: Text('adm')),
@@ -2168,6 +2545,7 @@ class _HomeScreenState extends State<HomeScreen> {
               child: const Text('Cancelar'),
             ),
             ElevatedButton(
+              key: const Key('role_update_save_button'),
               onPressed: () async {
                 final targetEmail = emailCtrl.text.trim();
                 if (targetEmail.isEmpty) return;
@@ -2197,6 +2575,7 @@ class _HomeScreenState extends State<HomeScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
+              key: const Key('home_action_new_area'),
               leading: const Icon(Icons.map),
               title: const Text('Novo poligono'),
               onTap: () {
@@ -2209,6 +2588,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             if (auth.isAdmin)
               ListTile(
+                key: const Key('home_action_add_collar'),
                 leading: const Icon(Icons.pets),
                 title: const Text('Incluir coleira'),
                 onTap: () async {
@@ -2218,6 +2598,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             if (auth.isAdmin)
               ListTile(
+                key: const Key('home_action_add_gateway'),
                 leading: const Icon(Icons.wifi),
                 title: const Text('Incluir gateway'),
                 onTap: () async {
@@ -2227,6 +2608,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             if (auth.isAdmin)
               ListTile(
+                key: const Key('home_action_add_property'),
                 leading: const Icon(Icons.landscape),
                 title: const Text('Incluir propriedade rural'),
                 onTap: () {
@@ -2241,6 +2623,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             if (auth.isAdmin)
               ListTile(
+                key: const Key('home_action_update_role'),
                 leading: const Icon(Icons.admin_panel_settings),
                 title: const Text('Vincular adm'),
                 onTap: () async {
@@ -2292,13 +2675,19 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: Text('Home (${auth.isAdmin ? 'adm' : 'user'})'),
         actions: [
-          IconButton(icon: const Icon(Icons.wifi), onPressed: gateway.connect),
           IconButton(
+            key: const Key('home_connect_gateway_button'),
+            icon: const Icon(Icons.wifi),
+            onPressed: gateway.connect,
+          ),
+          IconButton(
+            key: const Key('home_refresh_button'),
             icon: const Icon(Icons.refresh),
             onPressed: _refreshFromDatabase,
             tooltip: 'Atualizar',
           ),
           IconButton(
+            key: const Key('home_logout_button'),
             icon: const Icon(Icons.logout),
             onPressed: () => context.read<AuthService>().signOut(),
           ),
@@ -2470,7 +2859,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 height: 40,
                                 child: GestureDetector(
                                   onTap: () =>
-                                      _showEditDeviceDialog(context, d),
+                                      _openDeviceMarkerActions(context, d),
                                   child: const Icon(
                                     Icons.pets,
                                     color: Colors.red,
@@ -2491,7 +2880,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 height: 40,
                                 child: GestureDetector(
                                   onTap: () =>
-                                      _showEditGatewayDialog(context, g),
+                                      _openGatewayMarkerActions(context, g),
                                   child: const Icon(
                                     Icons.wifi,
                                     color: Colors.blue,
@@ -2711,8 +3100,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                     TileLayer(
                                       urlTemplate:
                                           'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                                      userAgentPackageName:
-                                          'com.example.ruraltechApp',
+                                      userAgentPackageName: ManualSettings
+                                          .mapUserAgentPackageName,
                                     ),
                                     PolygonLayer(polygons: polygons),
                                     MarkerLayer(markers: areaLabelMarkers),
@@ -2796,11 +3185,13 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Row(
           children: [
             IconButton(
+              key: const Key('home_open_actions_button'),
               icon: const Icon(Icons.add_circle_outline),
               tooltip: 'Acoes',
               onPressed: () => _openPlusActions(context),
             ),
             IconButton(
+              key: const Key('home_open_events_button'),
               icon: const Icon(Icons.notifications_outlined),
               tooltip: 'Telemetria',
               onPressed: () => Navigator.push(
@@ -2810,6 +3201,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const Spacer(),
             IconButton(
+              key: const Key('home_open_profile_button'),
               icon: const Icon(Icons.person_outline),
               tooltip: 'Perfil',
               onPressed: () => Navigator.push(

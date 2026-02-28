@@ -10,6 +10,8 @@ class DeviceDetailsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final networkId = device.networkId;
+    final loraDeviceId = device.loraDeviceId;
+    final hasValidLoraId = loraDeviceId != null;
     return Scaffold(
       appBar: AppBar(title: Text('Dispositivo ${device.name}')),
       body: ListView(
@@ -19,23 +21,49 @@ class DeviceDetailsScreen extends StatelessWidget {
               title: const Text('Última posição'),
               subtitle: Text('${device.lat ?? 0}, ${device.lon ?? 0}')),
           ListTile(
-              title: const Text('Configurar Geofence'),
-              onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => GeofenceScreen(
-                        deviceId: networkId,
-                        initialLat: device.lat,
-                        initialLon: device.lon,
+            title: const Text('Configurar Geofence'),
+            subtitle: hasValidLoraId
+                ? null
+                : const Text(
+                    'ID LoRa invalido. Edite a coleira e informe um ID numerico.',
+                  ),
+            enabled: hasValidLoraId,
+            onTap: !hasValidLoraId
+                ? null
+                : () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => GeofenceScreen(
+                          deviceId: loraDeviceId,
+                          gatewayId: device.gatewayId,
+                          initialLat: device.lat,
+                          initialLon: device.lon,
+                        ),
                       ),
                     ),
-                  )),
+          ),
           ListTile(
-              title: const Text('Plano de Condução'),
-              onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => HerdingScreen(deviceId: networkId)))),
+            title: const Text('Plano de Condução'),
+            subtitle: hasValidLoraId
+                ? null
+                : const Text(
+                    'ID LoRa invalido. Edite a coleira e informe um ID numerico.',
+                  ),
+            enabled: hasValidLoraId,
+            onTap: !hasValidLoraId
+                ? null
+                : () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => HerdingScreen(
+                          deviceId: loraDeviceId,
+                          gatewayId: device.gatewayId,
+                          initialLat: device.lat,
+                          initialLon: device.lon,
+                        ),
+                      ),
+                    ),
+          ),
         ],
       ),
     );

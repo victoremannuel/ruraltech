@@ -29,10 +29,7 @@ class DefaultFirebaseOptions {
       case TargetPlatform.windows:
         return windows;
       case TargetPlatform.linux:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for linux - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return linux;
       default:
         throw UnsupportedError(
           'DefaultFirebaseOptions are not supported for this platform.',
@@ -67,7 +64,7 @@ class DefaultFirebaseOptions {
     projectId: 'ruraltech10',
     databaseURL: 'https://ruraltech10-default-rtdb.firebaseio.com',
     storageBucket: 'ruraltech10.firebasestorage.app',
-    iosBundleId: 'com.example.ruraltechApp',
+    iosBundleId: 'com.victor.ruraltechapp',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
@@ -77,7 +74,7 @@ class DefaultFirebaseOptions {
     projectId: 'ruraltech10',
     databaseURL: 'https://ruraltech10-default-rtdb.firebaseio.com',
     storageBucket: 'ruraltech10.firebasestorage.app',
-    iosBundleId: 'com.example.ruraltechApp',
+    iosBundleId: 'com.victor.ruraltechapp',
   );
 
   static const FirebaseOptions windows = FirebaseOptions(
@@ -91,4 +88,14 @@ class DefaultFirebaseOptions {
     measurementId: 'G-SR0V580M48',
   );
 
+  static const FirebaseOptions linux = FirebaseOptions(
+    apiKey: 'AIzaSyAL2GEnAjqU2G5f5BEjGXVDeHeGXy4C9bQ',
+    appId: '1:872721218590:web:1731a4fe5d01dd9f51820f',
+    messagingSenderId: '872721218590',
+    projectId: 'ruraltech10',
+    authDomain: 'ruraltech10.firebaseapp.com',
+    databaseURL: 'https://ruraltech10-default-rtdb.firebaseio.com',
+    storageBucket: 'ruraltech10.firebasestorage.app',
+    measurementId: 'G-SR0V580M48',
+  );
 }

@@ -1,0 +1,11 @@
+{
+  "type": "event",
+  "device_id": 101,
+  "msg_type": 2,
+  "seq": 41823,
+  "timestamp": 1760000112,
+  "gateway_id": "RT-GW-001",
+  "gateway_role": "gateway",
+  "gateway_wifi_ota_enabled": true,
+  "payload": "{\"event_type\":\"boundary_breach\",\"severity\":\"high\",\"lat\":-20.1234,\"lon\":-43.9876}"
+}

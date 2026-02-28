@@ -9,6 +9,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
+import '../config/manual_settings.dart';
 import '../services/auth_service.dart';
 import '../services/firebase_service.dart';
 
@@ -542,6 +543,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
         actions: [
           if (_isEditMode && auth.isAdmin)
             IconButton(
+              key: const Key('property_delete_button'),
               onPressed: _isSaving ? null : _deleteProperty,
               icon: const Icon(Icons.delete_outline),
               tooltip: 'Apagar propriedade',
@@ -553,6 +555,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
             child: TextField(
+              key: const Key('property_name_input'),
               controller: _nameCtrl,
               decoration:
                   const InputDecoration(labelText: 'Nome da propriedade'),
@@ -562,6 +565,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
               child: InkWell(
+                key: const Key('property_users_picker'),
                 onTap: _isSaving || _isLoadingUsers
                     ? null
                     : _showUsersDropdownPicker,
@@ -596,6 +600,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
+                    key: const Key('property_import_kml_button'),
                     onPressed: _isSaving ? null : _importKml,
                     icon: const Icon(Icons.upload_file),
                     label: const Text('Importar KML'),
@@ -623,7 +628,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
               children: [
                 TileLayer(
                   urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.example.ruraltechApp',
+                  userAgentPackageName: ManualSettings.mapUserAgentPackageName,
                 ),
                 PolygonLayer(
                   polygons: [
@@ -663,6 +668,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
               children: [
                 Expanded(
                   child: OutlinedButton(
+                    key: const Key('property_clear_points_button'),
                     onPressed: _isSaving || _points.isEmpty
                         ? null
                         : () => setState(() {
@@ -675,6 +681,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: OutlinedButton(
+                    key: const Key('property_undo_point_button'),
                     onPressed: _isSaving || _points.isEmpty
                         ? null
                         : () => setState(() {
@@ -687,6 +694,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
                 const SizedBox(width: 8),
                 Expanded(
                   child: ElevatedButton(
+                    key: const Key('property_save_button'),
                     onPressed: _isSaving ? null : _save,
                     child: _isSaving
                         ? const SizedBox(

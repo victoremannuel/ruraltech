@@ -31,11 +31,13 @@
 #include <Adafruit_SSD1306.h>
 #endif
 #include <RTClib.h>
+#include <Preferences.h>
 #include "Logger.h"
 #include "BlePresence.h"
 #include "LoRaGateway.h"
 #include "SdLogger.h"
 #include "ApiServer.h"
+#include "../firmware/shared/command_contract.h"
 
 LoRaGateway lora;
 BlePresence blePresence;
@@ -46,6 +48,8 @@ RTC_DS3231 rtc;
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
 #endif
 uint32_t seqDown = 1;
+Preferences seqPrefs;
+bool seqPrefsReady = false;
 bool wifiOtaEnabled = cfg::WIFI_OTA_DEFAULT_ENABLED;
 bool watchdogTaskRegistered = false;
 bool otaUploadInProgress = false;
@@ -115,6 +119,41 @@ static String gatewayApSsid() {
   return ssid;
 }
 
+static void restoreDownlinkSeq() {
+  seqDown = 1;
+  seqPrefsReady = seqPrefs.begin("lora_down", false);
+  if (!seqPrefsReady) {
+    LOGW("NVS indisponivel para seqDown; iniciando em 1.");
+    return;
+  }
+
+  if (!seqPrefs.isKey("seq")) {
+    // Primeiro boot apos update: evita colisao com lastSeqSeen_ ja alto na coleira.
+    seqDown = (esp_random() & 0x7FFFFFFFUL) | 0x40000000UL;
+    if (seqPrefs.putULong("seq", seqDown - 1) != sizeof(uint32_t)) {
+      LOGW("Falha ao inicializar persistencia de seqDown=%lu", seqDown);
+    }
+    LOGI("seqDown inicializado=%lu (seed aleatorio)", seqDown);
+    return;
+  }
+
+  const uint32_t persisted = seqPrefs.getULong("seq", seqDown - 1);
+  seqDown = persisted + 1;
+  if (seqDown == 0) seqDown = 1;
+  LOGI("seqDown restaurado=%lu (persistido=%lu)", seqDown, persisted);
+}
+
+static uint32_t nextDownlinkSeq() {
+  if (seqDown == 0) seqDown = 1;
+  const uint32_t out = seqDown++;
+  if (seqDown == 0) seqDown = 1;
+
+  if (seqPrefsReady && seqPrefs.putULong("seq", out) != sizeof(uint32_t)) {
+    LOGW("Falha ao persistir seqDown=%lu", out);
+  }
+  return out;
+}
+
 static String sanitizeRtdbKey(String value) {
   value.trim();
   if (value.isEmpty()) return value;
@@ -127,15 +166,44 @@ static String sanitizeRtdbKey(String value) {
   return value;
 }
 
+static bool isUnsetCloudValue(const char* value) {
+  if (value == nullptr) return true;
+  while (*value == ' ' || *value == '\t' || *value == '\r' || *value == '\n') {
+    ++value;
+  }
+  if (*value == '\0') return true;
+  return strncmp(value, "SET_", 4) == 0 ||
+         strncmp(value, "CHANGE_ME", 9) == 0 ||
+         strncmp(value, "YOUR_", 5) == 0;
+}
+
 static bool cloudTelemetryConfigured() {
-  return cfg::CLOUD_TELEMETRY_ENABLED &&
-         cfg::BACKHAUL_WIFI_SSID[0] != '\0' &&
-         cfg::FIREBASE_RTDB_HOST[0] != '\0' &&
-         cfg::RTDB_WRITER_KEY[0] != '\0';
+  if (!cfg::CLOUD_TELEMETRY_ENABLED) return false;
+
+  const bool backhaulSsidOk = !isUnsetCloudValue(cfg::BACKHAUL_WIFI_SSID);
+  const bool backhaulPassOk =
+      cfg::BACKHAUL_WIFI_PASS[0] == '\0' || !isUnsetCloudValue(cfg::BACKHAUL_WIFI_PASS);
+  const bool hostOk = !isUnsetCloudValue(cfg::FIREBASE_RTDB_HOST);
+  const bool matrixIdOk =
+      cfg::RTDB_MATRIX_ID[0] == '\0' || !isUnsetCloudValue(cfg::RTDB_MATRIX_ID);
+  const bool writerKeyOk = !isUnsetCloudValue(cfg::RTDB_WRITER_KEY);
+  const bool configured =
+      backhaulSsidOk && backhaulPassOk && hostOk && matrixIdOk && writerKeyOk;
+
+  static bool warned = false;
+  if (!configured && !warned) {
+    LOGW("Cloud telemetry desativada: substitua placeholders SET_* em manual_settings.local.h");
+    warned = true;
+  } else if (configured && warned) {
+    warned = false;
+  }
+  return configured;
 }
 
 static String matrixCloudId() {
-  if (cfg::RTDB_MATRIX_ID[0] != '\0') return sanitizeRtdbKey(String(cfg::RTDB_MATRIX_ID));
+  if (cfg::RTDB_MATRIX_ID[0] != '\0' && !isUnsetCloudValue(cfg::RTDB_MATRIX_ID)) {
+    return sanitizeRtdbKey(String(cfg::RTDB_MATRIX_ID));
+  }
   return sanitizeRtdbKey(gatewayNodeId());
 }
 
@@ -145,6 +213,11 @@ static uint32_t unixNowSec() {
   const DateTime nowRtc = rtc.now();
   if (nowRtc.year() >= 2023) return nowRtc.unixtime();
   return millis() / 1000;
+}
+
+static uint64_t unixNowMs(uint32_t unixSec) {
+  // Mantem alinhamento com unixNowSec() e adiciona granularidade sub-segundo.
+  return ((uint64_t)unixSec * 1000ULL) + (uint64_t)(millis() % 1000UL);
 }
 
 static String utcDayKey(uint32_t unixSec) {
@@ -198,7 +271,6 @@ static bool rtdbWrite(const char* method, const String& path, const String& body
 
 static bool ensureCloudBackhaulConnected() {
   if (!cloudTelemetryConfigured()) return false;
-  if (wifiOtaEnabled) return false;
   if (WiFi.status() == WL_CONNECTED) return true;
 
   const uint32_t now = millis();
@@ -207,7 +279,8 @@ static bool ensureCloudBackhaulConnected() {
     return false;
   }
   cloudBackhaulAttemptAtMs = now;
-  WiFi.mode(WIFI_STA);
+  // Em modo OTA/manual, preserva AP local e sobe STA para backhaul cloud.
+  WiFi.mode(wifiOtaEnabled ? WIFI_AP_STA : WIFI_STA);
   WiFi.setSleep(false);
   WiFi.begin(cfg::BACKHAUL_WIFI_SSID, cfg::BACKHAUL_WIFI_PASS);
   LOGI("Backhaul Wi-Fi: tentando conectar em %s", cfg::BACKHAUL_WIFI_SSID);
@@ -217,7 +290,6 @@ static bool ensureCloudBackhaulConnected() {
 static void publishTelemetryToCloud(const LoRaFrame& rx) {
   if (rx.msgType != MsgType::TELEMETRY) return;
   if (!cloudTelemetryConfigured()) return;
-  if (wifiOtaEnabled) return;
   if (!ensureCloudBackhaulConnected()) return;
 
   StaticJsonDocument<256> telemetry;
@@ -233,6 +305,7 @@ static void publishTelemetryToCloud(const LoRaFrame& rx) {
   }
 
   const uint32_t nowSec = unixNowSec();
+  const uint64_t nowMs = unixNowMs(nowSec);
   const String matrixId = matrixCloudId();
   const String deviceId = sanitizeRtdbKey(String(rx.deviceId));
   if (deviceId.isEmpty()) return;
@@ -250,7 +323,7 @@ static void publishTelemetryToCloud(const LoRaFrame& rx) {
   payload["seq"] = rx.seq;
   payload["sourceTimestampSec"] = rx.timestamp;
   payload["receivedAt"] = nowSec;
-  payload["receivedAtMs"] = (uint64_t)nowSec * 1000ULL;
+  payload["receivedAtMs"] = nowMs;
   payload["gatewayId"] = matrixId;
   payload["gatewayRole"] = "matrix";
   payload["gatewayWifiOtaEnabled"] = wifiOtaEnabled;
@@ -265,8 +338,11 @@ static void publishTelemetryToCloud(const LoRaFrame& rx) {
   serializeJson(payload, body);
 
   const String latestPath = String("telemetryLatest/") + deviceId;
+  char historyEntryId[40];
+  snprintf(historyEntryId, sizeof(historyEntryId), "%llu_%lu",
+           (unsigned long long)nowMs, (unsigned long)rx.seq);
   const String historyPath =
-      String("telemetryHistory/") + deviceId + "/" + utcDayKey(nowSec) + "/" + String(nowSec);
+      String("telemetryHistory/") + deviceId + "/" + utcDayKey(nowSec) + "/" + String(historyEntryId);
 
   const bool latestOk = rtdbWrite("PUT", latestPath, body);
   const bool historyOk = rtdbWrite("PUT", historyPath, body);
@@ -440,28 +516,23 @@ static bool parseWifiOtaParam(const JsonVariantConst payload, bool& outEnabled) 
 
 static bool hasAdminModePermission(const JsonVariantConst payload) {
   if (!payload.is<JsonObjectConst>()) return false;
-  const char* requestedByRole = payload["requested_by_role"] | "";
-  if (strcmp(requestedByRole, "adm") == 0 || strcmp(requestedByRole, "admin") == 0) {
-    return true;
-  }
-  const char* actorRole = payload["actor_role"] | "";
-  if (strcmp(actorRole, "adm") == 0 || strcmp(actorRole, "admin") == 0) {
-    return true;
-  }
   const JsonVariantConst requestedByAdmin = payload["requested_by_admin"];
-  return requestedByAdmin.is<bool>() && requestedByAdmin.as<bool>();
+  return rtcmd::hasAdminModePermission(
+      requestedByAdmin.is<bool>() && requestedByAdmin.as<bool>(),
+      payload["requested_by_role"] | "",
+      payload["actor_role"] | "");
 }
 
 static bool targetIncludesGateway(const JsonVariantConst payload) {
   if (!payload.is<JsonObjectConst>()) return true;
   const char* target = payload["target"] | "all";
-  return strcmp(target, "all") == 0 || strcmp(target, "gateway") == 0;
+  return rtcmd::targetIncludesGateway(target);
 }
 
 static bool targetIncludesCollars(const JsonVariantConst payload) {
   if (!payload.is<JsonObjectConst>()) return true;
   const char* target = payload["target"] | "all";
-  return strcmp(target, "all") == 0 || strcmp(target, "collars") == 0 || strcmp(target, "collar") == 0;
+  return rtcmd::targetIncludesCollars(target);
 }
 
 static void applyWifiOtaMode(bool enabled, const char* source) {
@@ -513,9 +584,7 @@ static bool readPointPair(const JsonArrayConst& pair, double& lat, double& lon) 
   if (pair.isNull() || pair.size() < 2 || pair[0].isNull() || pair[1].isNull()) return false;
   lat = pair[0].as<double>();
   lon = pair[1].as<double>();
-  return isfinite(lat) && isfinite(lon) &&
-         lat >= -90.0 && lat <= 90.0 &&
-         lon >= -180.0 && lon <= 180.0;
+  return rtcmd::isValidCoordinate(lat, lon);
 }
 
 static bool sendLoRaJsonFrame(uint32_t deviceId, MsgType msgType, const JsonVariantConst payload, const char** reason = nullptr) {
@@ -528,7 +597,7 @@ static bool sendLoRaJsonFrame(uint32_t deviceId, MsgType msgType, const JsonVari
   LoRaFrame tx;
   tx.deviceId = deviceId;
   tx.msgType = msgType;
-  tx.seq = seqDown++;
+  tx.seq = nextDownlinkSeq();
   tx.timestamp = millis() / 1000;
   for (int i = 0; i < 12; ++i) tx.nonce[i] = (uint8_t)esp_random();
   tx.payloadLen = serializeJson(payload, tx.payload, sizeof(tx.payload));
@@ -553,61 +622,72 @@ static bool splitPointArrayForPayload(
     const char** reason = nullptr) {
   chunkCount = 0;
   const uint8_t totalPoints = (uint8_t)points.size();
-  if (totalPoints < 3) {
-    if (reason) *reason = "too_few_points";
+  const rtcmd::ValidationCode countCode =
+      rtcmd::validatePointCount(totalPoints, cfg::MAX_POLYGON_POINTS);
+  if (countCode != rtcmd::ValidationCode::kOk) {
+    if (reason) *reason = rtcmd::validationCodeToReason(countCode);
     return false;
   }
-  if (totalPoints > cfg::MAX_POLYGON_POINTS) {
-    if (reason) *reason = "too_many_points";
-    return false;
+
+  StaticJsonDocument<384> probe;
+  probe["chunked"] = true;
+  // Usa dois digitos para evitar subestimar overhead quando total>=10.
+  probe["part"] = 99;
+  probe["total"] = 99;
+  if (includePhaseMeta) {
+    probe["phase_index"] = phaseIdx;
+    probe["phase_total"] = phaseTotal;
   }
+  JsonArray probePoints = probe["points"].to<JsonArray>();
+  const size_t overheadBytes = measureJson(probe);
 
-  uint8_t start = 0;
-  while (start < totalPoints) {
-    StaticJsonDocument<384> probe;
-    probe["chunked"] = true;
-    probe["part"] = 0;
-    probe["total"] = 0;
-    if (includePhaseMeta) {
-      probe["phase_index"] = phaseIdx;
-      probe["phase_total"] = phaseTotal;
-    }
-    JsonArray probePoints = probe["points"].to<JsonArray>();
-    uint8_t bestEnd = start;
-
-    for (uint8_t i = start; i < totalPoints; ++i) {
-      const JsonArrayConst srcPair = points[i].as<JsonArrayConst>();
-      double lat = 0;
-      double lon = 0;
-      if (!readPointPair(srcPair, lat, lon)) {
-        if (reason) *reason = "invalid_point_value";
-        return false;
-      }
-      JsonArray dstPair = probePoints.add<JsonArray>();
-      dstPair.add(lat);
-      dstPair.add(lon);
-
-      if (measureJson(probe) > cfg::LORA_MAX_PAYLOAD_BYTES) {
-        probePoints.remove(probePoints.size() - 1);
-        break;
-      }
-      bestEnd = i + 1;
+  uint16_t pointCosts[cfg::MAX_POLYGON_POINTS]{};
+  size_t previousSize = overheadBytes;
+  for (uint8_t i = 0; i < totalPoints; ++i) {
+    const JsonArrayConst srcPair = points[i].as<JsonArrayConst>();
+    double lat = 0.0;
+    double lon = 0.0;
+    if (!readPointPair(srcPair, lat, lon)) {
+      if (reason) *reason = "invalid_point_value";
+      return false;
     }
 
-    if (bestEnd == start) {
+    JsonArray dstPair = probePoints.add<JsonArray>();
+    dstPair.add(lat);
+    dstPair.add(lon);
+    const size_t measured = measureJson(probe);
+    if (measured <= previousSize) {
+      if (reason) *reason = "invalid_point_value";
+      return false;
+    }
+    const size_t delta = measured - previousSize;
+    if (delta > 0xFFFF) {
       if (reason) *reason = "point_chunk_too_large";
       return false;
     }
-    starts[chunkCount] = start;
-    ends[chunkCount] = bestEnd;
-    chunkCount++;
-    if (chunkCount > cfg::MAX_POLYGON_POINTS) {
-      if (reason) *reason = "too_many_chunks";
-      return false;
-    }
-    start = bestEnd;
+    pointCosts[i] = (uint16_t)delta;
+    previousSize = measured;
   }
 
+  rtcmd::ChunkRange ranges[cfg::MAX_POLYGON_POINTS]{};
+  const rtcmd::ValidationCode chunkCode = rtcmd::planPointChunks(
+      pointCosts,
+      totalPoints,
+      (uint16_t)overheadBytes,
+      cfg::LORA_MAX_PAYLOAD_BYTES,
+      cfg::MAX_POLYGON_POINTS,
+      ranges,
+      cfg::MAX_POLYGON_POINTS,
+      &chunkCount);
+  if (chunkCode != rtcmd::ValidationCode::kOk) {
+    if (reason) *reason = rtcmd::validationCodeToReason(chunkCode);
+    return false;
+  }
+
+  for (uint8_t i = 0; i < chunkCount; ++i) {
+    starts[i] = ranges[i].start;
+    ends[i] = ranges[i].end;
+  }
   return true;
 }
 
@@ -727,6 +807,7 @@ void setup() {
   esp_task_wdt_init(cfg::TASK_WDT_TIMEOUT_SEC, true);
 #endif
   WiFi.onEvent(onWifiEvent);
+  restoreDownlinkSeq();
 
   Wire.begin(cfg::PIN_I2C_SDA, cfg::PIN_I2C_SCL);
 #if RT_MATRIX_OLED_ENABLED
@@ -761,9 +842,7 @@ void setup() {
 
 void loop() {
   ensureWifiOtaServices();
-  if (!wifiOtaEnabled) {
-    ensureCloudBackhaulConnected();
-  }
+  ensureCloudBackhaulConnected();
   const bool apClientConnected = wifiApClientConnected();
   if (wifiOtaEnabled && cfg::OTA_ENABLED) {
     ArduinoOTA.handle();
@@ -788,12 +867,19 @@ void loop() {
       StaticJsonDocument<256> params;
       if (deserializeJson(params, rx.payload, rx.payloadLen) == DeserializationError::Ok) {
         bool wifiEnabled = false;
-        if (parseWifiOtaParam(params.as<JsonVariantConst>(), wifiEnabled) && targetIncludesGateway(params.as<JsonVariantConst>())) {
-          if (!wifiEnabled && !hasAdminModePermission(params.as<JsonVariantConst>())) {
-            LOGW("SET_PARAMS LoRa rejeitado: admin requerido para LoRa-only");
-          } else {
-            applyWifiOtaMode(wifiEnabled, "LoRa");
-          }
+        const JsonVariantConst payload = params.as<JsonVariantConst>();
+        const bool hasWifiField = parseWifiOtaParam(payload, wifiEnabled);
+        const JsonVariantConst requestedByAdmin = payload["requested_by_admin"];
+        const rtcmd::ValidationCode setParamsCode = rtcmd::validateSetParamsPayload(
+            hasWifiField,
+            wifiEnabled,
+            requestedByAdmin.is<bool>() && requestedByAdmin.as<bool>(),
+            payload["requested_by_role"] | "",
+            payload["actor_role"] | "");
+        if (setParamsCode == rtcmd::ValidationCode::kOk && targetIncludesGateway(payload)) {
+          applyWifiOtaMode(wifiEnabled, "LoRa");
+        } else if (setParamsCode == rtcmd::ValidationCode::kAdminRequiredForLoraOnly) {
+          LOGW("SET_PARAMS LoRa rejeitado: admin requerido para LoRa-only");
         }
       }
     }
@@ -827,13 +913,20 @@ void loop() {
 
       bool localToggleRequested = false;
       bool localWifiEnabled = wifiOtaEnabled;
-      bool setParamsPayloadValid = false;
       bool requestedWifiEnabled = true;
-      bool hasAdminPermission = false;
+      rtcmd::ValidationCode setParamsCode = rtcmd::ValidationCode::kOk;
       if (command == "SET_PARAMS") {
-        setParamsPayloadValid = parseWifiOtaParam(payload, requestedWifiEnabled);
-        hasAdminPermission = hasAdminModePermission(payload);
-        if (setParamsPayloadValid && targetIncludesGateway(payload)) {
+        const bool hasWifiField =
+            parseWifiOtaParam(payload, requestedWifiEnabled);
+        const JsonVariantConst requestedByAdmin = payload["requested_by_admin"];
+        setParamsCode = rtcmd::validateSetParamsPayload(
+            hasWifiField,
+            requestedWifiEnabled,
+            requestedByAdmin.is<bool>() && requestedByAdmin.as<bool>(),
+            payload["requested_by_role"] | "",
+            payload["actor_role"] | "");
+        if (setParamsCode == rtcmd::ValidationCode::kOk &&
+            targetIncludesGateway(payload)) {
           localToggleRequested = true;
           localWifiEnabled = requestedWifiEnabled;
         }
@@ -841,12 +934,9 @@ void loop() {
 
       const uint32_t deviceId = cmd["device_id"] | 0;
       bool shouldRelayLoRa = !(command == "SET_PARAMS" && !targetIncludesCollars(payload));
-      const bool invalidSetParamsPayload =
-          command == "SET_PARAMS" && !setParamsPayloadValid;
-      const bool rejectLoraOnlyToggle =
-          command == "SET_PARAMS" && setParamsPayloadValid &&
-          !requestedWifiEnabled && !hasAdminPermission;
-      if (invalidSetParamsPayload || rejectLoraOnlyToggle) {
+      const bool setParamsRejected =
+          command == "SET_PARAMS" && setParamsCode != rtcmd::ValidationCode::kOk;
+      if (setParamsRejected) {
         shouldRelayLoRa = false;
         localToggleRequested = false;
       }
@@ -857,12 +947,9 @@ void loop() {
 
       bool ok = true;
       const char* failReason = nullptr;
-      if (invalidSetParamsPayload) {
+      if (setParamsRejected) {
         ok = false;
-        failReason = "missing_wifi_ota_enabled";
-      } else if (rejectLoraOnlyToggle) {
-        ok = false;
-        failReason = "admin_required_for_lora_only";
+        failReason = rtcmd::validationCodeToReason(setParamsCode);
       } else if (shouldRelayLoRa) {
         if (command == "SET_FENCE") {
           ok = sendFenceCommandChunked(deviceId, payload, &failReason);

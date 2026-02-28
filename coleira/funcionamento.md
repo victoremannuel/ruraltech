@@ -87,6 +87,7 @@ Para comandos válidos, a coleira responde `ACK`; para erro de validação/ordem
    - estado `wifi_ota_enabled`
    - cerca virtual
    - plano de condução
+   - `seq` uplink LoRa via high-watermark (`lora_seq_hi`) para anti-replay após reboot/power-cycle
 2. EEPROM:
    - ring buffer de 20 eventos críticos para reenvio posterior.
 

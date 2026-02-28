@@ -39,6 +39,57 @@ class FirebaseService {
     }).toList();
   }
 
+  List<List<double>> _decodeLatLonPoints(dynamic points) {
+    if (points is! List) return const [];
+    final out = <List<double>>[];
+    for (final raw in points) {
+      double? lat;
+      double? lon;
+      if (raw is List && raw.length >= 2) {
+        final pLat = raw[0];
+        final pLon = raw[1];
+        if (pLat is num && pLon is num) {
+          lat = pLat.toDouble();
+          lon = pLon.toDouble();
+        }
+      } else if (raw is Map) {
+        final pLat = raw['lat'] ?? raw['latitude'];
+        final pLon = raw['lon'] ?? raw['lng'] ?? raw['longitude'];
+        if (pLat is num && pLon is num) {
+          lat = pLat.toDouble();
+          lon = pLon.toDouble();
+        }
+      }
+
+      if (lat == null || lon == null) continue;
+      if (lat < -90 || lat > 90 || lon < -180 || lon > 180) continue;
+      out.add(<double>[lat, lon]);
+    }
+    return out;
+  }
+
+  List<List<List<double>>> _decodeHerdingPhases(dynamic phases) {
+    if (phases is! List) return const [];
+    final indexed = <MapEntry<int, List<List<double>>>>[];
+
+    for (var i = 0; i < phases.length; i++) {
+      final rawPhase = phases[i];
+      if (rawPhase is Map) {
+        final phaseIndex = rawPhase['phase'];
+        final order = phaseIndex is num ? phaseIndex.toInt() : i;
+        final points = _decodeLatLonPoints(rawPhase['points']);
+        if (points.isNotEmpty) indexed.add(MapEntry(order, points));
+        continue;
+      }
+
+      final points = _decodeLatLonPoints(rawPhase);
+      if (points.isNotEmpty) indexed.add(MapEntry(i, points));
+    }
+
+    indexed.sort((a, b) => a.key.compareTo(b.key));
+    return indexed.map((entry) => entry.value).toList();
+  }
+
   String _idFromRefOrPath(dynamic value) {
     if (value is DocumentReference) return value.id;
     if (value is String) {
@@ -49,6 +100,98 @@ class FirebaseService {
       return parts.isEmpty ? raw : parts.last;
     }
     return '';
+  }
+
+  String? _normalizeLoraDeviceId(dynamic value, {bool allowZero = false}) {
+    final raw = _idFromRefOrPath(value);
+    if (raw.isEmpty) return null;
+    final parsed = int.tryParse(raw);
+    if (parsed == null) return null;
+    if (allowZero) {
+      if (parsed < 0) return null;
+    } else if (parsed <= 0) {
+      return null;
+    }
+    return parsed.toString();
+  }
+
+  String? _normalizeWsHost(String? raw) {
+    final value = (raw ?? '').trim();
+    if (value.isEmpty) return null;
+    if (value.startsWith('ws://') || value.startsWith('wss://')) return value;
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      final uri = Uri.tryParse(value);
+      if (uri == null || uri.host.isEmpty) return null;
+      return 'ws://${uri.host}:81';
+    }
+    if (value.contains('://')) return null;
+    if (value.contains(':')) return 'ws://$value';
+    return 'ws://$value:81';
+  }
+
+  Future<String?> _resolveGatewayWsHostByGatewayId(String? gatewayId) async {
+    final normalizedGatewayId = _idFromRefOrPath(gatewayId);
+    if (normalizedGatewayId.isEmpty) return null;
+
+    final gatewayDoc =
+        await _db.collection('gateways').doc(normalizedGatewayId).get();
+    if (!gatewayDoc.exists) return null;
+    final data = gatewayDoc.data() ?? const <String, dynamic>{};
+    final candidates = <dynamic>[
+      data['host_ws'],
+      data['hostWs'],
+      data['host'],
+      data['ip'],
+    ];
+    for (final candidate in candidates) {
+      final wsHost = _normalizeWsHost(candidate?.toString());
+      if (wsHost != null) return wsHost;
+    }
+    return null;
+  }
+
+  Future<String?> resolveGatewayWsHostForDevice({
+    required String deviceId,
+    String? fallbackGatewayId,
+  }) async {
+    try {
+      final fromFallback = await _resolveGatewayWsHostByGatewayId(
+        fallbackGatewayId,
+      );
+      if (fromFallback != null) return fromFallback;
+
+      final normalizedDeviceId = _normalizeLoraDeviceId(deviceId);
+      final candidateDocIds = <String>{
+        _idFromRefOrPath(deviceId),
+        if (normalizedDeviceId != null) normalizedDeviceId,
+      }.where((id) => id.isNotEmpty);
+
+      for (final docId in candidateDocIds) {
+        final collarDoc = await _db.collection('collars').doc(docId).get();
+        if (!collarDoc.exists) continue;
+        final data = collarDoc.data() ?? const <String, dynamic>{};
+        final wsHost =
+            await _resolveGatewayWsHostByGatewayId(data['gatewayId']);
+        if (wsHost != null) return wsHost;
+      }
+
+      if (normalizedDeviceId != null) {
+        final byDeviceId = await _db
+            .collection('collars')
+            .where('deviceId', isEqualTo: normalizedDeviceId)
+            .limit(1)
+            .get();
+        if (byDeviceId.docs.isNotEmpty) {
+          final data = byDeviceId.docs.first.data();
+          final wsHost =
+              await _resolveGatewayWsHostByGatewayId(data['gatewayId']);
+          if (wsHost != null) return wsHost;
+        }
+      }
+    } catch (_) {
+      // Resolve is best-effort; caller can fallback to currently connected host.
+    }
+    return null;
   }
 
   DocumentReference<Map<String, dynamic>> _userRef(dynamic value) =>
@@ -108,6 +251,86 @@ class FirebaseService {
     }
     if (m['lon'] is num) return (m['lon'] as num).toDouble();
     return null;
+  }
+
+  Map<String, Map<String, double>> _decodeTelemetryLatestSnapshot(dynamic raw) {
+    if (raw is! Map) return const <String, Map<String, double>>{};
+    final out = <String, Map<String, double>>{};
+    for (final entry in raw.entries) {
+      final key = entry.key?.toString().trim() ?? '';
+      if (key.isEmpty) continue;
+      final value = entry.value;
+      if (value is! Map) continue;
+      final lat = value['lat'];
+      final lon = value['lon'];
+      if (lat is! num || lon is! num) continue;
+      final latD = lat.toDouble();
+      final lonD = lon.toDouble();
+      if (!latD.isFinite || !lonD.isFinite) continue;
+      if (latD < -90 || latD > 90 || lonD < -180 || lonD > 180) continue;
+      out[key] = <String, double>{
+        'lat': latD,
+        'lon': lonD,
+      };
+    }
+    return out;
+  }
+
+  List<DeviceModel> _mergeDevicesWithLiveTelemetry(
+    List<DeviceModel> devices,
+    Map<String, Map<String, double>> liveBySanitizedDeviceId,
+  ) {
+    return devices.map((device) {
+      final key = _sanitizeRtdbKey(device.networkId);
+      if (key.isEmpty) return device;
+      final live = liveBySanitizedDeviceId[key];
+      if (live == null) return device;
+      final lat = live['lat'];
+      final lon = live['lon'];
+      if (lat == null || lon == null) return device;
+      if (device.lat == lat && device.lon == lon) return device;
+      return DeviceModel(
+        id: device.id,
+        deviceId: device.deviceId,
+        name: device.name,
+        status: device.status,
+        lat: lat,
+        lon: lon,
+        ownerUid: device.ownerUid,
+        propertyId: device.propertyId,
+        gatewayId: device.gatewayId,
+        wifiOtaEnabled: device.wifiOtaEnabled,
+      );
+    }).toList();
+  }
+
+  int _eventSortKeyMs(Map<String, dynamic> event) {
+    final createdAt = event['createdAt'];
+    if (createdAt is Timestamp) return createdAt.millisecondsSinceEpoch;
+    if (createdAt is DateTime) return createdAt.millisecondsSinceEpoch;
+    if (createdAt is num) {
+      final raw = createdAt.toInt();
+      return raw > 1000000000000 ? raw : raw * 1000;
+    }
+
+    final receivedAtMs = event['receivedAtMs'];
+    if (receivedAtMs is num) return receivedAtMs.toInt();
+
+    final sourceTimestampSec =
+        event['sourceTimestampSec'] ?? event['timestamp'];
+    if (sourceTimestampSec is num) return sourceTimestampSec.toInt() * 1000;
+    return 0;
+  }
+
+  Map<String, dynamic> _eventFromDoc(
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    final data = doc.data();
+    return {
+      'id': doc.id,
+      ...data,
+      'ownerUid': _idFromRefOrPath(data['ownerUid']),
+    };
   }
 
   String _sanitizeRtdbKey(String raw) {
@@ -217,7 +440,7 @@ class FirebaseService {
     }
   }
 
-  Stream<List<DeviceModel>> streamDevices(
+  Stream<List<DeviceModel>> _streamFirestoreDevices(
       {required String uid, required bool isAdmin}) {
     if (isAdmin) {
       return _db.collection('collars').snapshots().map(
@@ -261,6 +484,48 @@ class FirebaseService {
         await s1.cancel();
         await s2.cancel();
         await s3.cancel();
+      };
+    });
+  }
+
+  Stream<List<DeviceModel>> streamDevices(
+      {required String uid, required bool isAdmin}) {
+    final firestoreStream = _streamFirestoreDevices(uid: uid, isAdmin: isAdmin);
+    return Stream.multi((controller) {
+      List<DeviceModel> devices = const <DeviceModel>[];
+      Map<String, Map<String, double>> liveBySanitizedDeviceId =
+          const <String, Map<String, double>>{};
+
+      void emit() {
+        controller.add(
+          _mergeDevicesWithLiveTelemetry(devices, liveBySanitizedDeviceId),
+        );
+      }
+
+      final firestoreSub = firestoreStream.listen(
+        (next) {
+          devices = next;
+          emit();
+        },
+        onError: controller.addError,
+      );
+
+      final telemetrySub = _rtdb.ref('telemetryLatest').onValue.listen(
+        (event) {
+          liveBySanitizedDeviceId =
+              _decodeTelemetryLatestSnapshot(event.snapshot.value);
+          emit();
+        },
+        onError: (_) {
+          // Fallback para posicao do Firestore quando o feed ao vivo falhar.
+          liveBySanitizedDeviceId = const <String, Map<String, double>>{};
+          emit();
+        },
+      );
+
+      controller.onCancel = () async {
+        await firestoreSub.cancel();
+        await telemetrySub.cancel();
       };
     });
   }
@@ -522,6 +787,72 @@ class FirebaseService {
     });
   }
 
+  Stream<List<Map<String, dynamic>>> streamCriticalEvents({
+    required String uid,
+    required bool isAdmin,
+  }) {
+    if (isAdmin) {
+      return _db
+          .collection('events')
+          .orderBy('createdAt', descending: true)
+          .limit(300)
+          .snapshots()
+          .map((s) => s.docs.map(_eventFromDoc).toList());
+    }
+
+    final userRef = _userRef(uid);
+    final userPath = _userPath(uid);
+    final q1 = _db.collection('events').where('ownerUid', isEqualTo: userRef);
+    final q2 = _db.collection('events').where('ownerUid', isEqualTo: userPath);
+    final q3 = _db.collection('events').where('ownerUid', isEqualTo: uid);
+
+    return Stream.multi((controller) {
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> d1 = const [];
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> d2 = const [];
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> d3 = const [];
+
+      void emit() {
+        final byId = <String, Map<String, dynamic>>{};
+        for (final d in [...d1, ...d2, ...d3]) {
+          byId[d.id] = _eventFromDoc(d);
+        }
+        final merged = byId.values.toList();
+        merged.sort(
+          (a, b) => _eventSortKeyMs(b).compareTo(_eventSortKeyMs(a)),
+        );
+        controller.add(merged);
+      }
+
+      final s1 = q1.snapshots().listen(
+        (snap) {
+          d1 = snap.docs;
+          emit();
+        },
+        onError: controller.addError,
+      );
+      final s2 = q2.snapshots().listen(
+        (snap) {
+          d2 = snap.docs;
+          emit();
+        },
+        onError: controller.addError,
+      );
+      final s3 = q3.snapshots().listen(
+        (snap) {
+          d3 = snap.docs;
+          emit();
+        },
+        onError: controller.addError,
+      );
+
+      controller.onCancel = () async {
+        await s1.cancel();
+        await s2.cancel();
+        await s3.cancel();
+      };
+    });
+  }
+
   Future<List<Map<String, dynamic>>> getRuralProperties(
       {required String uid, required bool isAdmin}) async {
     if (isAdmin) {
@@ -747,24 +1078,28 @@ class FirebaseService {
     double? lon,
     String? deviceId,
     String? propertyId,
+    String? gatewayId,
   }) async {
-    final normalizedDeviceId = deviceId == null || deviceId.trim().isEmpty
+    final normalizedDeviceId = _normalizeLoraDeviceId(deviceId);
+    if (normalizedDeviceId == null) {
+      throw Exception(
+        'ID LoRa da coleira invalido. Informe um valor numerico maior que zero.',
+      );
+    }
+    final normalizedGatewayId = gatewayId == null || gatewayId.trim().isEmpty
         ? null
-        : _idFromRefOrPath(deviceId);
+        : _idFromRefOrPath(gatewayId);
     final position = (lat != null && lon != null) ? [lat, lon] : null;
 
     final collection = _db.collection('collars');
-    final docRef = normalizedDeviceId == null
-        ? collection.doc()
-        : collection.doc(normalizedDeviceId);
-    final persistedDeviceId = normalizedDeviceId ?? docRef.id;
+    final docRef = collection.doc(normalizedDeviceId);
     final payload = {
       'ownerUid': _userRef(ownerUid),
       'name': name,
       'status': status,
-      'deviceId': persistedDeviceId,
+      'deviceId': normalizedDeviceId,
       'position': position,
-      'gatewayId': null,
+      'gatewayId': normalizedGatewayId,
       'propertyId': _propertyRefOrNull(propertyId),
       'wifi_ota_enabled': true,
       'updatedAt': FieldValue.serverTimestamp(),
@@ -829,21 +1164,32 @@ class FirebaseService {
 
   Future<void> updateDevice({
     required String id,
+    required String deviceId,
     required String name,
     required String status,
     required double lat,
     required double lon,
     required String ownerUid,
     String? propertyId,
+    String? gatewayId,
     bool? wifiOtaEnabled,
   }) async {
+    final normalizedDeviceId = _normalizeLoraDeviceId(deviceId);
+    if (normalizedDeviceId == null) {
+      throw Exception(
+        'ID LoRa da coleira invalido. Informe um valor numerico maior que zero.',
+      );
+    }
+    final normalizedGatewayId = gatewayId == null || gatewayId.trim().isEmpty
+        ? null
+        : _idFromRefOrPath(gatewayId);
     final update = <String, dynamic>{
+      'deviceId': normalizedDeviceId,
       'name': name,
       'status': status,
-      'deviceId': _idFromRefOrPath(id),
       'ownerUid': _userRef(ownerUid),
       'position': [lat, lon],
-      'gatewayId': null,
+      'gatewayId': normalizedGatewayId,
       'updatedAt': FieldValue.serverTimestamp(),
     };
     if (wifiOtaEnabled != null) {
@@ -1150,6 +1496,13 @@ class FirebaseService {
     });
   }
 
+  Future<List<List<double>>> getFence(String deviceId) async {
+    final snap = await _db.collection('fences').doc(deviceId).get();
+    if (!snap.exists) return const [];
+    final data = snap.data() ?? const <String, dynamic>{};
+    return _decodeLatLonPoints(data['points']);
+  }
+
   Future<void> saveHerdingPlan(
       String deviceId, String ownerUid, List<List<List<double>>> phases) {
     return _db.collection('herdingPlans').doc(deviceId).set({
@@ -1160,6 +1513,16 @@ class FirebaseService {
     });
   }
 
-  Future<void> saveCriticalEvent(Map<String, dynamic> event) =>
-      _db.collection('events').add(event);
+  Future<List<List<List<double>>>> getHerdingPlan(String deviceId) async {
+    final snap = await _db.collection('herdingPlans').doc(deviceId).get();
+    if (!snap.exists) return const [];
+    final data = snap.data() ?? const <String, dynamic>{};
+    return _decodeHerdingPhases(data['phases']);
+  }
+
+  Future<void> saveCriticalEvent(Map<String, dynamic> event) {
+    final payload = Map<String, dynamic>.from(event);
+    payload['createdAt'] ??= FieldValue.serverTimestamp();
+    return _db.collection('events').add(payload);
+  }
 }

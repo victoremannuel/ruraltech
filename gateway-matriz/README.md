@@ -49,6 +49,18 @@ Wi-Fi + BLE + LoRa (com opção de LoRa-only) para:
 4. Instale bibliotecas.
 5. Compile/upload.
 
+## Segredos de producao
+- Nao commite credenciais no repositório.
+- Copie o template local:
+```bash
+cp gateway-matriz/manual_settings.local.example.h gateway-matriz/manual_settings.local.h
+```
+- Preencha no arquivo local:
+  - `RT_CFG_BACKHAUL_WIFI_SSID`
+  - `RT_CFG_BACKHAUL_WIFI_PASS`
+  - `RT_CFG_RTDB_MATRIX_ID`
+  - `RT_CFG_RTDB_WRITER_KEY`
+
 ## Atualização de firmware via Wi-Fi (OTA)
 - O gateway matriz inicia com OTA/Wi-Fi ativo por padrão (`wifi_ota_enabled=true`).
 - Conecte no AP: `RuralTech-Matriz-<ID6HEX>` / `ruraltechota`.

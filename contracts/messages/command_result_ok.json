@@ -1,0 +1,6 @@
+{
+  "type": "command_result",
+  "ok": true,
+  "device_id": 101,
+  "command": "SET_HERDING_PLAN"
+}

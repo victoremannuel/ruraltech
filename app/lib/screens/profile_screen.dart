@@ -272,6 +272,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               const SizedBox(height: 8),
                               Card(
                                 child: ExpansionTile(
+                                  key: const Key('profile_properties_section'),
                                   leading: const Icon(Icons.landscape),
                                   title: const Text(
                                       'Selecionar propriedades no mapa'),
@@ -307,6 +308,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                               Card(
                                 child: ExpansionTile(
+                                  key: const Key('profile_areas_section'),
                                   leading: const Icon(Icons.polyline),
                                   title: const Text('Selecionar areas no mapa'),
                                   subtitle: Text(
@@ -347,6 +349,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                               Card(
                                 child: ExpansionTile(
+                                  key: const Key('profile_collars_section'),
                                   leading: const Icon(Icons.pets),
                                   title:
                                       const Text('Selecionar coleiras no mapa'),
@@ -380,6 +383,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                               Card(
                                 child: ExpansionTile(
+                                  key: const Key('profile_gateways_section'),
                                   leading: const Icon(Icons.wifi),
                                   title:
                                       const Text('Selecionar gateways no mapa'),
@@ -414,6 +418,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                               const SizedBox(height: 8),
                               ElevatedButton.icon(
+                                key: const Key('profile_apply_filters_button'),
                                 onPressed: () {
                                   final resolvedPropertyIds =
                                       buildResolvedPropertyIds();
@@ -440,6 +445,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               ),
                               const SizedBox(height: 6),
                               OutlinedButton.icon(
+                                key: const Key('profile_clear_filters_button'),
                                 onPressed: () {
                                   setState(() {
                                     _selectedPropertyIds.clear();

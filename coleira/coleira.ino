@@ -47,7 +47,9 @@ HerdingController herding;
 StateMachine stateMachine;
 WebServer statusServer(80);
 
-uint32_t seq = 1;
+RTC_DATA_ATTR uint32_t seq = 1;
+uint32_t seqPersistedHi_ = 0;
+bool seqPersistReady_ = false;
 uint32_t lastCycle = 0;
 uint32_t violationStart = 0;
 bool wasInside = true;
@@ -64,6 +66,7 @@ bool prefsReady_ = false;
 GpsData lastGpsForStatus_;
 bool hasLastGpsForStatus_ = false;
 static void logEvent(EventType type, int32_t d1, int32_t d2);
+static bool beginPrefs();
 
 struct FenceChunkRxState {
   bool active = false;
@@ -84,6 +87,58 @@ struct HerdChunkRxState {
 
 static void randomNonce(uint8_t* nonce12) {
   for (int i = 0; i < 12; ++i) nonce12[i] = (uint8_t)esp_random();
+}
+
+static bool persistLoRaSeqHighWatermark(uint32_t hi) {
+  if (!beginPrefs()) return false;
+  if (prefs_.putULong(cfg::PREF_KEY_LORA_SEQ_HI, hi) != sizeof(uint32_t)) {
+    LOGW("Falha ao persistir seq uplink hi=%lu", hi);
+    return false;
+  }
+  return true;
+}
+
+static void restoreLoRaSeq() {
+  if (seq == 0) seq = 1;
+  if (!beginPrefs()) {
+    seqPersistReady_ = false;
+    seqPersistedHi_ = seq - 1;
+    LOGW("NVS indisponivel para seq uplink; fallback RTC only (next=%lu)", seq);
+    return;
+  }
+
+  const uint32_t persistedHi = prefs_.getULong(cfg::PREF_KEY_LORA_SEQ_HI, 0);
+  seqPersistedHi_ = persistedHi;
+  seqPersistReady_ = true;
+  if (persistedHi >= seq) {
+    seq = persistedHi + 1;
+    if (seq == 0) seq = 1;
+  }
+  LOGI("Seq uplink restaurado next=%lu hi=%lu", seq, seqPersistedHi_);
+}
+
+static void ensureLoRaSeqReservation(uint32_t nextSeq) {
+  if (!seqPersistReady_) return;
+  if (nextSeq <= seqPersistedHi_) return;
+
+  uint32_t newHi = nextSeq + (uint32_t)cfg::LORA_SEQ_RESERVE_WINDOW - 1U;
+  if (newHi < nextSeq) newHi = 0xFFFFFFFFUL;
+  if (persistLoRaSeqHighWatermark(newHi)) {
+    seqPersistedHi_ = newHi;
+    return;
+  }
+
+  // Evita tentativa de escrita em toda telemetria quando NVS estiver indisponível.
+  seqPersistReady_ = false;
+}
+
+static uint32_t nextLoRaSeq() {
+  // Mantem monotonicidade entre deep sleep (RTC) e reboot/power-cycle (NVS).
+  if (seq == 0) seq = 1;
+  ensureLoRaSeqReservation(seq);
+  const uint32_t out = seq++;
+  if (seq == 0) seq = 1;
+  return out;
 }
 
 static const char* otaErrorText(ota_error_t error) {
@@ -251,6 +306,7 @@ static bool loadPersistedWifiOtaEnabled() {
 static void loadPersistedConfig() {
   wifiOtaEnabled = loadPersistedWifiOtaEnabled();
   if (wifiOtaEnabled) wifiOtaEnabledAtMs = millis();
+  restoreLoRaSeq();
 
   Polygon savedFence;
   if (loadPersistedFence(&savedFence)) {
@@ -781,7 +837,7 @@ static void sendCommandFeedback(const LoRaFrame& cmd, bool ok, const char* reaso
   LoRaFrame reply;
   reply.deviceId = cfg::DEVICE_ID;
   reply.msgType = ok ? MsgType::ACK : MsgType::NACK;
-  reply.seq = seq++;
+  reply.seq = nextLoRaSeq();
   reply.timestamp = millis() / 1000;
   randomNonce(reply.nonce);
 
@@ -1006,7 +1062,7 @@ void loop() {
   LoRaFrame uplink;
   uplink.deviceId = cfg::DEVICE_ID;
   uplink.msgType = MsgType::TELEMETRY;
-  uplink.seq = seq++;
+  uplink.seq = nextLoRaSeq();
   uplink.timestamp = t.gps.gpsTime ? t.gps.gpsTime : now / 1000;
   randomNonce(uplink.nonce);
   uplink.payloadLen = buildTelemetryPayload(t, uplink.payload, sizeof(uplink.payload));
@@ -1027,7 +1083,7 @@ void loop() {
     LoRaFrame ev;
     ev.deviceId = cfg::DEVICE_ID;
     ev.msgType = MsgType::EVENT;
-    ev.seq = seq++;
+    ev.seq = nextLoRaSeq();
     ev.timestamp = pending.ts;
     randomNonce(ev.nonce);
     StaticJsonDocument<128> d;

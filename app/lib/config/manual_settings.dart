@@ -15,6 +15,9 @@ class ManualSettings {
     defaultValue: 'ws://192.168.4.1:81',
   );
 
+  // Identificador usado no user-agent de tiles de mapa (OSM).
+  static const String mapUserAgentPackageName = 'com.victor.ruraltechapp';
+
   // Sub-redes usadas na descoberta local de gateway/coleira via Wi-Fi.
   static const List<String> onboardingSubnets = <String>[
     '192.168.4',

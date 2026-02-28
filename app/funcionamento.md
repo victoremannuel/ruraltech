@@ -137,9 +137,11 @@ Pelo app é possível:
 
 `EventsScreen` exibe:
 
-1. Mensagens recebidas via WebSocket do gateway.
-2. Falhas de conexão, quando houver.
-3. Feed simples para inspeção operacional em campo.
+1. Eventos criticos persistidos no Firestore (`events`) via stream em tempo real.
+2. Falhas de leitura/persistencia no fluxo de eventos, quando houver.
+3. Feed para inspecao operacional com `deviceId`, tipo de evento e gateway.
+
+Os eventos chegam do gateway via WebSocket, sao persistidos pelo app e depois lidos pelo `EventsScreen` a partir do Firestore.
 
 ## 10) Filtros de visualização
 

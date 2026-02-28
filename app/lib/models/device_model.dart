@@ -9,6 +9,7 @@ class DeviceModel {
   final double? lon;
   final String? ownerUid;
   final String? propertyId;
+  final String? gatewayId;
   final bool wifiOtaEnabled;
 
   DeviceModel({
@@ -20,10 +21,24 @@ class DeviceModel {
     this.lon,
     this.ownerUid,
     this.propertyId,
+    this.gatewayId,
     this.wifiOtaEnabled = true,
   });
 
+  String? get loraDeviceId {
+    final preferred = deviceId?.trim();
+    final candidate = (preferred == null || preferred.isEmpty)
+        ? id.trim()
+        : preferred;
+    if (candidate.isEmpty) return null;
+    final parsed = int.tryParse(candidate);
+    if (parsed == null || parsed <= 0) return null;
+    return parsed.toString();
+  }
+
   String get networkId {
+    final lora = loraDeviceId;
+    if (lora != null) return lora;
     final v = deviceId?.trim();
     if (v == null || v.isEmpty) return id;
     return v;
@@ -85,6 +100,18 @@ class DeviceModel {
           }
           return null;
         })(),
+        gatewayId: (() {
+          final gateway = m['gatewayId'];
+          if (gateway is DocumentReference) return gateway.id;
+          if (gateway is String) {
+            final raw = gateway.trim();
+            if (raw.isEmpty) return null;
+            if (!raw.contains('/')) return raw;
+            final parts = raw.split('/').where((e) => e.isNotEmpty).toList();
+            return parts.isEmpty ? raw : parts.last;
+          }
+          return null;
+        })(),
         wifiOtaEnabled: (() {
           final raw = m['wifi_ota_enabled'];
           if (raw is bool) return raw;
@@ -100,6 +127,7 @@ class DeviceModel {
         'lon': lon,
         'ownerUid': ownerUid,
         'propertyId': propertyId,
+        'gatewayId': gatewayId,
         'wifi_ota_enabled': wifiOtaEnabled,
       };
 }

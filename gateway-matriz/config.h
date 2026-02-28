@@ -12,10 +12,10 @@
 #define RT_MATRIX_OLED_ENABLED 0
 #endif
 
-// 0 = remove BLE da matriz para reduzir tamanho do binário em builds min_spiffs.
-// Defina 1 se precisar descoberta BLE da matriz.
+// 1 = BLE da matriz ativo por padrão (alinhado com onboarding/documentação).
+// Defina 0 para builds mínimos sem descoberta BLE.
 #ifndef RT_MATRIX_BLE_ENABLED
-#define RT_MATRIX_BLE_ENABLED 0
+#define RT_MATRIX_BLE_ENABLED 1
 #endif
 
 namespace cfg {
@@ -43,7 +43,7 @@ constexpr const char* OTA_HOSTNAME = cfg_manual::OTA_HOSTNAME;
 constexpr const char* OTA_PASSWORD = cfg_manual::OTA_PASSWORD;
 constexpr uint32_t OTA_HANDSHAKE_TIMEOUT_MS = 120000;
 
-// Telemetria em nuvem (gateway matriz como escritor em modo LoRa-only)
+// Telemetria em nuvem (gateway matriz como escritor direto no RTDB)
 // Configure antes de compilar para habilitar a escrita direta no RTDB.
 constexpr bool CLOUD_TELEMETRY_ENABLED = true;
 // Backhaul precisa ter acesso a internet para o gateway matriz escrever no Firebase.
