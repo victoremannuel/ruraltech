@@ -1468,6 +1468,43 @@ class _HomeScreenState extends State<HomeScreen> {
       return LatLng(lat, lon);
     }
 
+    final Map<String, LatLng> dialogTelemetryPositionsByDeviceId = {};
+
+    Future<LatLng?> telemetryPositionFromCloud(String? rawDeviceId) async {
+      final normalized = normalizeLoraDeviceId(rawDeviceId);
+      if (normalized == null) return null;
+
+      final cached = _telemetryPositionForDeviceId(normalized) ??
+          dialogTelemetryPositionsByDeviceId[normalized];
+      if (cached != null) return cached;
+
+      final latest = await fb.getLatestTelemetryPositionForDevice(normalized);
+      if (latest == null) return null;
+      final lat = latest['lat'];
+      final lon = latest['lon'];
+      if (lat == null || lon == null) return null;
+
+      final out = LatLng(lat, lon);
+      dialogTelemetryPositionsByDeviceId[normalized] = out;
+      _latestTelemetryPositionsByDeviceId[normalized] = out;
+      return out;
+    }
+
+    Future<void> hydrateDetectedCollarPosition(
+      String detectedId,
+      void Function(VoidCallback fn) dialogSetState, {
+      bool Function()? canApplyPosition,
+    }) async {
+      final cloudPosition = await telemetryPositionFromCloud(detectedId);
+      if (cloudPosition == null) return;
+      if (canApplyPosition != null && !canApplyPosition()) return;
+
+      dialogSetState(() {
+        if (canApplyPosition != null && !canApplyPosition()) return;
+        selectedPosition = cloudPosition;
+      });
+    }
+
     List<Map<String, dynamic>> mergedDiscoveredCollars() {
       final byId = <String, Map<String, dynamic>>{};
 
@@ -1571,6 +1608,12 @@ class _HomeScreenState extends State<HomeScreen> {
             ? 'Coleira $detectedId'
             : suggested;
       }
+      final telemetryPosition = _telemetryPositionForDeviceId(detectedId);
+      if (telemetryPosition != null) {
+        selectedPosition = telemetryPosition;
+        manualPositionChosen = false;
+        return;
+      }
       final lat = toFiniteCoord(detected['lat']);
       final lon = toFiniteCoord(detected['lon']);
       if (lat != null &&
@@ -1587,428 +1630,464 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
 
-    await showDialog<void>(
-      context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (context, setState) => AnimatedBuilder(
-          animation: Listenable.merge([gatewayService, bleService]),
-          builder: (context, _) {
-            final discoveredCollars = mergedDiscoveredCollars();
+    var dialogIsOpen = true;
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (_) => StatefulBuilder(
+          builder: (context, setState) => AnimatedBuilder(
+            animation: Listenable.merge([gatewayService, bleService]),
+            builder: (context, _) {
+              final discoveredCollars = mergedDiscoveredCollars();
 
-            return AlertDialog(
-              title: const Text('Incluir coleira'),
-              content: Form(
-                key: formKey,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (auth.isAdmin)
-                        TextFormField(
-                          key: const Key('add_device_owner_picker'),
-                          controller: ownerCtrl,
-                          readOnly: true,
-                          onTap: () => showOwnerPicker(context, setState),
-                          decoration: const InputDecoration(
-                            labelText: 'Dono da coleira (email)',
-                            helperText:
-                                'Toque para abrir a lista e pesquisar por email',
-                            suffixIcon: Icon(Icons.arrow_drop_down),
+              return AlertDialog(
+                title: const Text('Incluir coleira'),
+                content: Form(
+                  key: formKey,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (auth.isAdmin)
+                          TextFormField(
+                            key: const Key('add_device_owner_picker'),
+                            controller: ownerCtrl,
+                            readOnly: true,
+                            onTap: () => showOwnerPicker(context, setState),
+                            decoration: const InputDecoration(
+                              labelText: 'Dono da coleira (email)',
+                              helperText:
+                                  'Toque para abrir a lista e pesquisar por email',
+                              suffixIcon: Icon(Icons.arrow_drop_down),
+                            ),
+                            validator: (_) {
+                              if (selectedOwnerUid == null ||
+                                  selectedOwnerUid!.trim().isEmpty) {
+                                return 'Selecione o dono da coleira';
+                              }
+                              return null;
+                            },
+                          )
+                        else
+                          TextFormField(
+                            controller: ownerCtrl,
+                            readOnly: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Dono da coleira (email)',
+                            ),
                           ),
-                          validator: (_) {
-                            if (selectedOwnerUid == null ||
-                                selectedOwnerUid!.trim().isEmpty) {
-                              return 'Selecione o dono da coleira';
+                        DropdownButtonFormField<String>(
+                          key: const Key('add_device_property_dropdown'),
+                          initialValue: propertyId,
+                          items: properties
+                              .map(
+                                (p) => DropdownMenuItem<String>(
+                                  value: p['id'].toString(),
+                                  child:
+                                      Text((p['name'] ?? p['id']).toString()),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (v) => setState(() {
+                            propertyId = v;
+                            final stillAvailable = gatewaysForProperty(v).any(
+                              (g) =>
+                                  _normalizeRefId(g['id']) ==
+                                  _normalizeRefId(selectedGatewayId),
+                            );
+                            if (!stillAvailable) {
+                              selectedGatewayId = null;
+                            }
+                          }),
+                          decoration: const InputDecoration(
+                              labelText: 'Propriedade rural'),
+                          validator: (v) => (v == null || v.trim().isEmpty)
+                              ? 'Selecione a propriedade rural'
+                              : null,
+                        ),
+                        DropdownButtonFormField<String>(
+                          key: const Key('add_device_gateway_dropdown'),
+                          initialValue: selectedGatewayId,
+                          items: <DropdownMenuItem<String>>[
+                            const DropdownMenuItem<String>(
+                              value: '',
+                              child: Text('Sem gateway vinculado'),
+                            ),
+                            ...gatewaysForProperty(propertyId).map(
+                              (g) => DropdownMenuItem<String>(
+                                value: _normalizeRefId(g['id']),
+                                child: Text(gatewayLabel(g)),
+                              ),
+                            ),
+                          ],
+                          onChanged: (v) => setState(
+                            () => selectedGatewayId =
+                                (v == null || v.trim().isEmpty) ? null : v,
+                          ),
+                          decoration: const InputDecoration(
+                            labelText: 'Gateway vinculado',
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Vinculacao da coleira (Telemetria/Bluetooth/Wi-Fi)',
+                              ),
+                              const SizedBox(height: 4),
+                              const Text(
+                                'Opcional: vincule a coleira detectada por telemetria, Bluetooth ou via Wi-Fi na rede local. '
+                                'Se preferir, apenas selecione o ponto no mapa manualmente.',
+                                style: TextStyle(fontSize: 12),
+                              ),
+                              const SizedBox(height: 8),
+                              OutlinedButton.icon(
+                                key: const Key('add_device_scan_ble_button'),
+                                onPressed: bleService.isScanning
+                                    ? null
+                                    : () => bleService.startScan(),
+                                icon: Icon(
+                                  bleService.isScanning
+                                      ? Icons.bluetooth_connected
+                                      : Icons.bluetooth_searching,
+                                ),
+                                label: Text(
+                                  bleService.isScanning
+                                      ? 'Buscando coleira...'
+                                      : 'Buscar coleira por Bluetooth',
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              const Text(
+                                'Wi-Fi (rede local)',
+                                style: TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                              const SizedBox(height: 4),
+                              Wrap(
+                                spacing: 10,
+                                runSpacing: 8,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  Text(
+                                    gatewayService.isDiscoveringCollars
+                                        ? 'Buscando coleiras na rede local...'
+                                        : (gatewayService.isConnected
+                                            ? 'Gateway conectado para descoberta Wi-Fi'
+                                            : 'Descoberta Wi-Fi direta (sem gateway)'),
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                  OutlinedButton.icon(
+                                    key: const Key(
+                                        'add_device_scan_wifi_button'),
+                                    onPressed:
+                                        gatewayService.isDiscoveringCollars
+                                            ? null
+                                            : () async {
+                                                await gatewayService
+                                                    .requestCollarDiscovery();
+                                              },
+                                    icon: Icon(
+                                      gatewayService.isDiscoveringCollars
+                                          ? Icons.wifi_tethering
+                                          : (gatewayService.isConnected
+                                              ? Icons.wifi
+                                              : Icons.wifi_off),
+                                    ),
+                                    label: Text(
+                                      gatewayService.isDiscoveringCollars
+                                          ? 'Buscando...'
+                                          : 'Buscar coleira por Wi-Fi',
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                        if ((bleService.lastError ?? '').isNotEmpty)
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                'BLE: ${bleService.lastError}',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ),
+                          ),
+                        if ((gatewayService.lastError ?? '').isNotEmpty)
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                'Wi-Fi: ${gatewayService.lastError}',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ),
+                          ),
+                        DropdownButtonFormField<String>(
+                          key: const Key('add_device_detected_dropdown'),
+                          initialValue: selectedDetectedDeviceId ?? '',
+                          items: <DropdownMenuItem<String>>[
+                            const DropdownMenuItem<String>(
+                              value: '',
+                              child:
+                                  Text('Nao vincular agora (usar mapa manual)'),
+                            ),
+                            ...discoveredCollars.map(
+                              (d) => DropdownMenuItem<String>(
+                                value: d['device_id_str']?.toString() ?? '',
+                                child: Text(
+                                  () {
+                                    final extras = <String>[];
+                                    final src = collarSourceLabel(d);
+                                    if (src.isNotEmpty) extras.add(src);
+                                    final lat = toFiniteCoord(d['lat']);
+                                    final lon = toFiniteCoord(d['lon']);
+                                    if (lat != null && lon != null) {
+                                      extras.add('GPS');
+                                    }
+                                    if (extras.isEmpty) {
+                                      return 'Coleira ${d['device_id_str']}';
+                                    }
+                                    return 'Coleira ${d['device_id_str']} (${extras.join(', ')})';
+                                  }(),
+                                ),
+                              ),
+                            ),
+                          ],
+                          onChanged: (v) {
+                            setState(() {
+                              if (v == null || v.isEmpty) {
+                                selectedDetectedDeviceId = null;
+                                if (!manualPositionChosen) {
+                                  selectedPosition = null;
+                                }
+                                return;
+                              }
+                              final detected = discoveredCollars
+                                  .cast<Map<String, dynamic>?>()
+                                  .firstWhere(
+                                    (d) => d?['device_id_str']?.toString() == v,
+                                    orElse: () => null,
+                                  );
+                              if (detected == null) return;
+                              applyDetectedCollar(detected);
+                            });
+                            if (v == null ||
+                                v.isEmpty ||
+                                manualPositionChosen) {
+                              return;
+                            }
+                            unawaited(
+                              hydrateDetectedCollarPosition(
+                                v,
+                                setState,
+                                canApplyPosition: () =>
+                                    dialogIsOpen &&
+                                    !manualPositionChosen &&
+                                    selectedDetectedDeviceId == v,
+                              ),
+                            );
+                          },
+                          decoration: const InputDecoration(
+                            labelText:
+                                'Coleira detectada (Telemetria/Bluetooth/Wi-Fi)',
+                          ),
+                        ),
+                        if (discoveredCollars.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.only(top: 6, bottom: 2),
+                            child: Text(
+                              'Nenhuma coleira detectada ainda. Continue no modo manual ou tente telemetria/Bluetooth/Wi-Fi.',
+                            ),
+                          ),
+                        TextFormField(
+                          key: const Key('add_device_lora_id_input'),
+                          controller: loraIdCtrl,
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(
+                            labelText: 'ID LoRa da coleira',
+                            helperText: selectedDetectedDeviceId == null
+                                ? 'Obrigatorio: informe o ID numerico da coleira.'
+                                : 'Preenchido pela coleira detectada; ajuste se necessario.',
+                          ),
+                          validator: (v) {
+                            if (normalizeLoraDeviceId(v) == null) {
+                              return 'Informe um ID LoRa numerico maior que zero';
                             }
                             return null;
                           },
-                        )
-                      else
+                        ),
                         TextFormField(
-                          controller: ownerCtrl,
-                          readOnly: true,
+                          key: const Key('add_device_name_input'),
+                          controller: nameCtrl,
                           decoration: const InputDecoration(
-                            labelText: 'Dono da coleira (email)',
-                          ),
+                              labelText: 'Nome da coleira'),
+                          validator: (v) => (v == null || v.trim().isEmpty)
+                              ? 'Informe o nome'
+                              : null,
                         ),
-                      DropdownButtonFormField<String>(
-                        key: const Key('add_device_property_dropdown'),
-                        initialValue: propertyId,
-                        items: properties
-                            .map(
-                              (p) => DropdownMenuItem<String>(
-                                value: p['id'].toString(),
-                                child: Text((p['name'] ?? p['id']).toString()),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (v) => setState(() {
-                          propertyId = v;
-                          final stillAvailable = gatewaysForProperty(v).any(
-                            (g) =>
-                                _normalizeRefId(g['id']) ==
-                                _normalizeRefId(selectedGatewayId),
-                          );
-                          if (!stillAvailable) {
-                            selectedGatewayId = null;
-                          }
-                        }),
-                        decoration: const InputDecoration(
-                            labelText: 'Propriedade rural'),
-                        validator: (v) => (v == null || v.trim().isEmpty)
-                            ? 'Selecione a propriedade rural'
-                            : null,
-                      ),
-                      DropdownButtonFormField<String>(
-                        key: const Key('add_device_gateway_dropdown'),
-                        initialValue: selectedGatewayId,
-                        items: <DropdownMenuItem<String>>[
-                          const DropdownMenuItem<String>(
-                            value: '',
-                            child: Text('Sem gateway vinculado'),
-                          ),
-                          ...gatewaysForProperty(propertyId).map(
-                            (g) => DropdownMenuItem<String>(
-                              value: _normalizeRefId(g['id']),
-                              child: Text(gatewayLabel(g)),
-                            ),
-                          ),
-                        ],
-                        onChanged: (v) => setState(
-                          () => selectedGatewayId =
-                              (v == null || v.trim().isEmpty) ? null : v,
+                        TextFormField(
+                          key: const Key('add_device_status_input'),
+                          controller: statusCtrl,
+                          decoration:
+                              const InputDecoration(labelText: 'Status'),
                         ),
-                        decoration: const InputDecoration(
-                          labelText: 'Gateway vinculado',
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Vinculacao da coleira (Telemetria/Bluetooth/Wi-Fi)',
-                            ),
-                            const SizedBox(height: 4),
-                            const Text(
-                              'Opcional: vincule a coleira detectada por telemetria, Bluetooth ou via Wi-Fi na rede local. '
-                              'Se preferir, apenas selecione o ponto no mapa manualmente.',
-                              style: TextStyle(fontSize: 12),
-                            ),
-                            const SizedBox(height: 8),
-                            OutlinedButton.icon(
-                              key: const Key('add_device_scan_ble_button'),
-                              onPressed: bleService.isScanning
-                                  ? null
-                                  : () => bleService.startScan(),
-                              icon: Icon(
-                                bleService.isScanning
-                                    ? Icons.bluetooth_connected
-                                    : Icons.bluetooth_searching,
-                              ),
-                              label: Text(
-                                bleService.isScanning
-                                    ? 'Buscando coleira...'
-                                    : 'Buscar coleira por Bluetooth',
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            const Text(
-                              'Wi-Fi (rede local)',
-                              style: TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                            const SizedBox(height: 4),
-                            Wrap(
-                              spacing: 10,
-                              runSpacing: 8,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: [
-                                Text(
-                                  gatewayService.isDiscoveringCollars
-                                      ? 'Buscando coleiras na rede local...'
-                                      : (gatewayService.isConnected
-                                          ? 'Gateway conectado para descoberta Wi-Fi'
-                                          : 'Descoberta Wi-Fi direta (sem gateway)'),
-                                  style: const TextStyle(fontSize: 12),
-                                ),
-                                OutlinedButton.icon(
-                                  key: const Key('add_device_scan_wifi_button'),
-                                  onPressed: gatewayService.isDiscoveringCollars
-                                      ? null
-                                      : () async {
-                                          await gatewayService
-                                              .requestCollarDiscovery();
-                                        },
-                                  icon: Icon(
-                                    gatewayService.isDiscoveringCollars
-                                        ? Icons.wifi_tethering
-                                        : (gatewayService.isConnected
-                                            ? Icons.wifi
-                                            : Icons.wifi_off),
-                                  ),
-                                  label: Text(
-                                    gatewayService.isDiscoveringCollars
-                                        ? 'Buscando...'
-                                        : 'Buscar coleira por Wi-Fi',
+                        const SizedBox(height: 8),
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.location_on),
+                          title: const Text('Posicao da coleira'),
+                          subtitle: Text(
+                            selectedPosition == null
+                                ? 'Nenhuma posicao selecionada'
+                                : '${selectedPosition!.latitude.toStringAsFixed(6)}, ${selectedPosition!.longitude.toStringAsFixed(6)}',
+                          ),
+                          trailing: TextButton(
+                            onPressed: () async {
+                              final selectedProperty = properties
+                                  .cast<Map<String, dynamic>?>()
+                                  .firstWhere(
+                                    (p) => p?['id'].toString() == propertyId,
+                                    orElse: () => null,
+                                  );
+                              final picked = await Navigator.push<LatLng>(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => MapPointPickerScreen(
+                                    initial: selectedPosition,
+                                    propertyPolygon:
+                                        _polygonFromProperty(selectedProperty),
                                   ),
                                 ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      if ((bleService.lastError ?? '').isNotEmpty)
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: Text(
-                              'BLE: ${bleService.lastError}',
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                        ),
-                      if ((gatewayService.lastError ?? '').isNotEmpty)
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: Text(
-                              'Wi-Fi: ${gatewayService.lastError}',
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                        ),
-                      DropdownButtonFormField<String>(
-                        key: const Key('add_device_detected_dropdown'),
-                        initialValue: selectedDetectedDeviceId ?? '',
-                        items: <DropdownMenuItem<String>>[
-                          const DropdownMenuItem<String>(
-                            value: '',
-                            child:
-                                Text('Nao vincular agora (usar mapa manual)'),
-                          ),
-                          ...discoveredCollars.map(
-                            (d) => DropdownMenuItem<String>(
-                              value: d['device_id_str']?.toString() ?? '',
-                              child: Text(
-                                () {
-                                  final extras = <String>[];
-                                  final src = collarSourceLabel(d);
-                                  if (src.isNotEmpty) extras.add(src);
-                                  final lat = toFiniteCoord(d['lat']);
-                                  final lon = toFiniteCoord(d['lon']);
-                                  if (lat != null && lon != null) {
-                                    extras.add('GPS');
-                                  }
-                                  if (extras.isEmpty) {
-                                    return 'Coleira ${d['device_id_str']}';
-                                  }
-                                  return 'Coleira ${d['device_id_str']} (${extras.join(', ')})';
-                                }(),
-                              ),
-                            ),
-                          ),
-                        ],
-                        onChanged: (v) => setState(() {
-                          if (v == null || v.isEmpty) {
-                            selectedDetectedDeviceId = null;
-                            if (!manualPositionChosen) {
-                              selectedPosition = null;
-                            }
-                            return;
-                          }
-                          final detected = discoveredCollars
-                              .cast<Map<String, dynamic>?>()
-                              .firstWhere(
-                                (d) => d?['device_id_str']?.toString() == v,
-                                orElse: () => null,
                               );
-                          if (detected == null) return;
-                          applyDetectedCollar(detected);
-                        }),
-                        decoration: const InputDecoration(
-                          labelText:
-                              'Coleira detectada (Telemetria/Bluetooth/Wi-Fi)',
-                        ),
-                      ),
-                      if (discoveredCollars.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.only(top: 6, bottom: 2),
-                          child: Text(
-                            'Nenhuma coleira detectada ainda. Continue no modo manual ou tente telemetria/Bluetooth/Wi-Fi.',
+                              if (picked != null) {
+                                setState(() {
+                                  selectedPosition = picked;
+                                  manualPositionChosen = true;
+                                });
+                              }
+                            },
+                            child: const Text('Selecionar'),
                           ),
                         ),
-                      TextFormField(
-                        key: const Key('add_device_lora_id_input'),
-                        controller: loraIdCtrl,
-                        keyboardType: TextInputType.number,
-                        decoration: InputDecoration(
-                          labelText: 'ID LoRa da coleira',
-                          helperText: selectedDetectedDeviceId == null
-                              ? 'Obrigatorio: informe o ID numerico da coleira.'
-                              : 'Preenchido pela coleira detectada; ajuste se necessario.',
+                        const SizedBox(height: 4),
+                        const Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'Obrigatorio escolher uma opcao: ponto manual no mapa ou vinculacao por telemetria/Bluetooth/Wi-Fi.',
+                            style: TextStyle(fontSize: 12),
+                          ),
                         ),
-                        validator: (v) {
-                          if (normalizeLoraDeviceId(v) == null) {
-                            return 'Informe um ID LoRa numerico maior que zero';
-                          }
-                          return null;
-                        },
-                      ),
-                      TextFormField(
-                        key: const Key('add_device_name_input'),
-                        controller: nameCtrl,
-                        decoration:
-                            const InputDecoration(labelText: 'Nome da coleira'),
-                        validator: (v) => (v == null || v.trim().isEmpty)
-                            ? 'Informe o nome'
-                            : null,
-                      ),
-                      TextFormField(
-                        key: const Key('add_device_status_input'),
-                        controller: statusCtrl,
-                        decoration: const InputDecoration(labelText: 'Status'),
-                      ),
-                      const SizedBox(height: 8),
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: const Icon(Icons.location_on),
-                        title: const Text('Posicao da coleira'),
-                        subtitle: Text(
-                          selectedPosition == null
-                              ? 'Nenhuma posicao selecionada'
-                              : '${selectedPosition!.latitude.toStringAsFixed(6)}, ${selectedPosition!.longitude.toStringAsFixed(6)}',
-                        ),
-                        trailing: TextButton(
-                          onPressed: () async {
-                            final selectedProperty = properties
-                                .cast<Map<String, dynamic>?>()
-                                .firstWhere(
-                                  (p) => p?['id'].toString() == propertyId,
-                                  orElse: () => null,
-                                );
-                            final picked = await Navigator.push<LatLng>(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => MapPointPickerScreen(
-                                  initial: selectedPosition,
-                                  propertyPolygon:
-                                      _polygonFromProperty(selectedProperty),
-                                ),
-                              ),
-                            );
-                            if (picked != null) {
-                              setState(() {
-                                selectedPosition = picked;
-                                manualPositionChosen = true;
-                              });
-                            }
-                          },
-                          child: const Text('Selecionar'),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Obrigatorio escolher uma opcao: ponto manual no mapa ou vinculacao por telemetria/Bluetooth/Wi-Fi.',
-                          style: TextStyle(fontSize: 12),
-                        ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancelar'),
-                ),
-                ElevatedButton(
-                  key: const Key('add_device_save_button'),
-                  onPressed: () async {
-                    if (!formKey.currentState!.validate()) return;
-                    if (selectedOwnerUid == null ||
-                        selectedOwnerUid!.trim().isEmpty) {
-                      if (context.mounted) {
-                        AppFeedback.error(
-                          'Selecione um dono valido para a coleira.',
-                        );
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Cancelar'),
+                  ),
+                  ElevatedButton(
+                    key: const Key('add_device_save_button'),
+                    onPressed: () async {
+                      if (!formKey.currentState!.validate()) return;
+                      if (selectedOwnerUid == null ||
+                          selectedOwnerUid!.trim().isEmpty) {
+                        if (context.mounted) {
+                          AppFeedback.error(
+                            'Selecione um dono valido para a coleira.',
+                          );
+                        }
+                        return;
                       }
-                      return;
-                    }
 
-                    final normalizedLoraId =
-                        normalizeLoraDeviceId(loraIdCtrl.text);
-                    if (normalizedLoraId == null) {
-                      if (context.mounted) {
-                        AppFeedback.error(
-                          'Informe um ID LoRa numerico maior que zero para a coleira.',
-                        );
+                      final normalizedLoraId =
+                          normalizeLoraDeviceId(loraIdCtrl.text);
+                      if (normalizedLoraId == null) {
+                        if (context.mounted) {
+                          AppFeedback.error(
+                            'Informe um ID LoRa numerico maior que zero para a coleira.',
+                          );
+                        }
+                        return;
                       }
-                      return;
-                    }
 
-                    final hasBinding = selectedDetectedDeviceId != null &&
-                        selectedDetectedDeviceId!.trim().isNotEmpty;
-                    final liveDetectedPosition = hasBinding
-                        ? positionFromDetectedCollar(
-                            selectedDetectedDeviceId,
-                            discoveredCollars,
-                          )
-                        : null;
-                    final telemetryPosition =
-                        _telemetryPositionForDeviceId(normalizedLoraId);
-                    final effectivePosition = manualPositionChosen
-                        ? selectedPosition
-                        : (liveDetectedPosition ??
-                            telemetryPosition ??
-                            selectedPosition);
-                    if (!hasBinding && effectivePosition == null) {
-                      if (context.mounted) {
-                        AppFeedback.error(
-                          'Selecione ponto no mapa ou vincule uma coleira detectada (telemetria/Bluetooth/Wi-Fi).',
-                        );
-                      }
-                      return;
-                    }
-                    if (hasBinding && effectivePosition == null) {
-                      if (context.mounted) {
-                        AppFeedback.warning(
-                          'Coleira vinculada sem coordenadas GPS. Aguarde telemetria, tente Bluetooth/Wi-Fi novamente ou selecione o ponto manualmente.',
-                        );
-                      }
-                      return;
-                    }
-
-                    try {
-                      await fb.addDevice(
-                        ownerUid: selectedOwnerUid ?? uid,
-                        name: nameCtrl.text.trim(),
-                        status: statusCtrl.text.trim(),
-                        deviceId: normalizedLoraId,
-                        lat: effectivePosition?.latitude,
-                        lon: effectivePosition?.longitude,
-                        propertyId: propertyId,
-                        gatewayId: selectedGatewayId,
-                      );
-                      if (context.mounted) Navigator.pop(context);
-                    } catch (e) {
+                      final hasBinding = selectedDetectedDeviceId != null &&
+                          selectedDetectedDeviceId!.trim().isNotEmpty;
+                      final liveDetectedPosition = hasBinding
+                          ? positionFromDetectedCollar(
+                              selectedDetectedDeviceId,
+                              discoveredCollars,
+                            )
+                          : null;
+                      final telemetryPosition =
+                          _telemetryPositionForDeviceId(normalizedLoraId);
+                      final cloudTelemetryPosition = manualPositionChosen
+                          ? null
+                          : await telemetryPositionFromCloud(normalizedLoraId);
                       if (!context.mounted) return;
-                      AppFeedback.error('Erro ao salvar coleira: $e');
-                    }
-                  },
-                  child: const Text('Salvar'),
-                ),
-              ],
-            );
-          },
+                      if (!manualPositionChosen &&
+                          cloudTelemetryPosition != null) {
+                        setState(
+                            () => selectedPosition = cloudTelemetryPosition);
+                      }
+                      final effectivePosition = manualPositionChosen
+                          ? selectedPosition
+                          : (telemetryPosition ??
+                              cloudTelemetryPosition ??
+                              liveDetectedPosition ??
+                              selectedPosition);
+                      if (!hasBinding && effectivePosition == null) {
+                        if (context.mounted) {
+                          AppFeedback.error(
+                            'Selecione ponto no mapa ou vincule uma coleira detectada (telemetria/Bluetooth/Wi-Fi).',
+                          );
+                        }
+                        return;
+                      }
+                      if (hasBinding && effectivePosition == null) {
+                        if (context.mounted) {
+                          AppFeedback.warning(
+                            'Coleira vinculada sem coordenadas GPS. Aguarde telemetria, tente Bluetooth/Wi-Fi novamente ou selecione o ponto manualmente.',
+                          );
+                        }
+                        return;
+                      }
+
+                      try {
+                        await fb.addDevice(
+                          ownerUid: selectedOwnerUid ?? uid,
+                          name: nameCtrl.text.trim(),
+                          status: statusCtrl.text.trim(),
+                          deviceId: normalizedLoraId,
+                          lat: effectivePosition?.latitude,
+                          lon: effectivePosition?.longitude,
+                          propertyId: propertyId,
+                          gatewayId: selectedGatewayId,
+                        );
+                        if (context.mounted) Navigator.pop(context);
+                      } catch (e) {
+                        if (!context.mounted) return;
+                        AppFeedback.error('Erro ao salvar coleira: $e');
+                      }
+                    },
+                    child: const Text('Salvar'),
+                  ),
+                ],
+              );
+            },
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      dialogIsOpen = false;
+    }
   }
 
   Future<void> _showAddGatewayDialog(BuildContext context) async {

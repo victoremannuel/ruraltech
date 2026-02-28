@@ -341,6 +341,49 @@ class FirebaseService {
     return trimmed.replaceAll(RegExp(r'[.#$\[\]/]'), '_');
   }
 
+  double? _toFiniteCoord(dynamic value) {
+    if (value is num) {
+      final out = value.toDouble();
+      return out.isFinite ? out : null;
+    }
+    if (value is String) {
+      final out = double.tryParse(value.trim());
+      if (out == null || !out.isFinite) return null;
+      return out;
+    }
+    return null;
+  }
+
+  Future<Map<String, double>?> getLatestTelemetryPositionForDevice(
+      String rawDeviceId) async {
+    final normalizedDeviceId = _normalizeLoraDeviceId(rawDeviceId);
+    if (normalizedDeviceId == null) return null;
+    final sanitizedDeviceId = _sanitizeRtdbKey(normalizedDeviceId);
+    if (sanitizedDeviceId.isEmpty) return null;
+
+    try {
+      final snap = await _rtdb.ref('telemetryLatest/$sanitizedDeviceId').get();
+      final value = snap.value;
+      if (value is! Map) return null;
+      final lat = _toFiniteCoord(value['lat']);
+      final lon = _toFiniteCoord(value['lon']);
+      if (lat == null ||
+          lon == null ||
+          lat < -90 ||
+          lat > 90 ||
+          lon < -180 ||
+          lon > 180) {
+        return null;
+      }
+      return <String, double>{
+        'lat': lat,
+        'lon': lon,
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
   String _dayKeyFromMs(int msEpochUtc) {
     final dt = DateTime.fromMillisecondsSinceEpoch(msEpochUtc, isUtc: true);
     final y = dt.year.toString().padLeft(4, '0');
