@@ -182,7 +182,7 @@ if ! command -v firebase >/dev/null 2>&1; then
   exit 1
 fi
 
-cmd=(firebase database:set "${path}" "${payload}" --project "${project_id}" --confirm)
+cmd=(firebase database:set "${path}" --data "${payload}" --project "${project_id}" --force)
 if [[ ${dry_run} -eq 1 ]]; then
   echo "Dry-run:"
   printf '  %q' "${cmd[@]}"

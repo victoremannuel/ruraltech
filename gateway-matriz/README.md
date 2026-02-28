@@ -2,7 +2,7 @@
 
 ## Objetivo
 Atuar como nó central da propriedade rural, iniciando por padrão em
-Wi-Fi + BLE + LoRa (com opção de LoRa-only) para:
+Wi-Fi + LoRa (e BLE quando habilitado no build) para:
 
 1. Configuração local via app (HTTP/WS).
 2. Comunicação LoRa com coleiras e gateways comuns.
@@ -48,6 +48,8 @@ Wi-Fi + BLE + LoRa (com opção de LoRa-only) para:
 3. Configure `Partition Scheme` para `Minimal SPIFFS (1.9MB APP with OTA/128KB SPIFFS)`.
 4. Instale bibliotecas.
 5. Compile/upload.
+- Observação: em `min_spiffs`, `RT_MATRIX_BLE_ENABLED` é `0` por padrão para caber em flash.
+  Para forçar BLE, defina `RT_MATRIX_BLE_ENABLED=1` em build e valide espaço.
 
 ## Segredos de producao
 - Nao commite credenciais no repositório.
@@ -69,8 +71,8 @@ cp gateway-matriz/manual_settings.local.example.h gateway-matriz/manual_settings
 - `GET /status` retorna `service=gateway_matrix` e o estado atual de `wifi_ota_enabled`.
 
 ## Regra de operação
-- `wifi_ota_enabled=true` (padrão) mantém Wi-Fi/BLE/LoRa ativos.
-- `wifi_ota_enabled=false` coloca em LoRa-only (Wi-Fi e BLE desligados).
+- `wifi_ota_enabled=true` (padrão) mantém Wi-Fi + LoRa (e BLE quando compilado).
+- `wifi_ota_enabled=false` coloca em LoRa-only (Wi-Fi desligado e BLE, se presente, também desligado).
 - A transição para LoRa-only requer comando `SET_PARAMS` marcado como administrativo (`requested_by_role=adm` ou `requested_by_admin=true`).
 - `SET_PARAMS` continua podendo ser encaminhado via LoRa para coleiras/gateways alvo.
 

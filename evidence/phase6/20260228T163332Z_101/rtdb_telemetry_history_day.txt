@@ -1,0 +1,57 @@
+[2026-02-28T16:33:37.672Z] Object "" in "firebase.json" has unknown property: {"additionalProperty":"flutter"}
+(node:14213) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[2026-02-28T16:33:37.676Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[2026-02-28T16:33:37.677Z] > authorizing via signed-in user (ruraltecnologia10@gmail.com)
+[2026-02-28T16:33:37.677Z] [iam] checking project ruraltech10 for permissions ["firebase.projects.get","firebasedatabase.instances.get"]
+[2026-02-28T16:33:37.678Z] Checked if tokens are valid: false, expires at: 1772245925850
+[2026-02-28T16:33:37.678Z] Checked if tokens are valid: false, expires at: 1772245925850
+[2026-02-28T16:33:37.678Z] > refreshing access token with scopes: []
+[2026-02-28T16:33:37.680Z] >>> [apiv2][query] POST https://www.googleapis.com/oauth2/v3/token [none]
+[2026-02-28T16:33:37.680Z] >>> [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[2026-02-28T16:33:37.714Z] *** [apiv2] error from fetch(https://www.googleapis.com/oauth2/v3/token, {"headers":{},"method":"POST","body":{"_overheadLength":545,"_valueLength":212,"_valuesToMeasure":[],"writable":false,"readable":true,"dataSize":0,"maxDataSize":2097152,"pauseStreams":true,"_released":true,"_streams":[],"_currentStream":null,"_insideLoop":false,"_pendingNext":false,"_boundary":"--------------------------e22610728b94486a1e5e2b8a","_events":{},"_eventsCount":1}}): FetchError: request to https://www.googleapis.com/oauth2/v3/token failed, reason: getaddrinfo ENOTFOUND www.googleapis.com
+Authentication Error: Your credentials are no longer valid. Please run firebase login --reauth
+
+For CI servers and headless environments, generate a new token with firebase login:ci
+[2026-02-28T16:33:37.714Z] [iam] error while checking permissions, command may fail: Authentication Error: Your credentials are no longer valid. Please run firebase login --reauth
+
+For CI servers and headless environments, generate a new token with firebase login:ci
+[2026-02-28T16:33:37.714Z] Checked if tokens are valid: false, expires at: 1772245925850
+[2026-02-28T16:33:37.714Z] Checked if tokens are valid: false, expires at: 1772245925850
+[2026-02-28T16:33:37.715Z] > refreshing access token with scopes: []
+[2026-02-28T16:33:37.715Z] >>> [apiv2][query] POST https://www.googleapis.com/oauth2/v3/token [none]
+[2026-02-28T16:33:37.715Z] >>> [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[2026-02-28T16:33:37.720Z] *** [apiv2] error from fetch(https://www.googleapis.com/oauth2/v3/token, {"headers":{},"method":"POST","body":{"_overheadLength":545,"_valueLength":212,"_valuesToMeasure":[],"writable":false,"readable":true,"dataSize":0,"maxDataSize":2097152,"pauseStreams":true,"_released":true,"_streams":[],"_currentStream":null,"_insideLoop":false,"_pendingNext":false,"_boundary":"--------------------------405bc4557b18fa4e853b9ac5","_events":{},"_eventsCount":1}}): FetchError: request to https://www.googleapis.com/oauth2/v3/token failed, reason: getaddrinfo ENOTFOUND www.googleapis.com
+Authentication Error: Your credentials are no longer valid. Please run firebase login --reauth
+
+For CI servers and headless environments, generate a new token with firebase login:ci
+[2026-02-28T16:33:37.720Z] Authentication Error: Your credentials are no longer valid. Please run firebase login --reauth
+
+For CI servers and headless environments, generate a new token with firebase login:ci
+[2026-02-28T16:33:37.722Z] FirebaseError: Failed to get Firebase project ruraltech10. Please make sure the project exists and your account has permission to access it.
+    at getFirebaseProject (/usr/local/lib/node_modules/firebase-tools/lib/management/projects.js:384:15)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async getDefaultDatabaseInstance (/usr/local/lib/node_modules/firebase-tools/lib/getDefaultDatabaseInstance.js:6:28)
+    at async Object.requireDatabaseInstance [as fn] (/usr/local/lib/node_modules/firebase-tools/lib/requireDatabaseInstance.js:15:20)
+    at async /usr/local/lib/node_modules/firebase-tools/lib/command.js:264:17
+
+Error: Failed to get details for project: ruraltech10.
+┌───────────────────────────────────────────────────────────┐
+│            firebase-tools update check failed             │
+│            Try running with sudo or get access            │
+│           to the local update config store via            │
+│ sudo chown -R $USER:$(id -gn $USER) /Users/victor/.config │
+└───────────────────────────────────────────────────────────┘
+[2026-02-28T16:33:37.994Z] Error: EPERM: operation not permitted, open '/Users/victor/.config/configstore/firebase-tools.json.2293352688'
+    at Object.openSync (node:fs:581:18)
+    at Function.writeFileSync [as sync] (/usr/local/lib/node_modules/firebase-tools/node_modules/write-file-atomic/index.js:205:13)
+    at set all [as all] (/usr/local/lib/node_modules/firebase-tools/node_modules/configstore/index.js:61:20)
+    at Configstore.delete (/usr/local/lib/node_modules/firebase-tools/node_modules/configstore/index.js:101:12)
+    at process.<anonymous> (/usr/local/lib/node_modules/firebase-tools/lib/bin/cli.js:65:45)
+    at process.emit (node:events:531:35)
+    at process.exit (node:internal/process/per_thread:192:15)
+    at Timeout._onTimeout (/usr/local/lib/node_modules/firebase-tools/lib/errorOut.js:20:17)
+    at listOnTimeout (node:internal/timers:573:17)
+    at process.processTimers (node:internal/timers:514:7)
+
+Error: An unexpected error has occurred.

@@ -12,10 +12,16 @@
 #define RT_MATRIX_OLED_ENABLED 0
 #endif
 
-// 1 = BLE da matriz ativo por padrão (alinhado com onboarding/documentação).
-// Defina 0 para builds mínimos sem descoberta BLE.
+// BLE da matriz:
+// - em partições maiores que min_spiffs, padrão = 1 (onboarding BLE ativo);
+// - em min_spiffs, padrão = 0 para caber em flash sem trocar partição.
+// Defina manualmente RT_MATRIX_BLE_ENABLED para sobrescrever.
 #ifndef RT_MATRIX_BLE_ENABLED
+#if defined(ARDUINO_PARTITION_min_spiffs)
+#define RT_MATRIX_BLE_ENABLED 0
+#else
 #define RT_MATRIX_BLE_ENABLED 1
+#endif
 #endif
 
 namespace cfg {

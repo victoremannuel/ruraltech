@@ -1,0 +1,11 @@
+timestamp_utc=20260228T164930Z
+project_id=ruraltech10
+device_id=101
+device_key=101
+matrix_id=matrix-test
+matrix_key=matrix-test
+gateway_host=192.168.4.1
+history_day_key=20260228
+logs_limit=200
+skip_gateway=0
+skip_rtdb=0

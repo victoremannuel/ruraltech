@@ -1,0 +1,29 @@
+[2026-02-28T17:04:37.244Z] Object "" in "firebase.json" has unknown property: {"additionalProperty":"flutter"}
+(node:22010) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[2026-02-28T17:04:37.250Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[2026-02-28T17:04:37.251Z] > authorizing via signed-in user (ruraltecnologia10@gmail.com)
+[2026-02-28T17:04:37.251Z] [iam] checking project ruraltech10 for permissions ["firebase.projects.get","firebasedatabase.instances.get"]
+[2026-02-28T17:04:37.252Z] Checked if tokens are valid: true, expires at: 1772300320579
+[2026-02-28T17:04:37.252Z] Checked if tokens are valid: true, expires at: 1772300320579
+[2026-02-28T17:04:37.254Z] >>> [apiv2][query] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions [none]
+[2026-02-28T17:04:37.254Z] >>> [apiv2][(partial)header] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions  x-goog-user-project=ruraltech10
+[2026-02-28T17:04:37.255Z] >>> [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions {"permissions":["firebase.projects.get","firebasedatabase.instances.get"]}
+[2026-02-28T17:04:38.221Z] <<< [apiv2][status] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions 200
+[2026-02-28T17:04:38.221Z] <<< [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions {"permissions":["firebase.projects.get","firebasedatabase.instances.get"]}
+[2026-02-28T17:04:38.222Z] Checked if tokens are valid: true, expires at: 1772300320579
+[2026-02-28T17:04:38.222Z] Checked if tokens are valid: true, expires at: 1772300320579
+[2026-02-28T17:04:38.222Z] >>> [apiv2][query] GET https://firebase.googleapis.com/v1beta1/projects/ruraltech10 [none]
+[2026-02-28T17:04:38.678Z] <<< [apiv2][status] GET https://firebase.googleapis.com/v1beta1/projects/ruraltech10 200
+[2026-02-28T17:04:38.678Z] <<< [apiv2][body] GET https://firebase.googleapis.com/v1beta1/projects/ruraltech10 {"projectId":"ruraltech10","projectNumber":"872721218590","displayName":"ruraltech10","name":"projects/ruraltech10","resources":{"hostingSite":"ruraltech10","realtimeDatabaseInstance":"ruraltech10-default-rtdb"},"state":"ACTIVE","etag":"1_dd44f8fe-c5ac-47b6-a466-02a1992f8c80"}
+[2026-02-28T17:04:38.679Z] Checked if tokens are valid: true, expires at: 1772300320579
+[2026-02-28T17:04:38.679Z] Checked if tokens are valid: true, expires at: 1772300320579
+[2026-02-28T17:04:38.679Z] >>> [apiv2][query] GET https://firebasedatabase.googleapis.com/v1beta/projects/ruraltech10/locations/-/instances/ruraltech10-default-rtdb [none]
+[2026-02-28T17:04:39.694Z] <<< [apiv2][status] GET https://firebasedatabase.googleapis.com/v1beta/projects/ruraltech10/locations/-/instances/ruraltech10-default-rtdb 200
+[2026-02-28T17:04:39.694Z] <<< [apiv2][body] GET https://firebasedatabase.googleapis.com/v1beta/projects/ruraltech10/locations/-/instances/ruraltech10-default-rtdb {"name":"projects/872721218590/locations/us-central1/instances/ruraltech10-default-rtdb","project":"projects/872721218590","databaseUrl":"https://ruraltech10-default-rtdb.firebaseio.com","type":"DEFAULT_DATABASE","state":"ACTIVE"}
+[2026-02-28T17:04:39.697Z] Checked if tokens are valid: true, expires at: 1772300320579
+[2026-02-28T17:04:39.697Z] Checked if tokens are valid: true, expires at: 1772300320579
+[2026-02-28T17:04:39.698Z] >>> [apiv2][query] GET https://ruraltech10-default-rtdb.firebaseio.com/telemetryLatest/101.json 
+[2026-02-28T17:04:40.086Z] <<< [apiv2][status] GET https://ruraltech10-default-rtdb.firebaseio.com/telemetryLatest/101.json 200
+[2026-02-28T17:04:40.086Z] <<< [apiv2][body] GET https://ruraltech10-default-rtdb.firebaseio.com/telemetryLatest/101.json [stream]
+null

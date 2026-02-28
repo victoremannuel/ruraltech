@@ -1,0 +1,29 @@
+[2026-02-28T17:11:43.354Z] Object "" in "firebase.json" has unknown property: {"additionalProperty":"flutter"}
+(node:24422) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[2026-02-28T17:11:43.359Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[2026-02-28T17:11:43.360Z] > authorizing via signed-in user (ruraltecnologia10@gmail.com)
+[2026-02-28T17:11:43.360Z] [iam] checking project ruraltech10 for permissions ["firebase.projects.get","firebasedatabase.instances.get"]
+[2026-02-28T17:11:43.361Z] Checked if tokens are valid: true, expires at: 1772300320579
+[2026-02-28T17:11:43.361Z] Checked if tokens are valid: true, expires at: 1772300320579
+[2026-02-28T17:11:43.362Z] >>> [apiv2][query] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions [none]
+[2026-02-28T17:11:43.362Z] >>> [apiv2][(partial)header] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions  x-goog-user-project=ruraltech10
+[2026-02-28T17:11:43.363Z] >>> [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions {"permissions":["firebase.projects.get","firebasedatabase.instances.get"]}
+[2026-02-28T17:11:44.401Z] <<< [apiv2][status] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions 200
+[2026-02-28T17:11:44.401Z] <<< [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions {"permissions":["firebase.projects.get","firebasedatabase.instances.get"]}
+[2026-02-28T17:11:44.402Z] Checked if tokens are valid: true, expires at: 1772300320579
+[2026-02-28T17:11:44.402Z] Checked if tokens are valid: true, expires at: 1772300320579
+[2026-02-28T17:11:44.402Z] >>> [apiv2][query] GET https://firebase.googleapis.com/v1beta1/projects/ruraltech10 [none]
+[2026-02-28T17:11:44.928Z] <<< [apiv2][status] GET https://firebase.googleapis.com/v1beta1/projects/ruraltech10 200
+[2026-02-28T17:11:44.928Z] <<< [apiv2][body] GET https://firebase.googleapis.com/v1beta1/projects/ruraltech10 {"projectId":"ruraltech10","projectNumber":"872721218590","displayName":"ruraltech10","name":"projects/ruraltech10","resources":{"hostingSite":"ruraltech10","realtimeDatabaseInstance":"ruraltech10-default-rtdb"},"state":"ACTIVE","etag":"1_dd44f8fe-c5ac-47b6-a466-02a1992f8c80"}
+[2026-02-28T17:11:44.929Z] Checked if tokens are valid: true, expires at: 1772300320579
+[2026-02-28T17:11:44.929Z] Checked if tokens are valid: true, expires at: 1772300320579
+[2026-02-28T17:11:44.930Z] >>> [apiv2][query] GET https://firebasedatabase.googleapis.com/v1beta/projects/ruraltech10/locations/-/instances/ruraltech10-default-rtdb [none]
+[2026-02-28T17:11:46.046Z] <<< [apiv2][status] GET https://firebasedatabase.googleapis.com/v1beta/projects/ruraltech10/locations/-/instances/ruraltech10-default-rtdb 200
+[2026-02-28T17:11:46.047Z] <<< [apiv2][body] GET https://firebasedatabase.googleapis.com/v1beta/projects/ruraltech10/locations/-/instances/ruraltech10-default-rtdb {"name":"projects/872721218590/locations/us-central1/instances/ruraltech10-default-rtdb","project":"projects/872721218590","databaseUrl":"https://ruraltech10-default-rtdb.firebaseio.com","type":"DEFAULT_DATABASE","state":"ACTIVE"}
+[2026-02-28T17:11:46.049Z] Checked if tokens are valid: true, expires at: 1772300320579
+[2026-02-28T17:11:46.049Z] Checked if tokens are valid: true, expires at: 1772300320579
+[2026-02-28T17:11:46.050Z] >>> [apiv2][query] GET https://ruraltech10-default-rtdb.firebaseio.com/matrixWriterKeys/matrix-ruraltech-20260228.json 
+[2026-02-28T17:11:46.484Z] <<< [apiv2][status] GET https://ruraltech10-default-rtdb.firebaseio.com/matrixWriterKeys/matrix-ruraltech-20260228.json 200
+[2026-02-28T17:11:46.484Z] <<< [apiv2][body] GET https://ruraltech10-default-rtdb.firebaseio.com/matrixWriterKeys/matrix-ruraltech-20260228.json [stream]
+"e97618d6e865f66178e5984965105305"
