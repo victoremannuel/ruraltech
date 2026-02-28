@@ -216,6 +216,8 @@ class FirebaseService {
 
     final createdById = _idFromRefOrPath(data['createdByUid']);
     if (createdById.isNotEmpty) out.add(_userRef(createdById));
+    final ownerId = _idFromRefOrPath(data['ownerUid']);
+    if (ownerId.isNotEmpty) out.add(_userRef(ownerId));
 
     final rawUsers = data['userUids'];
     if (rawUsers is List) {
@@ -629,6 +631,13 @@ class FirebaseService {
         .where('createdByUid', isEqualTo: userPath);
     final ownerQueryUid =
         _db.collection('ruralProperties').where('createdByUid', isEqualTo: uid);
+    final ownerUidQueryRef =
+        _db.collection('ruralProperties').where('ownerUid', isEqualTo: userRef);
+    final ownerUidQueryPath = _db
+        .collection('ruralProperties')
+        .where('ownerUid', isEqualTo: userPath);
+    final ownerUidQueryUid =
+        _db.collection('ruralProperties').where('ownerUid', isEqualTo: uid);
     final linkedQueryRef = _db
         .collection('ruralProperties')
         .where('userUids', arrayContains: userRef);
@@ -643,6 +652,12 @@ class FirebaseService {
       List<QueryDocumentSnapshot<Map<String, dynamic>>> ownerDocsPath =
           const [];
       List<QueryDocumentSnapshot<Map<String, dynamic>>> ownerDocsUid = const [];
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> ownerUidDocsRef =
+          const [];
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> ownerUidDocsPath =
+          const [];
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> ownerUidDocsUid =
+          const [];
       List<QueryDocumentSnapshot<Map<String, dynamic>>> linkedDocsRef =
           const [];
       List<QueryDocumentSnapshot<Map<String, dynamic>>> linkedDocsPath =
@@ -656,6 +671,9 @@ class FirebaseService {
           ...ownerDocsRef,
           ...ownerDocsPath,
           ...ownerDocsUid,
+          ...ownerUidDocsRef,
+          ...ownerUidDocsPath,
+          ...ownerUidDocsUid,
           ...linkedDocsRef,
           ...linkedDocsPath,
           ...linkedDocsUid,
@@ -686,21 +704,42 @@ class FirebaseService {
         },
         onError: controller.addError,
       );
-      final sub4 = linkedQueryRef.snapshots().listen(
+      final sub4 = ownerUidQueryRef.snapshots().listen(
+        (snap) {
+          ownerUidDocsRef = snap.docs;
+          emit();
+        },
+        onError: controller.addError,
+      );
+      final sub5 = ownerUidQueryPath.snapshots().listen(
+        (snap) {
+          ownerUidDocsPath = snap.docs;
+          emit();
+        },
+        onError: controller.addError,
+      );
+      final sub6 = ownerUidQueryUid.snapshots().listen(
+        (snap) {
+          ownerUidDocsUid = snap.docs;
+          emit();
+        },
+        onError: controller.addError,
+      );
+      final sub7 = linkedQueryRef.snapshots().listen(
         (snap) {
           linkedDocsRef = snap.docs;
           emit();
         },
         onError: controller.addError,
       );
-      final sub5 = linkedQueryPath.snapshots().listen(
+      final sub8 = linkedQueryPath.snapshots().listen(
         (snap) {
           linkedDocsPath = snap.docs;
           emit();
         },
         onError: controller.addError,
       );
-      final sub6 = linkedQueryUid.snapshots().listen(
+      final sub9 = linkedQueryUid.snapshots().listen(
         (snap) {
           linkedDocsUid = snap.docs;
           emit();
@@ -715,6 +754,9 @@ class FirebaseService {
         await sub4.cancel();
         await sub5.cancel();
         await sub6.cancel();
+        await sub7.cancel();
+        await sub8.cancel();
+        await sub9.cancel();
       };
     });
   }
@@ -874,6 +916,18 @@ class FirebaseService {
         .collection('ruralProperties')
         .where('createdByUid', isEqualTo: uid)
         .get();
+    final byOwnerRef = await _db
+        .collection('ruralProperties')
+        .where('ownerUid', isEqualTo: userRef)
+        .get();
+    final byOwnerPath = await _db
+        .collection('ruralProperties')
+        .where('ownerUid', isEqualTo: userPath)
+        .get();
+    final byOwnerUid = await _db
+        .collection('ruralProperties')
+        .where('ownerUid', isEqualTo: uid)
+        .get();
     final linkedRef = await _db
         .collection('ruralProperties')
         .where('userUids', arrayContains: userRef)
@@ -892,6 +946,9 @@ class FirebaseService {
       ...ownerRef.docs,
       ...ownerPath.docs,
       ...ownerUid.docs,
+      ...byOwnerRef.docs,
+      ...byOwnerPath.docs,
+      ...byOwnerUid.docs,
       ...linkedRef.docs,
       ...linkedPath.docs,
       ...linkedUid.docs,
@@ -957,12 +1014,21 @@ class FirebaseService {
     required String name,
     required List<List<double>> points,
     required String creatorUid,
+    required String ownerUid,
     required bool isAdmin,
     List<String> userEmails = const [],
   }) async {
+    final normalizedOwnerUid = _idFromRefOrPath(ownerUid);
+    if (normalizedOwnerUid.isEmpty) {
+      throw Exception('Dono da propriedade invalido.');
+    }
+    final normalizedCreatorUid = _idFromRefOrPath(creatorUid);
     final linkedUsers = <DocumentReference<Map<String, dynamic>>>{
-      _userRef(creatorUid)
+      _userRef(normalizedOwnerUid)
     };
+    if (normalizedCreatorUid.isNotEmpty) {
+      linkedUsers.add(_userRef(normalizedCreatorUid));
+    }
 
     if (isAdmin) {
       final resolvedByEmail = await _resolveUserRefsByEmailsStrict(userEmails);
@@ -992,7 +1058,8 @@ class FirebaseService {
       'name': name,
       'points': _encodeLatLonPoints(points),
       'userUids': linkedUsers.toList(),
-      'createdByUid': _userRef(creatorUid),
+      'ownerUid': _userRef(normalizedOwnerUid),
+      'createdByUid': _userRef(normalizedOwnerUid),
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
@@ -1002,24 +1069,29 @@ class FirebaseService {
     required String name,
     required List<List<double>> points,
     required String editorUid,
+    required String ownerUid,
     required bool isAdmin,
     List<String> userEmails = const [],
   }) async {
+    final normalizedOwnerUid = _idFromRefOrPath(ownerUid);
+    if (normalizedOwnerUid.isEmpty) {
+      throw Exception('Dono da propriedade invalido.');
+    }
     final update = <String, dynamic>{
       'name': name,
       'points': _encodeLatLonPoints(points),
+      'ownerUid': _userRef(normalizedOwnerUid),
+      'createdByUid': _userRef(normalizedOwnerUid),
       'updatedAt': FieldValue.serverTimestamp(),
     };
 
     if (isAdmin) {
-      final snap = await _db.collection('ruralProperties').doc(id).get();
-      final data = snap.data() ?? {};
-      final createdById = _idFromRefOrPath(data['createdByUid']);
-      final ownerUid =
-          createdById.isEmpty ? _idFromRefOrPath(editorUid) : createdById;
-
       final linkedUsers = <DocumentReference<Map<String, dynamic>>>{};
-      if (ownerUid.isNotEmpty) linkedUsers.add(_userRef(ownerUid));
+      linkedUsers.add(_userRef(normalizedOwnerUid));
+      final editorId = _idFromRefOrPath(editorUid);
+      if (editorId.isNotEmpty) {
+        linkedUsers.add(_userRef(editorId));
+      }
 
       final resolvedByEmail = await _resolveUserRefsByEmailsStrict(userEmails);
       final requestedEmails = userEmails
@@ -1044,9 +1116,6 @@ class FirebaseService {
       }
 
       update['userUids'] = linkedUsers.toList();
-      if (createdById.isEmpty && ownerUid.isNotEmpty) {
-        update['createdByUid'] = _userRef(ownerUid);
-      }
     }
 
     await _db

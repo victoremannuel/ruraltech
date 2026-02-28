@@ -35,6 +35,8 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
 
   List<Map<String, String>> _userOptions = const <Map<String, String>>[];
   Set<String> _initialLinkedUserUids = <String>{};
+  String _initialOwnerUid = '';
+  String? _selectedOwnerUid;
   bool _isSaving = false;
   bool _didTimeout = false;
   bool _isLoadingUsers = false;
@@ -101,25 +103,26 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
     return null;
   }
 
+  String _extractUserId(dynamic rawUser) {
+    if (rawUser is DocumentReference) return rawUser.id;
+    if (rawUser is String) {
+      final trimmed = rawUser.trim();
+      if (trimmed.isEmpty) return '';
+      if (!trimmed.contains('/')) return trimmed;
+      final parts = trimmed.split('/').where((e) => e.isNotEmpty).toList();
+      return parts.isEmpty ? '' : parts.last;
+    }
+    if (rawUser is Map && rawUser['id'] != null) {
+      return rawUser['id'].toString().trim();
+    }
+    return '';
+  }
+
   Set<String> _extractUserIds(dynamic rawUsers) {
     final out = <String>{};
     if (rawUsers is! List) return out;
     for (final u in rawUsers) {
-      String id = '';
-      if (u is DocumentReference) {
-        id = u.id;
-      } else if (u is String) {
-        final trimmed = u.trim();
-        if (trimmed.isEmpty) continue;
-        if (trimmed.contains('/')) {
-          final parts = trimmed.split('/').where((e) => e.isNotEmpty).toList();
-          id = parts.isEmpty ? '' : parts.last;
-        } else {
-          id = trimmed;
-        }
-      } else if (u is Map && u['id'] != null) {
-        id = u['id'].toString().trim();
-      }
+      final id = _extractUserId(u);
       if (id.isNotEmpty) out.add(id);
     }
     return out;
@@ -131,6 +134,12 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
 
     _nameCtrl.text = (p['name'] ?? '').toString().trim();
     _initialLinkedUserUids = _extractUserIds(p['userUids']);
+    final ownerId = _extractUserId(p['ownerUid']);
+    final createdById = _extractUserId(p['createdByUid']);
+    _initialOwnerUid = ownerId.isNotEmpty ? ownerId : createdById;
+    if (_initialOwnerUid.isNotEmpty) {
+      _selectedOwnerUid = _initialOwnerUid;
+    }
 
     final rawPoints = p['points'];
     if (rawPoints is List) {
@@ -170,9 +179,27 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
           .where((u) => u.isNotEmpty)
           .toSet();
       final seeded = _initialLinkedUserUids.where(validUids.contains).toSet();
+      final currentUid = auth.user?.uid;
+      final seededOwner =
+          _initialOwnerUid.isNotEmpty && validUids.contains(_initialOwnerUid)
+              ? _initialOwnerUid
+              : null;
+      String? ownerToSelect = _selectedOwnerUid;
+      if (ownerToSelect == null ||
+          ownerToSelect.isEmpty ||
+          !validUids.contains(ownerToSelect)) {
+        if (seededOwner != null) {
+          ownerToSelect = seededOwner;
+        } else if (currentUid != null && validUids.contains(currentUid)) {
+          ownerToSelect = currentUid;
+        } else if (users.isNotEmpty) {
+          ownerToSelect = (users.first['uid'] ?? '').trim();
+        }
+      }
       setState(() {
         _userOptions = users;
         _isLoadingUsers = false;
+        _selectedOwnerUid = ownerToSelect;
         if (_selectedUserUids.isEmpty && seeded.isNotEmpty) {
           _selectedUserUids
             ..clear()
@@ -442,6 +469,12 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
     final auth = context.read<AuthService>();
     final uid = auth.user?.uid;
     if (uid == null) return;
+    final ownerUid = auth.isAdmin ? _selectedOwnerUid?.trim() : uid;
+    if (ownerUid == null || ownerUid.isEmpty) {
+      await _showMessage(
+          'Campo obrigatorio', 'Selecione o dono da propriedade.');
+      return;
+    }
 
     final emails = _selectedUserUids
         .map(_emailForUid)
@@ -476,6 +509,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
               name: _nameCtrl.text.trim(),
               points: points,
               editorUid: uid,
+              ownerUid: ownerUid,
               isAdmin: auth.isAdmin,
               userEmails: emails,
             )
@@ -486,6 +520,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
               name: _nameCtrl.text.trim(),
               points: points,
               creatorUid: uid,
+              ownerUid: ownerUid,
               isAdmin: auth.isAdmin,
               userEmails: emails,
             )
@@ -531,9 +566,19 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
     final auth = context.watch<AuthService>();
     _fitToPoints(_points);
     final selectedEmails = _selectedUserUids.map(_emailForUid).toList()..sort();
-    final selectedEmailsText = selectedEmails.isEmpty
-        ? 'Nenhum email selecionado'
-        : selectedEmails.join(', ');
+    final ownerOptions = <Map<String, String>>[..._userOptions];
+    final ownerUid = _selectedOwnerUid?.trim();
+    if (ownerUid != null &&
+        ownerUid.isNotEmpty &&
+        ownerOptions.every((u) => (u['uid'] ?? '').trim() != ownerUid)) {
+      ownerOptions
+          .insert(0, <String, String>{'uid': ownerUid, 'email': ownerUid});
+    }
+    final ownerValue = ownerUid != null &&
+            ownerUid.isNotEmpty &&
+            ownerOptions.any((u) => (u['uid'] ?? '').trim() == ownerUid)
+        ? ownerUid
+        : null;
 
     return Scaffold(
       appBar: AppBar(
@@ -564,6 +609,30 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
           if (auth.isAdmin)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: DropdownButtonFormField<String>(
+                key: const Key('property_owner_dropdown'),
+                initialValue: ownerValue,
+                decoration:
+                    const InputDecoration(labelText: 'Dono da propriedade'),
+                items: ownerOptions
+                    .map(
+                      (user) => DropdownMenuItem<String>(
+                        value: (user['uid'] ?? '').trim(),
+                        child: Text(
+                          (user['email'] ?? user['uid'] ?? '').trim(),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
+                    .toList(),
+                onChanged: _isSaving || _isLoadingUsers
+                    ? null
+                    : (v) => setState(() => _selectedOwnerUid = v),
+              ),
+            ),
+          if (auth.isAdmin)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
               child: InkWell(
                 key: const Key('property_users_picker'),
                 onTap: _isSaving || _isLoadingUsers
@@ -573,6 +642,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
                 child: InputDecorator(
                   decoration: const InputDecoration(
                     labelText: 'Usuarios com acesso (emails)',
+                    hintText: 'Nenhum email selecionado',
                     helperText:
                         'Toque para abrir a lista e pesquisar; selecione um ou mais emails.',
                     suffixIcon: Icon(Icons.arrow_drop_down),
@@ -590,7 +660,13 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
                             ),
                           ),
                         )
-                      : Text(selectedEmailsText),
+                      : selectedEmails.isEmpty
+                          ? const SizedBox.shrink()
+                          : Text(
+                              selectedEmails.join(', '),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                 ),
               ),
             ),
