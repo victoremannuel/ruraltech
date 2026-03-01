@@ -51,6 +51,13 @@ bool wifiApRunning = false;
 uint32_t wifiRecoveryAttemptAtMs = 0;
 uint8_t wifiRecoveryAttemptCount = 0;
 static void setWatchdogEnabled(bool enabled);
+static void printBootChecklist(
+    bool displayOk,
+    bool wifiOk,
+    bool bleInitOk,
+    bool rtcOk,
+    bool sdOk,
+    bool loraOk);
 
 static const char* otaErrorText(ota_error_t error) {
   switch (error) {
@@ -571,6 +578,69 @@ static void drawStatus(const char* line1, const char* line2) {
   display.display();
 }
 
+static void checklistLine(
+    const char* component,
+    bool ok,
+    const char* offHint,
+    const char* okDetail = nullptr) {
+  if (ok) {
+    if (okDetail && okDetail[0] != '\0') {
+      Serial.printf("[CHECK] %-24s : OK (%s)\n", component, okDetail);
+    } else {
+      Serial.printf("[CHECK] %-24s : OK\n", component);
+    }
+    return;
+  }
+  Serial.printf("[CHECK] %-24s : OFF\n", component);
+  if (offHint && offHint[0] != '\0') {
+    LOGW("CHECKLIST %s OFF: %s", component, offHint);
+  }
+}
+
+static void printBootChecklist(
+    bool displayOk,
+    bool wifiOk,
+    bool bleInitOk,
+    bool rtcOk,
+    bool sdOk,
+    bool loraOk) {
+  Serial.println("==== HW CHECKLIST | GATEWAY ====");
+  checklistLine(
+      "NVS_SEQ_DOWN",
+      seqPrefsReady,
+      "Falha ao abrir NVS lora_down; revisar flash/NVS.");
+  checklistLine(
+      "OLED_0x3C",
+      displayOk,
+      "OLED nao inicializou; revisar SDA/SCL, VCC, GND e endereco 0x3C.");
+  checklistLine(
+      "WIFI_AP_OTA",
+      !wifiOtaEnabled || wifiOk,
+      "wifi_ota_enabled=true sem AP/OTA; revisar SSID/AP e RF.");
+  checklistLine(
+      "BLE_PRESENCE",
+      !cfg::BLE_PRESENCE_ENABLED || bleInitOk,
+      "BLE nao inicializou; revisar memoria BT e stack.");
+  checklistLine(
+      "API_HTTP_WS",
+      true,
+      nullptr,
+      "porta 80 + ws:81");
+  checklistLine(
+      "RTC_DS3231",
+      rtcOk,
+      "RTC indisponivel; revisar SDA/SCL, VCC, GND e bateria.");
+  checklistLine(
+      "SD_CARD",
+      sdOk,
+      "SD indisponivel; revisar CS/MOSI/MISO/SCK e cartao.");
+  checklistLine(
+      "LORA_RFM95",
+      loraOk,
+      "Falha LoRa begin; revisar CS/RST/DIO0/DIO1, antena e modulo.");
+  Serial.println("================================");
+}
+
 void setup() {
   Serial.begin(cfg::SERIAL_BAUD);
   LOGI("Boot reset_reason=%d", (int)esp_reset_reason());
@@ -587,15 +657,19 @@ void setup() {
   restoreDownlinkSeq();
 
   Wire.begin(cfg::PIN_I2C_SDA, cfg::PIN_I2C_SCL);
-  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  const bool displayOk = display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  if (!displayOk) LOGW("OLED indisponivel");
   drawStatus("Boot", cfg::FW_VERSION);
 
+  bool wifiOk = true;
   if (wifiOtaEnabled) {
-    if (setupWiFi()) setupOta();
+    wifiOk = setupWiFi();
+    if (wifiOk) setupOta();
   }
+  bool bleInitOk = !cfg::BLE_PRESENCE_ENABLED;
   if (cfg::BLE_PRESENCE_ENABLED) {
     const String nodeId = gatewayNodeId();
-    blePresence.begin(
+    bleInitOk = blePresence.begin(
         BleNodeKind::GATEWAY,
         nodeId,
         gatewayAdvName(nodeId),
@@ -605,12 +679,16 @@ void setup() {
     blePresence.setFlags(wifiOtaEnabled, WiFi.status() == WL_CONNECTED);
   }
   api.begin();
-  rtc.begin();
+  const bool rtcOk = rtc.begin();
+  if (!rtcOk) LOGW("RTC indisponivel");
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
 
-  if (!sdlog.begin(cfg::PIN_SD_CS)) LOGW("SD indisponível");
-  if (!lora.begin()) LOGE("LoRa indisponível");
+  const bool sdOk = sdlog.begin(cfg::PIN_SD_CS);
+  if (!sdOk) LOGW("SD indisponivel");
+  const bool loraOk = lora.begin();
+  if (!loraOk) LOGE("LoRa indisponivel");
   setWatchdogEnabled(wifiOtaEnabled);
+  printBootChecklist(displayOk, wifiOk, bleInitOk, rtcOk, sdOk, loraOk);
 
   LOGI("Gateway pronto fw=%s", cfg::FW_VERSION);
 }

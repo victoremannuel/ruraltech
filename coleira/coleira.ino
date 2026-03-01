@@ -70,6 +70,7 @@ bool hasLastGpsForStatus_ = false;
 static void logEvent(EventType type, int32_t d1, int32_t d2);
 static bool beginPrefs();
 static void refreshBlePositionForOnboarding();
+static void printBootChecklist(bool bleInitOk, bool storageOk, bool loraOk);
 static void runSmartGpsSelfTest();
 
 struct FenceChunkRxState {
@@ -681,14 +682,126 @@ static void refreshBlePositionForOnboarding() {
     return;
   }
 
-  // Sem last-good ainda: usa fix vivo somente se cumprir o mesmo gate de qualidade.
+  // Sem last-good ainda: onboarding BLE aceita fix bruto valido para reduzir
+  // bloqueio no cadastro inicial; a telemetria oficial continua com gate estrito.
   const GpsData live = sensors.readGpsSnapshot();
-  const bool hasUsableFix =
-      live.valid &&
-      isfinite(live.hdop) &&
-      live.hdop <= cfg::MAX_HDOP &&
-      live.sats >= cfg::MIN_SATS;
+  const bool hasUsableFix = live.valid;
   blePresence.setPosition(live.lat, live.lon, hasUsableFix);
+}
+
+static void checklistLine(
+    const char* component,
+    bool ok,
+    const char* offHint,
+    const char* okDetail = nullptr) {
+  if (ok) {
+    if (okDetail && okDetail[0] != '\0') {
+      Serial.printf("[CHECK] %-24s : OK (%s)\n", component, okDetail);
+    } else {
+      Serial.printf("[CHECK] %-24s : OK\n", component);
+    }
+    return;
+  }
+
+  Serial.printf("[CHECK] %-24s : OFF\n", component);
+  if (offHint && offHint[0] != '\0') {
+    LOGW("CHECKLIST %s OFF: %s", component, offHint);
+  }
+}
+
+static void printBootChecklist(bool bleInitOk, bool storageOk, bool loraOk) {
+  Serial.println("==== HW CHECKLIST | COLEIRA ====");
+  checklistLine(
+      "NVS_CONFIG",
+      prefsReady_,
+      "Falha no namespace NVS collar_cfg; revisar flash/NVS.");
+  checklistLine(
+      "SEQ_UPLINK_NVS",
+      seqPersistReady_,
+      "Seq uplink sem persistencia; revisar NVS.");
+  checklistLine(
+      "WIFI_OTA_SERVICE",
+      !wifiOtaEnabled || otaModeActive,
+      "wifi_ota_enabled=true sem OTA ativo; revisar AP/SSID/senha.");
+  checklistLine(
+      "STATUS_HTTP_80",
+      true,
+      nullptr,
+      "/status habilitado");
+
+  if (cfg::BLE_PRESENCE_ENABLED) {
+    checklistLine(
+        "BLE_PRESENCE",
+        bleInitOk,
+        "Falha ao iniciar BLE; revisar memoria BT e stack.");
+  } else {
+    checklistLine("BLE_PRESENCE", true, nullptr, "desabilitado em config");
+  }
+
+  checklistLine(
+      "GPS_UART",
+      sensors.gpsUartReady(),
+      "UART GPS nao inicializou; revisar pinos RX/TX e baud.");
+  String gpsBootDetail = String("baud=") + sensors.gpsBaudUsed() +
+      " bytes=" + sensors.gpsBootBytes() +
+      " nmea=$" + sensors.gpsBootDollarCount() +
+      " sample=" + sensors.gpsBootSample();
+  checklistLine(
+      "GPS_BOOT_RX",
+      sensors.gpsBootBytes() > 0,
+      "Nenhum byte recebido no boot; verificar TX do GPS->D16, alimentacao e GND.",
+      gpsBootDetail.c_str());
+  const bool gpsHasRxBytes = sensors.gpsBootBytes() > 0;
+  const char* gpsNmeaOffHint = gpsHasRxBytes
+      ? "Recebe bytes sem '$'; verificar baud do GPS (9600/38400/57600/115200), TX->D16 e ruido na UART."
+      : "Sem sentencas NMEA no boot; verificar TX do GPS->D16, alimentacao e visada do ceu.";
+  checklistLine(
+      "GPS_NMEA",
+      sensors.gpsNmeaSeen(),
+      gpsNmeaOffHint);
+
+  const bool i2cBusAlive = sensors.i2cDevicesFound() > 0;
+  const String i2cDetail = String("found=") + sensors.i2cDevicesFound() +
+      " [" + sensors.i2cScanSummary() + "]";
+  checklistLine(
+      "I2C_BUS_SCAN",
+      i2cBusAlive,
+      "Nenhum dispositivo I2C detectado; revisar SDA/SCL, 3v3 e GND.",
+      i2cDetail.c_str());
+
+  const bool mpuDetected = sensors.mpuDetected();
+  char mpuOkDetail[24] = {};
+  if (mpuDetected) {
+    snprintf(mpuOkDetail, sizeof(mpuOkDetail), "addr=0x%02X", sensors.mpuAddress());
+  }
+  checklistLine(
+      "MPU6050_I2C",
+      mpuDetected,
+      "MPU6050 nao responde no I2C; revisar SDA/SCL, 3v3 e GND.",
+      mpuDetected ? mpuOkDetail : nullptr);
+  checklistLine(
+      "MPU6050_DRIVER",
+      sensors.mpuReady(),
+      "Driver MPU nao inicializou; revisar modulo/offset.");
+
+  checklistLine(
+      "MLX90614_I2C",
+      sensors.mlxDetected(),
+      "MLX90614 nao responde no I2C 0x5A; revisar SDA/SCL, 3v3 e GND.");
+  checklistLine(
+      "MLX90614_DRIVER",
+      sensors.mlxReady(),
+      "Driver MLX90614 nao inicializou; revisar modulo/endereco.");
+
+  checklistLine(
+      "EEPROM_QUEUE",
+      storageOk,
+      "EEPROM emulada indisponivel; revisar particao/flash.");
+  checklistLine(
+      "LORA_RFM95",
+      loraOk,
+      "Falha LoRa begin; revisar CS/RST/DIO0/DIO1, antena e modulo.");
+  Serial.println("================================");
 }
 
 static void setupWifiOtaMaintenance() {
@@ -1093,9 +1206,10 @@ void setup() {
 
   setupWifiOtaMaintenance();
   setupStatusServer();
+  bool bleInitOk = !cfg::BLE_PRESENCE_ENABLED;
   if (cfg::BLE_PRESENCE_ENABLED) {
     const String nodeId = collarNodeId();
-    blePresence.begin(
+    bleInitOk = blePresence.begin(
         BleNodeKind::COLLAR,
         nodeId,
         collarAdvName(),
@@ -1107,11 +1221,14 @@ void setup() {
 
   sensors.begin();
   safety.begin();
-  storage.begin();
+  const bool storageOk = storage.begin();
+  if (!storageOk) LOGW("StorageQueue indisponivel");
   smartGps.begin();
   refreshBlePositionForOnboarding();
-  lora.begin();
+  const bool loraOk = lora.begin();
+  if (!loraOk) LOGE("LoRa indisponivel");
   setWatchdogEnabled(wifiOtaEnabled);
+  printBootChecklist(bleInitOk, storageOk, loraOk);
 
   LOGI("Coleira inicializada: id=%lu fw=%s", cfg::DEVICE_ID, cfg::FW_VERSION);
 }
@@ -1146,6 +1263,13 @@ void loop() {
     blePresence.setEnabled(bleEnabled);
     blePresence.setFlags(wifiOtaEnabled, WiFi.status() == WL_CONNECTED);
     if (bleEnabled) blePresence.loop();
+    if (bleEnabled && blePresence.clientConnected()) {
+      // Durante leitura BLE no onboarding, evita janela longa de LoRa/JSON que
+      // pode causar timeout no readCharacteristic do app iOS.
+      if (watchdogTaskRegistered) esp_task_wdt_reset();
+      delay(2);
+      return;
+    }
   }
 
   // Prioriza OTA quando cliente esta conectado no AP.

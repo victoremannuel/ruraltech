@@ -51,6 +51,35 @@ Wi-Fi + LoRa (e BLE quando habilitado no build) para:
 - Observação: em `min_spiffs`, `RT_MATRIX_BLE_ENABLED` é `0` por padrão para caber em flash.
   Para forçar BLE, defina `RT_MATRIX_BLE_ENABLED=1` em build e valide espaço.
 
+## Upload via USB no VS Code (terminal integrado)
+1. Conecte a ESP32 por USB e abra a pasta `ruraltech` no VS Code.
+2. No terminal integrado, execute a preparacao inicial (uma vez por maquina):
+```bash
+arduino-cli config init --overwrite
+arduino-cli core update-index --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+arduino-cli core install esp32:esp32 --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+arduino-cli lib install "ArduinoJson@7.4.2" "RadioLib@6.6.0" "WebSockets@2.7.2" "RTClib@2.1.4" "Adafruit SSD1306@2.5.15" "Adafruit GFX Library@1.12.1"
+```
+3. Descubra a porta USB da placa:
+```bash
+arduino-cli board list
+```
+4. Compile com `min_spiffs`:
+```bash
+arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz
+```
+5. Grave via USB (troque `<PORTA_USB>` pelo valor da etapa anterior):
+```bash
+arduino-cli upload -p <PORTA_USB> --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz
+```
+6. Valide logs no serial monitor (115200):
+```bash
+arduino-cli monitor -p <PORTA_USB> -c baudrate=115200
+```
+7. Se travar em `Connecting...`, segure `BOOT`, inicie o upload e solte quando a gravacao comecar.
+8. Confirme no output de compilacao que o uso de flash fica abaixo de 100%.  
+   Em `gateway-matriz`, mantenha atencao extra ao tamanho quando for forcar `RT_MATRIX_BLE_ENABLED=1`.
+
 ## Segredos de producao
 - Nao commite credenciais no repositório.
 - Copie o template local:

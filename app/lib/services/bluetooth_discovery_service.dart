@@ -7,8 +7,11 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 class BluetoothDiscoveryService extends ChangeNotifier {
   static const int manufacturerId = 0x1234;
   static const List<int> _signature = [0x52, 0x54, 0x42, 0x31]; // RTB1
+  static const List<int> _positionSignature = [0x52, 0x54, 0x50, 0x31]; // RTP1
   static const String ruraltechServiceUuid =
       '7f920001-0a26-4d09-a606-0cfef4f9a1f0';
+  static const String ruraltechPositionCharacteristicUuid =
+      '7f920002-0a26-4d09-a606-0cfef4f9a1f0';
 
   StreamSubscription<List<ScanResult>>? _scanSub;
   StreamSubscription<bool>? _isScanningSub;
@@ -129,6 +132,92 @@ class BluetoothDiscoveryService extends ChangeNotifier {
   Future<void> clear() async {
     _byKey.clear();
     notifyListeners();
+  }
+
+  Future<({double lat, double lon})?> requestCollarPositionByBleRead({
+    required String collarId,
+    Duration connectTimeout = const Duration(seconds: 15),
+    int operationTimeoutSeconds = 12,
+  }) async {
+    await _initIfNeeded();
+    await _ensureAdapterOn();
+
+    final key = 'collar:${_normalizeId(collarId)}';
+    final candidate = _byKey[key];
+    final remoteId = candidate?['remote_id']?.toString();
+    if (remoteId == null || remoteId.trim().isEmpty) {
+      lastError = 'ble_missing_remote_id_for_$collarId';
+      notifyListeners();
+      return null;
+    }
+
+    final device = BluetoothDevice.fromId(remoteId.trim());
+    final wasConnected = device.isConnected;
+    try {
+      // iOS fica mais estavel para conectar quando o scan e pausado antes do GATT.
+      await stopScan();
+      if (!wasConnected) {
+        await _connectWithRetry(
+          device,
+          firstTimeout: connectTimeout,
+          secondTimeout: connectTimeout + const Duration(seconds: 8),
+        );
+      }
+
+      final services =
+          await device.discoverServices(timeout: operationTimeoutSeconds);
+      BluetoothCharacteristic? positionCharacteristic;
+      for (final service in services) {
+        if (service.uuid.str.toLowerCase() != ruraltechServiceUuid) continue;
+        for (final c in service.characteristics) {
+          if (c.uuid.str.toLowerCase() == ruraltechPositionCharacteristicUuid) {
+            positionCharacteristic = c;
+            break;
+          }
+        }
+        if (positionCharacteristic != null) break;
+      }
+      if (positionCharacteristic == null) {
+        lastError = 'ble_position_characteristic_not_found';
+        notifyListeners();
+        return null;
+      }
+
+      final value = await _readCharacteristicWithFallback(
+        device: device,
+        characteristic: positionCharacteristic,
+        operationTimeoutSeconds: operationTimeoutSeconds,
+      );
+      final parsed = _parsePositionPayload(value);
+      if (parsed == null) {
+        lastError = 'ble_position_unavailable';
+        notifyListeners();
+        return null;
+      }
+
+      final lat = parsed.lat;
+      final lon = parsed.lon;
+      final current = _byKey[key];
+      if (current != null) {
+        current['lat'] = lat;
+        current['lon'] = lon;
+        current['source'] = 'ble_gatt';
+        _byKey[key] = current;
+      }
+      lastError = null;
+      notifyListeners();
+      return (lat: lat, lon: lon);
+    } catch (e) {
+      lastError = 'ble_position_read_failed: $e';
+      notifyListeners();
+      return null;
+    } finally {
+      if (!wasConnected && device.isConnected) {
+        try {
+          await device.disconnect(timeout: operationTimeoutSeconds);
+        } catch (_) {}
+      }
+    }
   }
 
   @override
@@ -301,6 +390,46 @@ class BluetoothDiscoveryService extends ChangeNotifier {
     return v.toSigned(32);
   }
 
+  ({double lat, double lon})? _parsePositionPayload(List<int> bytes) {
+    // Formato binario legado: RTP1 + flags + latE6 + lonE6
+    if (bytes.length >= 13) {
+      var signatureMatches = true;
+      for (var i = 0; i < _positionSignature.length; i++) {
+        if (bytes[i] != _positionSignature[i]) {
+          signatureMatches = false;
+          break;
+        }
+      }
+      if (signatureMatches) {
+        final flags = bytes[4];
+        final hasPosition = (flags & 0x01) != 0;
+        if (!hasPosition) return null;
+
+        final lat = _readInt32LE(bytes, 5) / 1e6;
+        final lon = _readInt32LE(bytes, 9) / 1e6;
+        if (!lat.isFinite || !lon.isFinite) return null;
+        if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+        return (lat: lat, lon: lon);
+      }
+    }
+
+    // Formato ASCII atual: RTP1;hasPos;latE6;lonE6
+    final text = ascii.decode(bytes, allowInvalid: true).trim();
+    if (!text.startsWith('RTP1;')) return null;
+    final parts = text.split(';');
+    if (parts.length < 4) return null;
+    final hasPosition = parts[1].trim() == '1';
+    if (!hasPosition) return null;
+    final latE6 = int.tryParse(parts[2].trim());
+    final lonE6 = int.tryParse(parts[3].trim());
+    if (latE6 == null || lonE6 == null) return null;
+    final lat = latE6 / 1e6;
+    final lon = lonE6 / 1e6;
+    if (!lat.isFinite || !lon.isFinite) return null;
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+    return (lat: lat, lon: lon);
+  }
+
   String _normalizeId(String raw) {
     final trimmed = raw.trim();
     if (trimmed.isEmpty) return '';
@@ -365,5 +494,165 @@ class BluetoothDiscoveryService extends ChangeNotifier {
       'host_http': null,
       'ip': null,
     };
+  }
+
+  Future<void> _connectWithRetry(
+    BluetoothDevice device, {
+    required Duration firstTimeout,
+    required Duration secondTimeout,
+  }) async {
+    final timeouts = <Duration>[firstTimeout, secondTimeout];
+    Object? lastConnectError;
+    for (var i = 0; i < timeouts.length; i++) {
+      final timeout = timeouts[i];
+      try {
+        await device.connect(timeout: timeout, mtu: null);
+        return;
+      } catch (e) {
+        lastConnectError = e;
+        final shouldRetry =
+            i < (timeouts.length - 1) && _isRetryableConnectError(e);
+        if (!shouldRetry) break;
+
+        try {
+          await device.disconnect(timeout: 4, queue: false);
+        } catch (_) {}
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+      }
+    }
+    if (lastConnectError != null) {
+      throw lastConnectError;
+    }
+    throw Exception('ble_connect_failed_without_details');
+  }
+
+  bool _isRetryableConnectError(Object error) {
+    final lower = error.toString().toLowerCase();
+    if (lower.contains('| connect |')) return true;
+    if (lower.contains('fbp-code: 1')) return true;
+    if (lower.contains('timed out')) return true;
+    return false;
+  }
+
+  Future<List<int>> _readCharacteristicWithRetry({
+    required BluetoothDevice device,
+    required BluetoothCharacteristic characteristic,
+    required int operationTimeoutSeconds,
+  }) async {
+    Object? lastError;
+    var currentCharacteristic = characteristic;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (attempt > 0) {
+          // iOS pode precisar de pequeno settle time antes do read após reconnect/discover.
+          await Future<void>.delayed(const Duration(milliseconds: 350));
+        }
+        return await currentCharacteristic.read(
+          timeout: operationTimeoutSeconds + (attempt * 6),
+        );
+      } catch (e) {
+        lastError = e;
+        final canRetry = attempt == 0 && _isRetryableReadError(e);
+        if (!canRetry) break;
+
+        final services =
+            await device.discoverServices(timeout: operationTimeoutSeconds);
+        currentCharacteristic =
+            _findPositionCharacteristic(services) ?? characteristic;
+      }
+    }
+
+    if (lastError != null) throw lastError;
+    throw Exception('ble_read_failed_without_details');
+  }
+
+  Future<List<int>> _readCharacteristicWithFallback({
+    required BluetoothDevice device,
+    required BluetoothCharacteristic characteristic,
+    required int operationTimeoutSeconds,
+  }) async {
+    late final Object readError;
+    try {
+      return await _readCharacteristicWithRetry(
+        device: device,
+        characteristic: characteristic,
+        operationTimeoutSeconds: operationTimeoutSeconds,
+      );
+    } catch (e) {
+      readError = e;
+    }
+
+    final supportsNotify =
+        characteristic.properties.notify || characteristic.properties.indicate;
+    if (!supportsNotify) {
+      throw readError;
+    }
+
+    try {
+      return await _readCharacteristicViaNotify(
+        characteristic: characteristic,
+        timeoutSeconds: operationTimeoutSeconds + 8,
+      );
+    } catch (notifyError) {
+      throw Exception('read_failed: $readError | notify_failed: $notifyError');
+    }
+  }
+
+  Future<List<int>> _readCharacteristicViaNotify({
+    required BluetoothCharacteristic characteristic,
+    required int timeoutSeconds,
+  }) async {
+    final completer = Completer<List<int>>();
+    StreamSubscription<List<int>>? sub;
+    try {
+      sub = characteristic.onValueReceived.listen(
+        (value) {
+          if (value.isEmpty || completer.isCompleted) return;
+          completer.complete(List<int>.from(value));
+        },
+        onError: (Object e) {
+          if (completer.isCompleted) return;
+          completer.completeError(e);
+        },
+      );
+
+      await characteristic.setNotifyValue(true, timeout: timeoutSeconds);
+
+      final cached = characteristic.lastValue;
+      if (cached.isNotEmpty && !completer.isCompleted) {
+        completer.complete(List<int>.from(cached));
+      }
+
+      return await completer.future.timeout(Duration(seconds: timeoutSeconds));
+    } finally {
+      await sub?.cancel();
+      try {
+        if (characteristic.isNotifying) {
+          await characteristic.setNotifyValue(false, timeout: 6);
+        }
+      } catch (_) {}
+    }
+  }
+
+  bool _isRetryableReadError(Object error) {
+    final lower = error.toString().toLowerCase();
+    if (lower.contains('| readcharacteristic |')) return true;
+    if (lower.contains('fbp-code: 1')) return true;
+    if (lower.contains('timed out')) return true;
+    return false;
+  }
+
+  BluetoothCharacteristic? _findPositionCharacteristic(
+    List<BluetoothService> services,
+  ) {
+    for (final service in services) {
+      if (service.uuid.str.toLowerCase() != ruraltechServiceUuid) continue;
+      for (final c in service.characteristics) {
+        if (c.uuid.str.toLowerCase() == ruraltechPositionCharacteristicUuid) {
+          return c;
+        }
+      }
+    }
+    return null;
   }
 }

@@ -2043,6 +2043,24 @@ class _HomeScreenState extends State<HomeScreen> {
                               cloudTelemetryPosition ??
                               liveDetectedPosition ??
                               selectedPosition);
+                      LatLng? bleReadPosition;
+                      if (hasBinding &&
+                          !manualPositionChosen &&
+                          effectivePosition == null &&
+                          selectedDetectedDeviceId != null &&
+                          selectedDetectedDeviceId!.trim().isNotEmpty) {
+                        final bleRead =
+                            await bleService.requestCollarPositionByBleRead(
+                          collarId: selectedDetectedDeviceId!.trim(),
+                        );
+                        if (!context.mounted) return;
+                        if (bleRead != null) {
+                          bleReadPosition = LatLng(bleRead.lat, bleRead.lon);
+                          setState(() => selectedPosition = bleReadPosition);
+                        }
+                      }
+                      final effectivePositionWithBle =
+                          effectivePosition ?? bleReadPosition;
                       if (!hasBinding && effectivePosition == null) {
                         if (context.mounted) {
                           AppFeedback.error(
@@ -2051,10 +2069,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         }
                         return;
                       }
-                      if (hasBinding && effectivePosition == null) {
+                      if (hasBinding && effectivePositionWithBle == null) {
                         if (context.mounted) {
+                          final bleReason = bleService.lastError?.trim();
                           AppFeedback.warning(
-                            'Coleira vinculada sem coordenadas GPS. Aguarde telemetria, tente Bluetooth/Wi-Fi novamente ou selecione o ponto manualmente.',
+                            (bleReason == null || bleReason.isEmpty)
+                                ? 'Coleira vinculada sem coordenadas GPS. Aguarde telemetria, tente Bluetooth/Wi-Fi novamente ou selecione o ponto manualmente.'
+                                : 'Coleira vinculada sem coordenadas GPS ($bleReason). Aguarde telemetria, tente Bluetooth/Wi-Fi novamente ou selecione o ponto manualmente.',
                           );
                         }
                         return;
@@ -2066,8 +2087,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           name: nameCtrl.text.trim(),
                           status: statusCtrl.text.trim(),
                           deviceId: normalizedLoraId,
-                          lat: effectivePosition?.latitude,
-                          lon: effectivePosition?.longitude,
+                          lat: effectivePositionWithBle?.latitude,
+                          lon: effectivePositionWithBle?.longitude,
                           propertyId: propertyId,
                           gatewayId: selectedGatewayId,
                         );

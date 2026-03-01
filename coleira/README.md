@@ -35,6 +35,34 @@ Firmware da coleira com telemetria, cerca virtual autônoma, condução por fase
 5. Compile e faça upload.
 6. Serial Monitor em 115200.
 
+## Upload via USB no VS Code (terminal integrado)
+1. Conecte a ESP32 por USB e abra a pasta `ruraltech` no VS Code.
+2. No terminal integrado, execute a preparacao inicial (uma vez por maquina):
+```bash
+arduino-cli config init --overwrite
+arduino-cli core update-index --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+arduino-cli core install esp32:esp32 --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+arduino-cli lib install "ArduinoJson@7.4.2" "RadioLib@6.6.0" "TinyGPSPlus@1.0.3" "Adafruit MLX90614 Library@2.1.5" "MPU6050_tockn@1.5.2"
+```
+3. Descubra a porta USB da placa:
+```bash
+arduino-cli board list
+```
+4. Compile com a mesma particao exigida pelo firmware (`min_spiffs`):
+```bash
+arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs coleira
+```
+5. Grave via USB (troque `<PORTA_USB>` pelo valor da etapa anterior, ex: `/dev/cu.usbserial-1410`):
+```bash
+arduino-cli upload -p <PORTA_USB> --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs coleira
+```
+6. Valide logs no serial monitor (115200):
+```bash
+arduino-cli monitor -p <PORTA_USB> -c baudrate=115200
+```
+7. Se travar em `Connecting...`, segure `BOOT`, inicie o upload e solte quando a gravacao comecar.
+8. Confirme no output de compilacao que o uso de flash fica abaixo de 100% (limite fisico da ESP32).
+
 ## Atualização de firmware via Wi-Fi (OTA)
 - OTA já vem habilitado no firmware (`config.h`).
 - A coleira mantém OTA/Wi-Fi ativo continuamente por padrão.
