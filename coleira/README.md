@@ -22,6 +22,56 @@ Firmware da coleira com telemetria, cerca virtual autônoma, condução por fase
 - Buzzer: GPIO25
 - Pulso/TIP120: GPIO26
 
+## Pinagem de referência (montagem)
+### GPS (UART)
+- ESP32 D16 -> GPS TX
+- ESP32 D17 -> GPS RX
+- ESP32 3v -> GPS VCC (ou 5v se seu módulo exigir)
+- ESP32 Gnd -> GPS GND
+
+### LoRa RFM95 (SPI)
+- ESP32 D5 -> LoRa NSS/CS
+- ESP32 D18 -> LoRa SCK
+- ESP32 D19 -> LoRa MISO
+- ESP32 D23 -> LoRa MOSI
+- ESP32 D14 -> LoRa RST
+- ESP32 D27 -> LoRa DIO0
+- ESP32 D33 -> LoRa DIO1
+- ESP32 3v -> LoRa VCC
+- ESP32 Gnd -> LoRa GND
+
+### Sensores I2C (MLX90614 + MPU6050 no mesmo barramento)
+- ESP32 D21 -> SDA de ambos os sensores
+- ESP32 D22 -> SCL de ambos os sensores
+- ESP32 3v -> VCC de ambos os sensores
+- ESP32 Gnd -> GND de ambos os sensores
+
+### Buzzer
+- Buzzer 2 pinos (padrao):
+  - ESP32 D25 -> Buzzer +
+  - ESP32 Gnd -> Buzzer -
+- Se for modulo de 3 pinos (S/VCC/GND):
+  - ESP32 D25 -> Sinal do buzzer
+  - ESP32 Gnd -> GND buzzer
+  - ESP32 3v/5v -> VCC buzzer (conforme modelo; se ativo 5V, usar transistor se necessario)
+
+### Pulso (TIP120 / estágio de potência)
+- ESP32 D26 -> Base/Gate do driver (via resistor)
+- ESP32 Gnd -> GND do driver (terra comum obrigatório)
+- Fonte do atuador -> Carga de pulso (conforme seu circuito de potência)
+
+### Alimentação geral
+- 3v para lógica/sensores/LoRa
+- 5v apenas para módulos que realmente pedem 5V
+- Gnd comum em tudo (ESP32, GPS, LoRa, sensores, driver de pulso)
+
+### Reservados / não usar para esses componentes
+- Tx0 e Rx0: deixar para USB/Serial Monitor
+- EN: não usar como IO
+- VP, W(VN), D34, D35: somente entrada (não servem para buzzer/pulso/CS)
+
+Consulte tambem `coleira/pinagem.md` para observacoes de EEPROM externa I2C e detalhes de barramento.
+
 ## Segurança animal implementada
 - Escalonamento obrigatório: beep nível 1 -> beep nível 2 -> pulso.
 - Limite de pulsos por janela, mínimo entre pulsos.

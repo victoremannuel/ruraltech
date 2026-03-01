@@ -21,6 +21,44 @@ Receber LoRa da coleira, expor REST+WebSocket para o app, logar em microSD com h
 - SD CS=13
 - OLED/DS3231 I2C SDA=21 SCL=22
 
+## Pinagem de referencia (montagem)
+### LoRa RFM95 (SPI)
+- ESP32 D5 -> LoRa NSS/CS
+- ESP32 D18 -> LoRa SCK
+- ESP32 D19 -> LoRa MISO
+- ESP32 D23 -> LoRa MOSI
+- ESP32 D14 -> LoRa RST
+- ESP32 D27 -> LoRa DIO0
+- ESP32 D33 -> LoRa DIO1
+- ESP32 3v -> LoRa VCC
+- ESP32 Gnd -> LoRa GND
+
+### MicroSD (SPI)
+- ESP32 D13 -> SD CS
+- ESP32 D18 -> SD SCK
+- ESP32 D19 -> SD MISO
+- ESP32 D23 -> SD MOSI
+- ESP32 3v -> SD VCC
+- ESP32 Gnd -> SD GND
+
+### I2C compartilhado (OLED + DS3231)
+- ESP32 D21 -> SDA de OLED e DS3231
+- ESP32 D22 -> SCL de OLED e DS3231
+- ESP32 3v -> VCC de OLED e DS3231
+- ESP32 Gnd -> GND de OLED e DS3231
+
+### Alimentacao geral
+- 3v para logica/sensores/LoRa
+- 5v apenas para modulos que realmente pedem 5V
+- Gnd comum em tudo (ESP32, LoRa, SD e I2C)
+
+### Reservados / nao usar para esses componentes
+- Tx0 e Rx0: deixar para USB/Serial Monitor
+- EN: nao usar como IO
+- VP, VN, D34, D35: somente entrada
+
+Consulte tambem `gateway/pinagem.md` para a lista detalhada.
+
 ## Rede App <-> Gateway
 - AP local: `RuralTech-Gateway-<ID6HEX>` / `ruraltechota`
 - HTTP: porta 80 (`/status`, `/devices`, `/logs`)
