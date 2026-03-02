@@ -12,6 +12,7 @@ constexpr uint8_t kMpuAddr0 = 0x68;
 constexpr uint8_t kMpuAddr1 = 0x69;
 constexpr uint32_t kGpsProbeWindowMsPerBaud = 1200;
 constexpr size_t kGpsBootSampleMaxLen = 24;
+constexpr uint16_t kGpsBootNoiseFloorBytes = 8;
 constexpr uint8_t kI2cScanDetailLimit = 10;
 constexpr uint32_t kGpsProbeBauds[] = {9600, 38400, 57600, 115200};
 }
@@ -72,6 +73,9 @@ void SensorsManager::begin() {
   gpsBootSample_ = "";
   for (size_t i = 0; i < (sizeof(kGpsProbeBauds) / sizeof(kGpsProbeBauds[0])); ++i) {
     const uint32_t baud = kGpsProbeBauds[i];
+    // Mantem RX estável quando o GPS está desconectado para reduzir leitura
+    // de bytes espúrios no checklist de boot.
+    pinMode(cfg::PIN_GPS_RX, INPUT_PULLDOWN);
     gpsSerial_.end();
     gpsSerial_.begin(baud, SERIAL_8N1, cfg::PIN_GPS_RX, cfg::PIN_GPS_TX);
     gpsUartReady_ = true;
@@ -94,6 +98,13 @@ void SensorsManager::begin() {
       delay(10);
     }
     if (gpsNmeaSeen_) break;
+  }
+
+  if (!gpsNmeaSeen_ && gpsBootBytes_ > 0 && gpsBootBytes_ < kGpsBootNoiseFloorBytes) {
+    LOGW("GPS boot RX com ruido (%lu bytes) ignorado", (unsigned long)gpsBootBytes_);
+    gpsBootBytes_ = 0;
+    gpsBootDollarCount_ = 0;
+    gpsBootSample_ = "";
   }
 
   if (mlxDetected_) {

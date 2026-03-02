@@ -28,39 +28,39 @@ Wi-Fi + LoRa (e BLE quando habilitado no build) para:
 
 ## Pinagem de referencia (montagem)
 ### LoRa RFM95 (SPI)
-- ESP32 D5 -> LoRa NSS/CS
-- ESP32 D18 -> LoRa SCK
-- ESP32 D19 -> LoRa MISO
-- ESP32 D23 -> LoRa MOSI
-- ESP32 D14 -> LoRa RST
-- ESP32 D27 -> LoRa DIO0
-- ESP32 D33 -> LoRa DIO1
-- ESP32 3v -> LoRa VCC
-- ESP32 Gnd -> LoRa GND
+- ESP32 G5 -> LoRa NSS/CS
+- ESP32 G18 -> LoRa SCK
+- ESP32 G19 -> LoRa MISO
+- ESP32 G23 -> LoRa MOSI
+- ESP32 G14 -> LoRa RST
+- ESP32 G27 -> LoRa DIO0
+- ESP32 G33 -> LoRa DIO1
+- ESP32 3v3 -> LoRa VCC
+- ESP32 GND -> LoRa GND
 
 ### MicroSD (SPI)
-- ESP32 D13 -> SD CS
-- ESP32 D18 -> SD SCK
-- ESP32 D19 -> SD MISO
-- ESP32 D23 -> SD MOSI
-- ESP32 3v -> SD VCC
-- ESP32 Gnd -> SD GND
+- ESP32 G13 -> SD CS
+- ESP32 G18 -> SD SCK
+- ESP32 G19 -> SD MISO
+- ESP32 G23 -> SD MOSI
+- ESP32 3v3 -> SD VCC
+- ESP32 GND -> SD GND
 
 ### I2C compartilhado (OLED + DS3231)
-- ESP32 D21 -> SDA de OLED e DS3231
-- ESP32 D22 -> SCL de OLED e DS3231
-- ESP32 3v -> VCC de OLED e DS3231
-- ESP32 Gnd -> GND de OLED e DS3231
+- ESP32 G21 -> SDA de OLED e DS3231
+- ESP32 G22 -> SCL de OLED e DS3231
+- ESP32 3v3 -> VCC de OLED e DS3231
+- ESP32 GND -> GND de OLED e DS3231
 
 ### Alimentacao geral
-- 3v para logica/sensores/LoRa
+- 3v3 para logica/sensores/LoRa
 - 5v apenas para modulos que realmente pedem 5V
-- Gnd comum em tudo (ESP32, LoRa, SD e I2C)
+- GND comum em tudo (ESP32, LoRa, SD e I2C)
 
 ### Reservados / nao usar para esses componentes
 - Tx0 e Rx0: deixar para USB/Serial Monitor
 - EN: nao usar como IO
-- VP, VN, D34, D35: somente entrada
+- VP, VN, G34, G35: somente entrada
 
 Consulte tambem `gateway-matriz/pinagem.md` para a lista detalhada.
 

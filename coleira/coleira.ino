@@ -650,7 +650,6 @@ static void startOtaService() {
   logOtaPartitionInfo("inicio");
 
   if (MDNS.begin(cfg::OTA_HOSTNAME)) {
-    MDNS.addService("arduino", "tcp", 3232);
     LOGI("mDNS ativo: %s.local:3232", cfg::OTA_HOSTNAME);
   } else {
     LOGW("mDNS indisponivel; OTA pode nao aparecer automaticamente no IDE.");
@@ -1190,7 +1189,13 @@ void setup() {
   wdtConfig.timeout_ms = (uint32_t)cfg::TASK_WDT_TIMEOUT_SEC * 1000U;
   wdtConfig.idle_core_mask = 0;
   wdtConfig.trigger_panic = true;
-  esp_task_wdt_init(&wdtConfig);
+  esp_err_t wdtErr = esp_task_wdt_reconfigure(&wdtConfig);
+  if (wdtErr == ESP_ERR_INVALID_STATE) {
+    wdtErr = esp_task_wdt_init(&wdtConfig);
+  }
+  if (wdtErr != ESP_OK) {
+    LOGW("TWDT setup retornou err=%d", (int)wdtErr);
+  }
 #else
   esp_task_wdt_init(cfg::TASK_WDT_TIMEOUT_SEC, true);
 #endif
