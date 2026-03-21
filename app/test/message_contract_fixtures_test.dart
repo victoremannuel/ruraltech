@@ -71,6 +71,22 @@ void main() {
       expect(payload['severity'], isA<String>());
     });
 
+    test('health daily event fixture', () {
+      final event = _readFixture(fixturesDir, 'health_daily_event.json');
+      expect(event['type'], 'event');
+      expect(event['device_id'], isA<int>());
+      expect(event['seq'], isA<int>());
+
+      final payload = _decodePayloadMap(event);
+      expect(payload['type'], 'health_daily');
+      expect(payload['up'], isA<int>());
+      expect(payload['tp'], isA<int>());
+      expect(payload['sa'], isA<int>());
+      expect(payload['hd'], isA<int>());
+      expect(payload['i2'], isA<int>());
+      expect(payload['hf'], isA<int>());
+    });
+
     test('ack and nack fixtures', () {
       final ack = _readFixture(fixturesDir, 'ack.json');
       final nack = _readFixture(fixturesDir, 'nack.json');

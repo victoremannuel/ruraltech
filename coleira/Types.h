@@ -46,6 +46,9 @@ struct GpsData {
   float hdop = 99.9f;
   uint8_t sats = 0;
   uint32_t gpsTime = 0;
+  uint16_t year = 0;
+  uint8_t month = 0;
+  uint8_t day = 0;
   bool filtered = false;
   bool locked = false;
   bool outlierDropped = false;

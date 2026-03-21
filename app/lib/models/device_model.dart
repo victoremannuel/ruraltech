@@ -1,6 +1,18 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class DeviceModel {
+  static const int healthFlagWifiOtaEnabled = 1 << 0;
+  static const int healthFlagOtaModeActive = 1 << 1;
+  static const int healthFlagGpsUartReady = 1 << 2;
+  static const int healthFlagGpsNmeaSeen = 1 << 3;
+  static const int healthFlagGpsFixValid = 1 << 4;
+  static const int healthFlagMpuReady = 1 << 5;
+  static const int healthFlagMlxReady = 1 << 6;
+  static const int healthFlagStorageReady = 1 << 7;
+  static const int healthFlagLoRaReady = 1 << 8;
+  static const int healthFlagLastLoRaTxOk = 1 << 9;
+  static const int healthFlagFallbackSchedule = 1 << 10;
+
   final String id;
   final String? deviceId;
   final String name;
@@ -11,6 +23,14 @@ class DeviceModel {
   final String? propertyId;
   final String? gatewayId;
   final bool wifiOtaEnabled;
+  final int? healthReceivedAtMs;
+  final int? healthGpsDayKey;
+  final int? healthFlags;
+  final int? healthUptimeSec;
+  final int? healthTemperatureDeciC;
+  final int? healthSatellites;
+  final int? healthHdopCenti;
+  final int? healthI2cDevices;
 
   DeviceModel({
     required this.id,
@@ -23,6 +43,14 @@ class DeviceModel {
     this.propertyId,
     this.gatewayId,
     this.wifiOtaEnabled = true,
+    this.healthReceivedAtMs,
+    this.healthGpsDayKey,
+    this.healthFlags,
+    this.healthUptimeSec,
+    this.healthTemperatureDeciC,
+    this.healthSatellites,
+    this.healthHdopCenti,
+    this.healthI2cDevices,
   });
 
   String? get loraDeviceId {
@@ -42,6 +70,60 @@ class DeviceModel {
     final v = deviceId?.trim();
     if (v == null || v.isEmpty) return id;
     return v;
+  }
+
+  bool get hasDailyHealth =>
+      healthReceivedAtMs != null ||
+      healthFlags != null ||
+      healthGpsDayKey != null;
+
+  bool _hasHealthFlag(int flag) => ((healthFlags ?? 0) & flag) != 0;
+
+  bool get healthGpsUartReady => _hasHealthFlag(healthFlagGpsUartReady);
+  bool get healthGpsNmeaSeen => _hasHealthFlag(healthFlagGpsNmeaSeen);
+  bool get healthGpsFixValid => _hasHealthFlag(healthFlagGpsFixValid);
+  bool get healthMpuReady => _hasHealthFlag(healthFlagMpuReady);
+  bool get healthMlxReady => _hasHealthFlag(healthFlagMlxReady);
+  bool get healthStorageReady => _hasHealthFlag(healthFlagStorageReady);
+  bool get healthLoRaReady => _hasHealthFlag(healthFlagLoRaReady);
+  bool get healthLastLoRaTxOk => _hasHealthFlag(healthFlagLastLoRaTxOk);
+  bool get healthFallbackSchedule =>
+      _hasHealthFlag(healthFlagFallbackSchedule);
+
+  DateTime? get healthReceivedAt {
+    final ms = healthReceivedAtMs;
+    if (ms == null || ms <= 0) return null;
+    return DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  double? get healthTemperatureC {
+    final deci = healthTemperatureDeciC;
+    if (deci == null) return null;
+    return deci / 10.0;
+  }
+
+  double? get healthHdop {
+    final centi = healthHdopCenti;
+    if (centi == null) return null;
+    return centi / 100.0;
+  }
+
+  bool get isHealthOk {
+    if (!hasDailyHealth) return false;
+    return healthGpsUartReady &&
+        healthGpsNmeaSeen &&
+        healthMpuReady &&
+        healthMlxReady &&
+        healthStorageReady &&
+        healthLoRaReady &&
+        healthLastLoRaTxOk &&
+        !healthFallbackSchedule;
+  }
+
+  String get healthSummary {
+    if (!hasDailyHealth) return 'Sem relatorio diario';
+    if (isHealthOk) return 'OK';
+    return 'Atencao';
   }
 
   factory DeviceModel.fromMap(String id, Map<String, dynamic> m) => DeviceModel(
@@ -116,6 +198,62 @@ class DeviceModel {
           final raw = m['wifi_ota_enabled'];
           if (raw is bool) return raw;
           return true;
+        })(),
+        healthReceivedAtMs: (() {
+          final raw = m['healthReceivedAtMs'];
+          if (raw is int) return raw;
+          if (raw is num) return raw.toInt();
+          if (raw is String) return int.tryParse(raw.trim());
+          return null;
+        })(),
+        healthGpsDayKey: (() {
+          final raw = m['healthGpsDayKey'];
+          if (raw is int) return raw;
+          if (raw is num) return raw.toInt();
+          if (raw is String) return int.tryParse(raw.trim());
+          return null;
+        })(),
+        healthFlags: (() {
+          final raw = m['healthFlags'];
+          if (raw is int) return raw;
+          if (raw is num) return raw.toInt();
+          if (raw is String) return int.tryParse(raw.trim());
+          return null;
+        })(),
+        healthUptimeSec: (() {
+          final raw = m['healthUptimeSec'];
+          if (raw is int) return raw;
+          if (raw is num) return raw.toInt();
+          if (raw is String) return int.tryParse(raw.trim());
+          return null;
+        })(),
+        healthTemperatureDeciC: (() {
+          final raw = m['healthTemperatureDeciC'];
+          if (raw is int) return raw;
+          if (raw is num) return raw.toInt();
+          if (raw is String) return int.tryParse(raw.trim());
+          return null;
+        })(),
+        healthSatellites: (() {
+          final raw = m['healthSatellites'];
+          if (raw is int) return raw;
+          if (raw is num) return raw.toInt();
+          if (raw is String) return int.tryParse(raw.trim());
+          return null;
+        })(),
+        healthHdopCenti: (() {
+          final raw = m['healthHdopCenti'];
+          if (raw is int) return raw;
+          if (raw is num) return raw.toInt();
+          if (raw is String) return int.tryParse(raw.trim());
+          return null;
+        })(),
+        healthI2cDevices: (() {
+          final raw = m['healthI2cDevices'];
+          if (raw is int) return raw;
+          if (raw is num) return raw.toInt();
+          if (raw is String) return int.tryParse(raw.trim());
+          return null;
         })(),
       );
 

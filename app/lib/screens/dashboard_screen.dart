@@ -165,11 +165,16 @@ class _HomeScreenState extends State<HomeScreen> {
         (message['gateway_id'] ?? message['gatewayId'])?.toString().trim();
     final gatewayRole =
         (message['gateway_role'] ?? message['gatewayRole'])?.toString().trim();
+    final gatewayWifiOtaEnabled =
+        message['gateway_wifi_ota_enabled'] is bool
+            ? message['gateway_wifi_ota_enabled'] as bool
+            : null;
     final eventType = (payload == null
             ? null
             : (payload['type'] ?? payload['event_type'] ?? payload['reason']))
         ?.toString()
         .trim();
+    final receivedAtMs = DateTime.now().millisecondsSinceEpoch;
 
     final event = <String, dynamic>{
       'ownerUid': FirebaseFirestore.instance.collection('users').doc(uid),
@@ -177,16 +182,32 @@ class _HomeScreenState extends State<HomeScreen> {
       'type': type,
       'seq': _asInt(message['seq']),
       'sourceTimestampSec': _asInt(message['timestamp']),
-      'receivedAtMs': DateTime.now().millisecondsSinceEpoch,
+      'receivedAtMs': receivedAtMs,
       if (gatewayId != null && gatewayId.isNotEmpty) 'gatewayId': gatewayId,
       if (gatewayRole != null && gatewayRole.isNotEmpty)
         'gatewayRole': gatewayRole,
-      if (message['gateway_wifi_ota_enabled'] is bool)
-        'gatewayWifiOtaEnabled': message['gateway_wifi_ota_enabled'],
+      if (gatewayWifiOtaEnabled != null)
+        'gatewayWifiOtaEnabled': gatewayWifiOtaEnabled,
       if (payload != null) 'payload': payload,
       if (eventType != null && eventType.isNotEmpty) 'eventType': eventType,
       'raw': message,
     };
+
+    if (payload != null && eventType?.toLowerCase() == 'health_daily') {
+      unawaited(
+        context.read<FirebaseService>().registerDailyHealthReport(
+              deviceId: deviceId.toString(),
+              payload: payload,
+              sourceTimestampSec: _asInt(message['timestamp']),
+              seq: _asInt(message['seq']),
+              gatewayId: gatewayId,
+              gatewayRole: gatewayRole,
+              gatewayWifiOtaEnabled: gatewayWifiOtaEnabled,
+              writer: 'app',
+              receivedAtMs: receivedAtMs,
+            ),
+      );
+    }
 
     unawaited(context.read<FirebaseService>().saveCriticalEvent(event));
   }

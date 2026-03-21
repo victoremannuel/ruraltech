@@ -50,6 +50,7 @@ StateMachine stateMachine;
 WebServer statusServer(80);
 
 RTC_DATA_ATTR uint32_t seq = 1;
+RTC_DATA_ATTR uint64_t healthFallbackAccumMs_ = 0;
 uint32_t seqPersistedHi_ = 0;
 bool seqPersistReady_ = false;
 uint32_t lastCycle = 0;
@@ -67,11 +68,19 @@ Preferences prefs_;
 bool prefsReady_ = false;
 GpsData lastGpsForStatus_;
 bool hasLastGpsForStatus_ = false;
+uint32_t lastHealthReportDayKey_ = 0;
+bool storageReady_ = false;
+bool loraReady_ = false;
+bool lastLoRaTxOk_ = false;
 static void logEvent(EventType type, int32_t d1, int32_t d2);
 static bool beginPrefs();
 static void refreshBlePositionForOnboarding();
 static void printBootChecklist(bool bleInitOk, bool storageOk, bool loraOk);
 static void runSmartGpsSelfTest();
+static uint32_t gpsDayKey(const GpsData& gps);
+static void persistHealthReportDayKey(uint32_t dayKey);
+static uint32_t loadPersistedHealthReportDayKey();
+static bool sendDailyHealthReport(const Telemetry& t, uint32_t intervalMs);
 
 struct FenceChunkRxState {
   bool active = false;
@@ -291,6 +300,11 @@ static void persistHerdingPlan(const HerdingPlan& plan) {
   prefs_.putBytes(cfg::PREF_KEY_HERD, &plan, sizeof(plan));
 }
 
+static void persistHealthReportDayKey(uint32_t dayKey) {
+  if (!beginPrefs() || dayKey == 0) return;
+  prefs_.putULong(cfg::PREF_KEY_HEALTH_DAY, dayKey);
+}
+
 static bool loadPersistedFence(Polygon* outFence) {
   if (!beginPrefs() || !outFence) return false;
   if (prefs_.getBytesLength(cfg::PREF_KEY_FENCE) != sizeof(Polygon)) return false;
@@ -311,10 +325,16 @@ static bool loadPersistedWifiOtaEnabled() {
   return prefs_.getBool(cfg::PREF_KEY_WIFI_OTA, cfg::WIFI_OTA_DEFAULT_ENABLED);
 }
 
+static uint32_t loadPersistedHealthReportDayKey() {
+  if (!beginPrefs()) return 0;
+  return prefs_.getULong(cfg::PREF_KEY_HEALTH_DAY, 0);
+}
+
 static void loadPersistedConfig() {
   wifiOtaEnabled = loadPersistedWifiOtaEnabled();
   if (wifiOtaEnabled) wifiOtaEnabledAtMs = millis();
   restoreLoRaSeq();
+  lastHealthReportDayKey_ = loadPersistedHealthReportDayKey();
 
   Polygon savedFence;
   if (loadPersistedFence(&savedFence)) {
@@ -955,6 +975,101 @@ static void logEvent(EventType type, int32_t d1 = 0, int32_t d2 = 0) {
   storage.pushEvent(ev);
 }
 
+namespace {
+constexpr uint16_t kHealthFlagWifiOtaEnabled = 1U << 0;
+constexpr uint16_t kHealthFlagOtaModeActive = 1U << 1;
+constexpr uint16_t kHealthFlagGpsUartReady = 1U << 2;
+constexpr uint16_t kHealthFlagGpsNmeaSeen = 1U << 3;
+constexpr uint16_t kHealthFlagGpsFixValid = 1U << 4;
+constexpr uint16_t kHealthFlagMpuReady = 1U << 5;
+constexpr uint16_t kHealthFlagMlxReady = 1U << 6;
+constexpr uint16_t kHealthFlagStorageReady = 1U << 7;
+constexpr uint16_t kHealthFlagLoRaReady = 1U << 8;
+constexpr uint16_t kHealthFlagLastLoRaTxOk = 1U << 9;
+constexpr uint16_t kHealthFlagFallbackSchedule = 1U << 10;
+}
+
+static uint32_t gpsDayKey(const GpsData& gps) {
+  if (!gps.valid) return 0;
+  if (gps.year < 2023 || gps.month == 0 || gps.month > 12 || gps.day == 0 ||
+      gps.day > 31) {
+    return 0;
+  }
+  return (uint32_t)gps.year * 10000UL + (uint32_t)gps.month * 100UL +
+         (uint32_t)gps.day;
+}
+
+static uint16_t buildHealthFlags(const Telemetry& t, bool fallbackScheduleUsed) {
+  uint16_t flags = 0;
+  if (wifiOtaEnabled) flags |= kHealthFlagWifiOtaEnabled;
+  if (otaModeActive) flags |= kHealthFlagOtaModeActive;
+  if (sensors.gpsUartReady()) flags |= kHealthFlagGpsUartReady;
+  if (sensors.gpsNmeaSeen()) flags |= kHealthFlagGpsNmeaSeen;
+  if (t.gps.valid) flags |= kHealthFlagGpsFixValid;
+  if (sensors.mpuReady()) flags |= kHealthFlagMpuReady;
+  if (sensors.mlxReady()) flags |= kHealthFlagMlxReady;
+  if (storageReady_) flags |= kHealthFlagStorageReady;
+  if (loraReady_) flags |= kHealthFlagLoRaReady;
+  if (lastLoRaTxOk_) flags |= kHealthFlagLastLoRaTxOk;
+  if (fallbackScheduleUsed) flags |= kHealthFlagFallbackSchedule;
+  return flags;
+}
+
+static bool sendDailyHealthReport(const Telemetry& t, uint32_t intervalMs) {
+  const uint32_t dayKey = gpsDayKey(t.gps);
+  bool fallbackScheduleUsed = false;
+
+  if (dayKey != 0) {
+    if (dayKey == lastHealthReportDayKey_) {
+      healthFallbackAccumMs_ = 0;
+      return false;
+    }
+  } else {
+    fallbackScheduleUsed = true;
+    if (UINT64_MAX - healthFallbackAccumMs_ > intervalMs) {
+      healthFallbackAccumMs_ += intervalMs;
+    } else {
+      healthFallbackAccumMs_ = UINT64_MAX;
+    }
+    if (healthFallbackAccumMs_ < cfg::DAILY_HEALTH_FALLBACK_MS) return false;
+  }
+
+  StaticJsonDocument<192> payload;
+  payload["type"] = "health_daily";
+  payload["up"] = t.uptime;
+  payload["tp"] = (int32_t)lround(t.temperatureC * 10.0f);
+  payload["sa"] = t.gps.sats;
+  payload["hd"] = (int32_t)lround(t.gps.hdop * 100.0f);
+  payload["i2"] = sensors.i2cDevicesFound();
+  payload["hf"] = buildHealthFlags(t, fallbackScheduleUsed);
+  if (dayKey != 0) payload["dk"] = dayKey;
+
+  LoRaFrame health;
+  health.deviceId = cfg::DEVICE_ID;
+  health.msgType = MsgType::EVENT;
+  health.seq = nextLoRaSeq();
+  health.timestamp = t.gps.gpsTime ? t.gps.gpsTime : millis() / 1000;
+  randomNonce(health.nonce);
+  health.payloadLen = serializeJson(payload, health.payload, sizeof(health.payload));
+  if (health.payloadLen == 0) {
+    LOGW("Health report diario vazio; envio ignorado");
+    return false;
+  }
+  if (!lora.sendFrame(health)) {
+    LOGW("Falha envio health_daily; tentara novamente no proximo ciclo.");
+    return false;
+  }
+
+  if (dayKey != 0) {
+    lastHealthReportDayKey_ = dayKey;
+    persistHealthReportDayKey(dayKey);
+  }
+  healthFallbackAccumMs_ = 0;
+  LOGI("Health report diario enviado (day=%lu fallback=%d)",
+       (unsigned long)dayKey, fallbackScheduleUsed ? 1 : 0);
+  return true;
+}
+
 static uint8_t buildTelemetryPayload(const Telemetry& t, uint8_t* out, size_t max) {
   StaticJsonDocument<256> doc;
   doc["fw"] = cfg::FW_VERSION;
@@ -1226,14 +1341,14 @@ void setup() {
 
   sensors.begin();
   safety.begin();
-  const bool storageOk = storage.begin();
-  if (!storageOk) LOGW("StorageQueue indisponivel");
+  storageReady_ = storage.begin();
+  if (!storageReady_) LOGW("StorageQueue indisponivel");
   smartGps.begin();
   refreshBlePositionForOnboarding();
-  const bool loraOk = lora.begin();
-  if (!loraOk) LOGE("LoRa indisponivel");
+  loraReady_ = lora.begin();
+  if (!loraReady_) LOGE("LoRa indisponivel");
   setWatchdogEnabled(wifiOtaEnabled);
-  printBootChecklist(bleInitOk, storageOk, loraOk);
+  printBootChecklist(bleInitOk, storageReady_, loraReady_);
 
   LOGI("Coleira inicializada: id=%lu fw=%s", cfg::DEVICE_ID, cfg::FW_VERSION);
 }
@@ -1366,9 +1481,11 @@ void loop() {
   randomNonce(uplink.nonce);
   uplink.payloadLen = buildTelemetryPayload(t, uplink.payload, sizeof(uplink.payload));
 
-  if (!lora.sendFrame(uplink)) {
+  lastLoRaTxOk_ = lora.sendFrame(uplink);
+  if (!lastLoRaTxOk_) {
     LOGW("Falha envio telemetria; permanece em fila local.");
   }
+  sendDailyHealthReport(t, stateMachine.intervalMs());
 
   LoRaFrame down;
   const uint32_t rxWindowMs = otaSessionLikelyActive

@@ -148,6 +148,11 @@ GpsData SensorsManager::readGpsSnapshot() {
   gps.hdop = gps_.hdop.isValid() ? gps_.hdop.hdop() : 99.9f;
   gps.sats = gps_.satellites.isValid() ? gps_.satellites.value() : 0;
   gps.gpsTime = gps_.time.isValid() ? gps_.time.value() : 0;
+  if (gps_.date.isValid()) {
+    gps.year = gps_.date.year();
+    gps.month = gps_.date.month();
+    gps.day = gps_.date.day();
+  }
   return gps;
 }
 

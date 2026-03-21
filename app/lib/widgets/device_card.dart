@@ -8,10 +8,13 @@ class DeviceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final healthSuffix = device.hasDailyHealth
+        ? ' | Saude: ${device.healthSummary}'
+        : '';
     return Card(
       child: ListTile(
         title: Text(device.name),
-        subtitle: Text('Status: ${device.status}'),
+        subtitle: Text('Status: ${device.status}$healthSuffix'),
         onTap: onTap,
       ),
     );

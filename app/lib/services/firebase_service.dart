@@ -13,6 +13,7 @@ class FirebaseService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   late final FirebaseDatabase _rtdb;
   final Map<String, int> _telemetryDedupUntilMs = <String, int>{};
+  final Map<String, int> _healthDedupUntilMs = <String, int>{};
 
   FirebaseService() {
     final configuredUrl = Firebase.app().options.databaseURL?.trim() ?? '';
@@ -278,19 +279,51 @@ class FirebaseService {
     return out;
   }
 
+  Map<String, Map<String, dynamic>> _decodeHealthLatestSnapshot(dynamic raw) {
+    if (raw is! Map) return const <String, Map<String, dynamic>>{};
+    final out = <String, Map<String, dynamic>>{};
+    for (final entry in raw.entries) {
+      final key = entry.key?.toString().trim() ?? '';
+      if (key.isEmpty) continue;
+      final value = entry.value;
+      if (value is! Map) continue;
+
+      final health = <String, dynamic>{
+        if (_toIntValue(value['receivedAtMs']) != null)
+          'healthReceivedAtMs': _toIntValue(value['receivedAtMs']),
+        if (_toIntValue(value['gpsDayKey']) != null)
+          'healthGpsDayKey': _toIntValue(value['gpsDayKey']),
+        if (_toIntValue(value['healthFlags']) != null)
+          'healthFlags': _toIntValue(value['healthFlags']),
+        if (_toIntValue(value['uptimeSec']) != null)
+          'healthUptimeSec': _toIntValue(value['uptimeSec']),
+        if (_toIntValue(value['temperatureDeciC']) != null)
+          'healthTemperatureDeciC': _toIntValue(value['temperatureDeciC']),
+        if (_toIntValue(value['sat']) != null)
+          'healthSatellites': _toIntValue(value['sat']),
+        if (_toIntValue(value['hdopCenti']) != null)
+          'healthHdopCenti': _toIntValue(value['hdopCenti']),
+        if (_toIntValue(value['i2cDevices']) != null)
+          'healthI2cDevices': _toIntValue(value['i2cDevices']),
+      };
+      if (health.isNotEmpty) out[key] = health;
+    }
+    return out;
+  }
+
   List<DeviceModel> _mergeDevicesWithLiveTelemetry(
     List<DeviceModel> devices,
     Map<String, Map<String, double>> liveBySanitizedDeviceId,
+    Map<String, Map<String, dynamic>> healthBySanitizedDeviceId,
   ) {
     return devices.map((device) {
       final key = _sanitizeRtdbKey(device.networkId);
       if (key.isEmpty) return device;
       final live = liveBySanitizedDeviceId[key];
-      if (live == null) return device;
-      final lat = live['lat'];
-      final lon = live['lon'];
-      if (lat == null || lon == null) return device;
-      if (device.lat == lat && device.lon == lon) return device;
+      final health = healthBySanitizedDeviceId[key];
+      if (live == null && health == null) return device;
+      final lat = live?['lat'] ?? device.lat;
+      final lon = live?['lon'] ?? device.lon;
       return DeviceModel(
         id: device.id,
         deviceId: device.deviceId,
@@ -302,6 +335,21 @@ class FirebaseService {
         propertyId: device.propertyId,
         gatewayId: device.gatewayId,
         wifiOtaEnabled: device.wifiOtaEnabled,
+        healthReceivedAtMs:
+            health?['healthReceivedAtMs'] as int? ?? device.healthReceivedAtMs,
+        healthGpsDayKey:
+            health?['healthGpsDayKey'] as int? ?? device.healthGpsDayKey,
+        healthFlags: health?['healthFlags'] as int? ?? device.healthFlags,
+        healthUptimeSec:
+            health?['healthUptimeSec'] as int? ?? device.healthUptimeSec,
+        healthTemperatureDeciC: health?['healthTemperatureDeciC'] as int? ??
+            device.healthTemperatureDeciC,
+        healthSatellites:
+            health?['healthSatellites'] as int? ?? device.healthSatellites,
+        healthHdopCenti:
+            health?['healthHdopCenti'] as int? ?? device.healthHdopCenti,
+        healthI2cDevices:
+            health?['healthI2cDevices'] as int? ?? device.healthI2cDevices,
       );
     }).toList();
   }
@@ -354,6 +402,13 @@ class FirebaseService {
     return null;
   }
 
+  int? _toIntValue(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value.trim());
+    return null;
+  }
+
   Future<Map<String, double>?> getLatestTelemetryPositionForDevice(
       String rawDeviceId) async {
     final normalizedDeviceId = _normalizeLoraDeviceId(rawDeviceId);
@@ -396,6 +451,13 @@ class FirebaseService {
     _telemetryDedupUntilMs.removeWhere((_, until) => until <= nowMs);
     if (_telemetryDedupUntilMs.containsKey(key)) return false;
     _telemetryDedupUntilMs[key] = nowMs + 90 * 1000;
+    return true;
+  }
+
+  bool _registerHealthDedupKey(String key, int nowMs) {
+    _healthDedupUntilMs.removeWhere((_, until) => until <= nowMs);
+    if (_healthDedupUntilMs.containsKey(key)) return false;
+    _healthDedupUntilMs[key] = nowMs + 10 * 60 * 1000;
     return true;
   }
 
@@ -463,6 +525,84 @@ class FirebaseService {
       );
     } catch (_) {
       // A falha de telemetria nao deve interromper o fluxo principal do app.
+    }
+  }
+
+  Future<void> registerDailyHealthReport({
+    required String deviceId,
+    required Map<String, dynamic> payload,
+    int? sourceTimestampSec,
+    int? seq,
+    String? gatewayId,
+    String? gatewayRole,
+    bool? gatewayWifiOtaEnabled,
+    String writer = 'app',
+    int? receivedAtMs,
+  }) async {
+    final sanitizedDeviceId = _sanitizeRtdbKey(deviceId);
+    if (sanitizedDeviceId.isEmpty) return;
+
+    final healthFlags = _toIntValue(payload['hf'] ?? payload['healthFlags']);
+    if (healthFlags == null) return;
+
+    final nowMs = receivedAtMs != null && receivedAtMs > 0
+        ? receivedAtMs
+        : DateTime.now().millisecondsSinceEpoch;
+    final gpsDayKey = _toIntValue(payload['dk'] ?? payload['gpsDayKey']);
+    final dedupKey = [
+      sanitizedDeviceId,
+      seq?.toString() ?? '-',
+      sourceTimestampSec?.toString() ?? '-',
+      gpsDayKey?.toString() ?? '-',
+      healthFlags.toString(),
+    ].join('|');
+    if (!_registerHealthDedupKey(dedupKey, nowMs)) return;
+
+    final nowSec = nowMs ~/ 1000;
+    final dayKey =
+        gpsDayKey != null && gpsDayKey > 0 ? gpsDayKey.toString() : _dayKeyFromMs(nowMs);
+    final oldDayMs =
+        nowMs - (_telemetryRetentionDays + 1) * 24 * 60 * 60 * 1000;
+    final oldDayKey = _dayKeyFromMs(oldDayMs);
+
+    final body = <String, dynamic>{
+      'deviceId': sanitizedDeviceId,
+      'kind': 'health_daily',
+      'receivedAt': nowSec,
+      'receivedAtMs': nowMs,
+      'healthFlags': healthFlags,
+      'retentionDays': _telemetryRetentionDays,
+      if (gpsDayKey != null) 'gpsDayKey': gpsDayKey,
+      if (_toIntValue(payload['up'] ?? payload['uptimeSec']) != null)
+        'uptimeSec': _toIntValue(payload['up'] ?? payload['uptimeSec']),
+      if (_toIntValue(payload['tp'] ?? payload['temperatureDeciC']) != null)
+        'temperatureDeciC':
+            _toIntValue(payload['tp'] ?? payload['temperatureDeciC']),
+      if (_toIntValue(payload['sa'] ?? payload['sat']) != null)
+        'sat': _toIntValue(payload['sa'] ?? payload['sat']),
+      if (_toIntValue(payload['hd'] ?? payload['hdopCenti']) != null)
+        'hdopCenti': _toIntValue(payload['hd'] ?? payload['hdopCenti']),
+      if (_toIntValue(payload['i2'] ?? payload['i2cDevices']) != null)
+        'i2cDevices': _toIntValue(payload['i2'] ?? payload['i2cDevices']),
+      if (seq != null) 'seq': seq,
+      if (sourceTimestampSec != null) 'sourceTimestampSec': sourceTimestampSec,
+      if (gatewayId != null && gatewayId.trim().isNotEmpty)
+        'gatewayId': gatewayId.trim(),
+      if (gatewayRole != null && gatewayRole.trim().isNotEmpty)
+        'gatewayRole': gatewayRole.trim(),
+      if (gatewayWifiOtaEnabled != null)
+        'gatewayWifiOtaEnabled': gatewayWifiOtaEnabled,
+      'writer': writer,
+    };
+
+    try {
+      await _rtdb.ref('healthLatest/$sanitizedDeviceId').set(body);
+      await _rtdb
+          .ref('healthHistory/$sanitizedDeviceId/$dayKey/$nowMs')
+          .set(body);
+      unawaited(_rtdb.ref('healthHistory/$sanitizedDeviceId/$oldDayKey').remove());
+    } catch (_) {
+      // Best effort: saude diaria nao deve quebrar o fluxo principal.
     }
   }
 
@@ -540,10 +680,16 @@ class FirebaseService {
       List<DeviceModel> devices = const <DeviceModel>[];
       Map<String, Map<String, double>> liveBySanitizedDeviceId =
           const <String, Map<String, double>>{};
+      Map<String, Map<String, dynamic>> healthBySanitizedDeviceId =
+          const <String, Map<String, dynamic>>{};
 
       void emit() {
         controller.add(
-          _mergeDevicesWithLiveTelemetry(devices, liveBySanitizedDeviceId),
+          _mergeDevicesWithLiveTelemetry(
+            devices,
+            liveBySanitizedDeviceId,
+            healthBySanitizedDeviceId,
+          ),
         );
       }
 
@@ -568,9 +714,22 @@ class FirebaseService {
         },
       );
 
+      final healthSub = _rtdb.ref('healthLatest').onValue.listen(
+        (event) {
+          healthBySanitizedDeviceId =
+              _decodeHealthLatestSnapshot(event.snapshot.value);
+          emit();
+        },
+        onError: (_) {
+          healthBySanitizedDeviceId = const <String, Map<String, dynamic>>{};
+          emit();
+        },
+      );
+
       controller.onCancel = () async {
         await firestoreSub.cancel();
         await telemetrySub.cancel();
+        await healthSub.cancel();
       };
     });
   }

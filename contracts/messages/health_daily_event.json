@@ -1,0 +1,11 @@
+{
+  "type": "event",
+  "device_id": 101,
+  "msg_type": 2,
+  "seq": 41823,
+  "timestamp": 1760000200,
+  "gateway_id": "RT-GW-001",
+  "gateway_role": "matrix",
+  "gateway_wifi_ota_enabled": true,
+  "payload": "{\"type\":\"health_daily\",\"up\":86400,\"tp\":365,\"sa\":8,\"hd\":95,\"i2\":2,\"hf\":1004,\"dk\":20260321}"
+}

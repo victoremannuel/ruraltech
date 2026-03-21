@@ -74,6 +74,7 @@ constexpr char PREF_KEY_WIFI_OTA[] = "wifi_ota";
 constexpr char PREF_KEY_FENCE[] = "fence";
 constexpr char PREF_KEY_HERD[] = "herd";
 constexpr char PREF_KEY_LORA_SEQ_HI[] = "lora_seq_hi";
+constexpr char PREF_KEY_HEALTH_DAY[] = "health_day";
 constexpr uint16_t LORA_SEQ_RESERVE_WINDOW = 128;
 
 // Intervalos (ms)
@@ -81,6 +82,7 @@ constexpr uint32_t NORMAL_INTERVAL_MS = 180000;
 constexpr uint32_t ALERT_INTERVAL_MS = 20000;
 constexpr uint32_t HERDING_INTERVAL_MS = 15000;
 constexpr uint32_t RX_WINDOW_MS = 2500;
+constexpr uint32_t DAILY_HEALTH_FALLBACK_MS = 86400000UL;
 
 // Segurança animal
 constexpr uint8_t MAX_PULSES_PER_10_MIN = 3;

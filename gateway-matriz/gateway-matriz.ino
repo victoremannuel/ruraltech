@@ -362,6 +362,78 @@ static void publishTelemetryToCloud(const LoRaFrame& rx) {
   }
 }
 
+static bool isDailyHealthEvent(const JsonVariantConst payload) {
+  if (!payload.is<JsonObjectConst>()) return false;
+  const char* type = payload["type"] | "";
+  if (strcmp(type, "health_daily") == 0) return true;
+  const char* eventType = payload["event_type"] | "";
+  return strcmp(eventType, "health_daily") == 0;
+}
+
+static void publishDailyHealthToCloud(const LoRaFrame& rx) {
+  if (rx.msgType != MsgType::EVENT) return;
+  if (!cloudTelemetryConfigured()) return;
+  if (!ensureCloudBackhaulConnected()) return;
+
+  StaticJsonDocument<256> eventPayload;
+  if (deserializeJson(eventPayload, rx.payload, rx.payloadLen) != DeserializationError::Ok) {
+    return;
+  }
+  if (!isDailyHealthEvent(eventPayload.as<JsonVariantConst>())) return;
+
+  const uint32_t nowSec = unixNowSec();
+  const uint64_t nowMs = unixNowMs(nowSec);
+  const String matrixId = matrixCloudId();
+  const String deviceId = sanitizeRtdbKey(String(rx.deviceId));
+  if (deviceId.isEmpty()) return;
+
+  const uint32_t gpsDayKey = eventPayload["dk"] | 0UL;
+
+  StaticJsonDocument<512> payload;
+  payload["deviceId"] = deviceId;
+  payload["kind"] = "health_daily";
+  payload["healthFlags"] = eventPayload["hf"] | 0;
+  payload["gpsDayKey"] = gpsDayKey;
+  payload["uptimeSec"] = eventPayload["up"] | 0UL;
+  payload["temperatureDeciC"] = eventPayload["tp"] | 0;
+  payload["sat"] = eventPayload["sa"] | 0;
+  payload["hdopCenti"] = eventPayload["hd"] | 0;
+  payload["i2cDevices"] = eventPayload["i2"] | 0;
+  payload["seq"] = rx.seq;
+  payload["sourceTimestampSec"] = rx.timestamp;
+  payload["receivedAt"] = nowSec;
+  payload["receivedAtMs"] = nowMs;
+  payload["gatewayId"] = matrixId;
+  payload["gatewayRole"] = "matrix";
+  payload["gatewayWifiOtaEnabled"] = wifiOtaEnabled;
+  payload["transport"] = "lora";
+  payload["writer"] = "gateway_matrix";
+  payload["matrixId"] = matrixId;
+  payload["writerKey"] = cfg::RTDB_WRITER_KEY;
+  payload["retentionDays"] = cfg::TELEMETRY_RETENTION_DAYS;
+  payload["expiresAt"] = nowSec + (uint32_t)cfg::TELEMETRY_RETENTION_DAYS * 24UL * 60UL * 60UL;
+
+  String body;
+  serializeJson(payload, body);
+
+  const String latestPath = String("healthLatest/") + deviceId;
+  const String historyDayKey =
+      gpsDayKey > 0 ? String(gpsDayKey) : utcDayKey(nowSec);
+  char historyEntryId[40];
+  snprintf(historyEntryId, sizeof(historyEntryId), "%llu_%lu",
+           (unsigned long long)nowMs, (unsigned long)rx.seq);
+  const String historyPath =
+      String("healthHistory/") + deviceId + "/" + historyDayKey + "/" +
+      String(historyEntryId);
+
+  const bool latestOk = rtdbWrite("PUT", latestPath, body);
+  const bool historyOk = rtdbWrite("PUT", historyPath, body);
+  if (!latestOk || !historyOk) {
+    LOGW("Falha upload RTDB health_daily device=%s latest=%d history=%d",
+         deviceId.c_str(), latestOk ? 1 : 0, historyOk ? 1 : 0);
+  }
+}
+
 static bool setupWiFi() {
   WiFi.mode(WIFI_AP_STA);
   WiFi.setSleep(false);
@@ -1000,6 +1072,7 @@ void loop() {
     drawStatus("RX LoRa", out.substring(0, 16).c_str());
 
     publishTelemetryToCloud(rx);
+    publishDailyHealthToCloud(rx);
   }
 
   if (api.hasPendingCommand()) {
