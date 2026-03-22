@@ -41,9 +41,15 @@
 *.dwo
 
 /.arduino-build
+/coleira/build/
+/gateway/build/
+/gateway-matriz/build/
+/diag-esp32-sensors/build/
 .DS_Store
 /gateway-matriz/manual_settings.local.h
 /app/android/key.properties
 
 .build_*/
 .*
+/temp/*
+!/temp/.gitkeep

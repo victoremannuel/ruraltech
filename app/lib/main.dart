@@ -55,7 +55,7 @@ class RuralTechApp extends StatelessWidget {
                 Text(bootstrapError!),
                 const SizedBox(height: 12),
                 const Text(
-                  'Configure o Firebase para esta plataforma (iOS) e rode novamente.',
+                  'Configure o Firebase para esta plataforma suportada (iOS, Android ou Web) e rode novamente.',
                 ),
               ],
             ),

@@ -82,4 +82,3 @@ O comando atualiza arquivos gerados como:
 - `app/lib/firebase_options.dart`
 - `app/android/app/google-services.json`
 - `app/ios/Runner/GoogleService-Info.plist`
-- `app/macos/Runner/GoogleService-Info.plist`

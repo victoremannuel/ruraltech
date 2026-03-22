@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
@@ -253,26 +253,46 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
     return best;
   }
 
+  Future<List<int>?> _readSelectedFileBytes(PlatformFile file) async {
+    final bytes = file.bytes;
+    if (bytes != null && bytes.isNotEmpty) {
+      return bytes;
+    }
+
+    final stream = file.readStream;
+    if (stream == null) {
+      return null;
+    }
+
+    final buffer = BytesBuilder(copy: false);
+    try {
+      await for (final chunk in stream) {
+        if (chunk.isNotEmpty) {
+          buffer.add(chunk);
+        }
+      }
+    } catch (_) {
+      return null;
+    }
+
+    final collected = buffer.takeBytes();
+    return collected.isEmpty ? null : collected;
+  }
+
   Future<void> _importKml() async {
     final picked = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['kml'],
       withData: true,
+      withReadStream: true,
     );
     if (picked == null || picked.files.isEmpty) return;
 
     final file = picked.files.first;
-    final bytes = file.bytes;
+    final bytes = await _readSelectedFileBytes(file);
     String? kmlText;
     if (bytes != null && bytes.isNotEmpty) {
       kmlText = utf8.decode(bytes, allowMalformed: true);
-    } else if (file.path != null && file.path!.isNotEmpty) {
-      try {
-        final rawBytes = await File(file.path!).readAsBytes();
-        if (rawBytes.isNotEmpty) {
-          kmlText = utf8.decode(rawBytes, allowMalformed: true);
-        }
-      } catch (_) {}
     }
     if (kmlText == null || kmlText.trim().isEmpty) {
       await _showMessage(

@@ -2,9 +2,11 @@
 
 Aplicativo Flutter com Auth + Firestore + Telemetria WebSocket.
 
+Plataformas suportadas neste projeto: `iOS`, `Android` e `Web`.
+
 ## Pré-requisitos
 - Flutter SDK instalado e no `PATH`
-- Xcode (iOS/macOS), Android Studio/SDK (Android), navegador (Web)
+- Xcode (iOS), Android Studio/SDK (Android), navegador (Web)
 - Firebase configurado no projeto
 
 ## Setup inicial (uma vez)
@@ -58,21 +60,6 @@ flutter run -d <android_device_id>
 flutter run -d chrome
 ```
 
-### macOS
-```bash
-flutter run -d macos
-```
-
-### Windows
-```bash
-flutter run -d windows
-```
-
-### Linux
-```bash
-flutter run -d linux
-```
-
 ## Executar em Profile
 
 ### iOS (simulador ou físico)
@@ -91,21 +78,6 @@ flutter run --profile -d <android_device_id>
 flutter run --profile -d chrome
 ```
 
-### macOS
-```bash
-flutter run --profile -d macos
-```
-
-### Windows
-```bash
-flutter run --profile -d windows
-```
-
-### Linux
-```bash
-flutter run --profile -d linux
-```
-
 ## Executar em Release
 
 ### iOS
@@ -121,21 +93,6 @@ flutter run --release -d <android_device_id>
 ### Web
 ```bash
 flutter build web --release
-```
-
-### macOS
-```bash
-flutter run --release -d macos
-```
-
-### Windows
-```bash
-flutter run --release -d windows
-```
-
-### Linux
-```bash
-flutter run --release -d linux
 ```
 
 ## Build distribuível (opcional)
@@ -169,7 +126,7 @@ Com `flutter run` em execução:
 
 ## Quando demorar/travar: diagnóstico rápido
 
-### Ver processos de build (macOS)
+### Ver processos de build Apple (`xcodebuild`)
 ```bash
 ps -axo pid,etime,%cpu,command | grep xcodebuild | grep -v grep
 ```

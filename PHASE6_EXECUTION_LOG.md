@@ -80,6 +80,8 @@ Commit/Tag: `________________`
 
 ## Identificacao de ambiente
 
+Nota de plataforma (2026-03-21): o app passa a suportar somente `iOS`, `Android` e `Web`. O item `macOS` abaixo permanece apenas como registro historico da execucao de 2026-02-28.
+
 - App build:
   - [ ] Android debug (`./gradlew :app:assembleDebug`)
   - [ ] iOS release (`flutter build ios --release --no-codesign`)

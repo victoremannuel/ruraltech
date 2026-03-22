@@ -36,7 +36,7 @@ void main() {
     });
 
     test('parses daily health snapshot fields', () {
-      final flags = DeviceModel.healthFlagGpsUartReady |
+      const flags = DeviceModel.healthFlagGpsUartReady |
           DeviceModel.healthFlagGpsNmeaSeen |
           DeviceModel.healthFlagMpuReady |
           DeviceModel.healthFlagMlxReady |
@@ -66,7 +66,7 @@ void main() {
     });
 
     test('marks fallback daily report as attention', () {
-      final flags = DeviceModel.healthFlagGpsUartReady |
+      const flags = DeviceModel.healthFlagGpsUartReady |
           DeviceModel.healthFlagGpsNmeaSeen |
           DeviceModel.healthFlagMpuReady |
           DeviceModel.healthFlagMlxReady |

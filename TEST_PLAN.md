@@ -14,6 +14,8 @@
 - `gateway`
 - `gateway-matriz`
 
+Nota de plataforma (2026-03-21): o app passa a suportar somente `iOS`, `Android` e `Web`. Referencias anteriores a `macOS` abaixo permanecem apenas como historico de auditorias ja executadas.
+
 ## Gates implementados no CI
 
 ### PR (bloqueante)

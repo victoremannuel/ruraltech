@@ -89,6 +89,7 @@ ruraltech/
     tests/
   contracts/
     messages/
+  temp/
   .github/workflows/
 ```
 
@@ -103,6 +104,7 @@ Papel dos diretorios:
 - `firmware/shared`: validacoes de contrato reutilizadas entre firmwares.
 - `firmware/tests`: testes nativos de contrato/fragmentacao.
 - `contracts/messages`: fixtures JSON que definem o contrato app <-> firmwares.
+- `temp`: area padrao para artefatos temporarios locais do monorepo (compilacao, logs, saidas de testes e diagnosticos).
 - `.github/workflows`: gates de qualidade de PR e regressao noturna.
 
 ---
@@ -129,6 +131,12 @@ Papel dos diretorios:
 - Nao usar falhas silenciosas para regras de negocio.
 - Em comandos app/firmware, sempre produzir retorno estruturado (`ok` + `reason`) via `command_result`/`ACK`/`NACK`.
 - Mensagens de erro devem indicar causa acionavel (ex.: `invalid_device_id`, `admin_required_for_lora_only`).
+
+### Arquivos temporarios
+
+- Todo artefato temporario local gerado durante o trabalho no monorepo deve ser salvo em `temp/`.
+- Exemplos: arquivos de compilacao temporarios, logs, dumps, relatorios intermediarios e saidas de testes executados localmente.
+- Evitar espalhar esses arquivos em `app/`, `firmware/`, raiz do repo ou outras pastas fora de `temp/`, salvo quando uma ferramenta exigir caminho fixo.
 
 ---
 
@@ -216,3 +224,4 @@ group('GatewayService business rules', () {
 - Nao commitar arquivos locais de segredos (`manual_settings.local.h`, chaves de producao).
 - Nao bypassar validacoes de seguranca/admin para comandos criticos.
 - Nao desativar gates de CI (`flutter analyze`, `flutter test`, `rules tests`, `firmware compile`).
+- Nao criar artefatos temporarios locais fora de `temp/` sem necessidade tecnica.

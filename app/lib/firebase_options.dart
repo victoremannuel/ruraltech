@@ -24,15 +24,9 @@ class DefaultFirebaseOptions {
         return android;
       case TargetPlatform.iOS:
         return ios;
-      case TargetPlatform.macOS:
-        return macos;
-      case TargetPlatform.windows:
-        return windows;
-      case TargetPlatform.linux:
-        return linux;
       default:
         throw UnsupportedError(
-          'DefaultFirebaseOptions are not supported for this platform.',
+          'DefaultFirebaseOptions are configured only for Android, iOS, and Web.',
         );
     }
   }
@@ -65,37 +59,5 @@ class DefaultFirebaseOptions {
     databaseURL: 'https://ruraltech10-default-rtdb.firebaseio.com',
     storageBucket: 'ruraltech10.firebasestorage.app',
     iosBundleId: 'com.victor.ruraltechapp',
-  );
-
-  static const FirebaseOptions macos = FirebaseOptions(
-    apiKey: 'AIzaSyB_GcGKK4gYiwzOv_E0dfkmokPAWbhu4Bo',
-    appId: '1:872721218590:ios:20008cba37cbb2c351820f',
-    messagingSenderId: '872721218590',
-    projectId: 'ruraltech10',
-    databaseURL: 'https://ruraltech10-default-rtdb.firebaseio.com',
-    storageBucket: 'ruraltech10.firebasestorage.app',
-    iosBundleId: 'com.victor.ruraltechapp',
-  );
-
-  static const FirebaseOptions windows = FirebaseOptions(
-    apiKey: 'AIzaSyAL2GEnAjqU2G5f5BEjGXVDeHeGXy4C9bQ',
-    appId: '1:872721218590:web:1731a4fe5d01dd9f51820f',
-    messagingSenderId: '872721218590',
-    projectId: 'ruraltech10',
-    authDomain: 'ruraltech10.firebaseapp.com',
-    databaseURL: 'https://ruraltech10-default-rtdb.firebaseio.com',
-    storageBucket: 'ruraltech10.firebasestorage.app',
-    measurementId: 'G-SR0V580M48',
-  );
-
-  static const FirebaseOptions linux = FirebaseOptions(
-    apiKey: 'AIzaSyAL2GEnAjqU2G5f5BEjGXVDeHeGXy4C9bQ',
-    appId: '1:872721218590:web:1731a4fe5d01dd9f51820f',
-    messagingSenderId: '872721218590',
-    projectId: 'ruraltech10',
-    authDomain: 'ruraltech10.firebaseapp.com',
-    databaseURL: 'https://ruraltech10-default-rtdb.firebaseio.com',
-    storageBucket: 'ruraltech10.firebasestorage.app',
-    measurementId: 'G-SR0V580M48',
   );
 }

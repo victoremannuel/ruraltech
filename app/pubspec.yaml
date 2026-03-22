@@ -43,7 +43,3 @@ flutter_launcher_icons:
   remove_alpha_ios: true
   web:
     generate: true
-  windows:
-    generate: true
-  macos:
-    generate: true
