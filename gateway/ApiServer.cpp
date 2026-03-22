@@ -302,7 +302,7 @@ void ApiServer::broadcastTelemetry(const String& json) {
 
 bool ApiServer::hasPendingCommand() const { return head_ != tail_; }
 
-bool ApiServer::popCommand(StaticJsonDocument<512>& out) {
+bool ApiServer::popCommand(StaticJsonDocument<4096>& out) {
   if (!hasPendingCommand()) return false;
   String s = queue_[tail_];
   tail_ = (uint8_t)((tail_ + 1U) % kCommandQueueSize);

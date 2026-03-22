@@ -75,6 +75,7 @@ struct HerdingPlan {
   bool active = false;
   uint8_t phaseCount = 0;
   uint8_t currentPhase = 0;
+  char operationId[cfg::OPERATION_ID_MAX_LEN]{};
   Polygon phases[cfg::MAX_HERD_PHASES]{};
 };
 
@@ -83,4 +84,5 @@ struct EventRecord {
   EventType type = EventType::GPS_FAIL;
   int32_t d1 = 0;
   int32_t d2 = 0;
+  char operationId[cfg::OPERATION_ID_MAX_LEN]{};
 };

@@ -136,4 +136,49 @@ describe("Firestore rules", () => {
     await assertSucceeds(getDoc(doc(linkedDb, "ruralProperties/farm-1")));
     await assertFails(getDoc(doc(otherDb, "ruralProperties/farm-1")));
   });
+
+  it("allows owner to create herding operation for accessible property and linked user to read it", async () => {
+    const ownerCtx = testEnv.authenticatedContext("owner-user");
+    const linkedCtx = testEnv.authenticatedContext("linked-user");
+    const otherCtx = testEnv.authenticatedContext("other-user");
+    const ownerDb = ownerCtx.firestore();
+    const linkedDb = linkedCtx.firestore();
+    const otherDb = otherCtx.firestore();
+
+    const payload = {
+      ownerUid: doc(ownerDb, "users/owner-user"),
+      requestedByUid: doc(ownerDb, "users/owner-user"),
+      requestedByRole: "user",
+      propertyId: "farm-1",
+      matrixGatewayId: "matrix-1",
+      status: "submitted",
+      selectedDeviceIds: ["101"],
+      notifyUserIds: ["owner-user", "linked-user"],
+      targetPolygon: [
+        { lat: -20.1, lon: -43.8 },
+        { lat: -20.2, lon: -43.9 },
+        { lat: -20.3, lon: -43.7 },
+      ],
+      deviceStatuses: {
+        "101": {
+          status: "pending",
+          retryCount: 0,
+          updatedAtMs: 1730000000000,
+        },
+      },
+    };
+
+    await assertSucceeds(
+      setDoc(doc(ownerDb, "herdingOperations/op-1"), payload),
+    );
+    await assertSucceeds(getDoc(doc(linkedDb, "herdingOperations/op-1")));
+    await assertFails(
+      setDoc(doc(otherDb, "herdingOperations/op-2"), {
+        ...payload,
+        ownerUid: doc(otherDb, "users/other-user"),
+        requestedByUid: doc(otherDb, "users/other-user"),
+        notifyUserIds: ["other-user"],
+      }),
+    );
+  });
 });

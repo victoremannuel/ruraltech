@@ -111,8 +111,8 @@ class DeviceDetailsScreen extends StatelessWidget {
                       context,
                       MaterialPageRoute(
                         builder: (_) => HerdingScreen(
-                          deviceId: loraDeviceId,
-                          gatewayId: device.gatewayId,
+                          initialDeviceId: loraDeviceId,
+                          initialPropertyId: device.propertyId,
                           initialLat: device.lat,
                           initialLon: device.lon,
                         ),

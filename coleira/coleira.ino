@@ -73,6 +73,12 @@ bool storageReady_ = false;
 bool loraReady_ = false;
 bool lastLoRaTxOk_ = false;
 static void logEvent(EventType type, int32_t d1, int32_t d2);
+static void copyStringToBuffer(char* dst, size_t dstSize, const char* src);
+static const char* eventTypeLabel(EventType type);
+static const char* commandLabel(MsgType type);
+static const char* activeHerdOperationId();
+static void promoteCompletedHerdingFence();
+static bool isValidPolygon(const Polygon& p);
 static bool beginPrefs();
 static void refreshBlePositionForOnboarding();
 static void printBootChecklist(bool bleInitOk, bool storageOk, bool loraOk);
@@ -101,6 +107,67 @@ struct HerdChunkRxState {
 
 static void randomNonce(uint8_t* nonce12) {
   for (int i = 0; i < 12; ++i) nonce12[i] = (uint8_t)esp_random();
+}
+
+static void copyStringToBuffer(char* dst, size_t dstSize, const char* src) {
+  if (dstSize == 0) return;
+  if (!src) {
+    dst[0] = '\0';
+    return;
+  }
+  strncpy(dst, src, dstSize - 1);
+  dst[dstSize - 1] = '\0';
+}
+
+static const char* commandLabel(MsgType type) {
+  switch (type) {
+    case MsgType::SET_FENCE:
+      return "SET_FENCE";
+    case MsgType::SET_HERDING_PLAN:
+      return "SET_HERDING_PLAN";
+    case MsgType::SET_PARAMS:
+      return "SET_PARAMS";
+    case MsgType::PING:
+      return "PING";
+    default:
+      return "UNKNOWN";
+  }
+}
+
+static const char* eventTypeLabel(EventType type) {
+  switch (type) {
+    case EventType::APPROACH:
+      return "approach";
+    case EventType::VIOLATION:
+      return "violation";
+    case EventType::RETURNED:
+      return "returned";
+    case EventType::PULSE_APPLIED:
+      return "pulse_applied";
+    case EventType::GPS_FAIL:
+      return "gps_fail";
+    case EventType::NO_MOTION:
+      return "no_motion";
+    case EventType::HERD_START:
+      return "herd_start";
+    case EventType::HERD_PHASE_CHANGE:
+      return "herd_phase_change";
+    case EventType::HERD_DONE:
+      return "herd_done";
+    case EventType::GPS_INVALID_FIX:
+      return "gps_invalid_fix";
+    case EventType::GPS_OUTLIER:
+      return "gps_outlier";
+    case EventType::GPS_LOCKED:
+      return "gps_locked";
+    case EventType::GPS_UNLOCKED:
+      return "gps_unlocked";
+  }
+  return "event";
+}
+
+static const char* activeHerdOperationId() {
+  return herding.plan().operationId;
 }
 
 static bool persistLoRaSeqHighWatermark(uint32_t hi) {
@@ -271,6 +338,7 @@ static bool sanitizeHerdingPlan(HerdingPlan* plan) {
     plan->active = false;
     plan->phaseCount = 0;
     plan->currentPhase = 0;
+    plan->operationId[0] = '\0';
     return false;
   }
   for (uint8_t i = 0; i < plan->phaseCount; ++i) {
@@ -278,6 +346,7 @@ static bool sanitizeHerdingPlan(HerdingPlan* plan) {
       plan->active = false;
       plan->phaseCount = 0;
       plan->currentPhase = 0;
+      plan->operationId[0] = '\0';
       return false;
     }
   }
@@ -419,6 +488,7 @@ static bool parseHerdingPlanJson(const JsonArray& phases, HerdingPlan* outPlan, 
   tmp.active = true;
   tmp.phaseCount = (uint8_t)phaseCount;
   tmp.currentPhase = 0;
+  tmp.operationId[0] = '\0';
   for (uint8_t i = 0; i < tmp.phaseCount; ++i) {
     JsonArray points = phases[i].as<JsonArray>();
     if (!parsePolygonJson(points, &tmp.phases[i], err)) return false;
@@ -497,6 +567,7 @@ static bool applyHerdChunkJson(const JsonObject& doc, const char** err) {
   const int phaseTotal = doc["phase_total"] | -1;
   const int part = doc["part"] | -1;
   const int total = doc["total"] | -1;
+  const char* operationId = doc["operation_id"] | "";
   const JsonArray points = doc["points"].as<JsonArray>();
 
   if (phaseIdx < 0 || phaseTotal <= 0 || phaseIdx >= phaseTotal || phaseTotal > cfg::MAX_HERD_PHASES) {
@@ -522,6 +593,10 @@ static bool applyHerdChunkJson(const JsonObject& doc, const char** err) {
     herdChunkRx_.plan.active = true;
     herdChunkRx_.plan.phaseCount = (uint8_t)phaseTotal;
     herdChunkRx_.plan.currentPhase = 0;
+    copyStringToBuffer(
+        herdChunkRx_.plan.operationId,
+        sizeof(herdChunkRx_.plan.operationId),
+        operationId);
     herdChunkRx_.phaseAccum.count = 0;
   }
 
@@ -542,6 +617,11 @@ static bool applyHerdChunkJson(const JsonObject& doc, const char** err) {
     herdChunkRx_.phaseAccum.count = 0;
     herdChunkRx_.expectedPart = 0;
     herdChunkRx_.totalPartsCurrentPhase = (uint8_t)total;
+    if (operationId[0] != '\0' &&
+        strcmp(herdChunkRx_.plan.operationId, operationId) != 0) {
+      if (err) *err = "operation_id_mismatch";
+      return false;
+    }
   } else if (herdChunkRx_.totalPartsCurrentPhase != (uint8_t)total) {
     if (err) *err = "chunk_total_mismatch";
     return false;
@@ -972,7 +1052,29 @@ static void logEvent(EventType type, int32_t d1 = 0, int32_t d2 = 0) {
   ev.type = type;
   ev.d1 = d1;
   ev.d2 = d2;
+  if (type == EventType::HERD_START ||
+      type == EventType::HERD_PHASE_CHANGE ||
+      type == EventType::HERD_DONE) {
+    copyStringToBuffer(
+        ev.operationId,
+        sizeof(ev.operationId),
+        activeHerdOperationId());
+  } else {
+    ev.operationId[0] = '\0';
+  }
   storage.pushEvent(ev);
+}
+
+static void promoteCompletedHerdingFence() {
+  const HerdingPlan& plan = herding.plan();
+  if (plan.phaseCount == 0) return;
+  const Polygon& target = plan.phases[plan.phaseCount - 1];
+  if (!isValidPolygon(target)) return;
+  geofence.setFence(target);
+  persistFence(target);
+  LOGI(
+      "Area final do arrebanhamento promovida para cerca ativa (%u pontos)",
+      target.count);
 }
 
 namespace {
@@ -1091,7 +1193,12 @@ static uint8_t buildTelemetryPayload(const Telemetry& t, uint8_t* out, size_t ma
   return serializeJson(doc, out, max);
 }
 
-static void sendCommandFeedback(const LoRaFrame& cmd, bool ok, const char* reason = nullptr) {
+static void sendCommandFeedback(
+    const LoRaFrame& cmd,
+    bool ok,
+    const char* reason = nullptr,
+    const char* status = nullptr,
+    const char* operationId = nullptr) {
   LoRaFrame reply;
   reply.deviceId = cfg::DEVICE_ID;
   reply.msgType = ok ? MsgType::ACK : MsgType::NACK;
@@ -1099,11 +1206,14 @@ static void sendCommandFeedback(const LoRaFrame& cmd, bool ok, const char* reaso
   reply.timestamp = millis() / 1000;
   randomNonce(reply.nonce);
 
-  StaticJsonDocument<128> payload;
-  payload["cmd"] = (int)cmd.msgType;
+  StaticJsonDocument<192> payload;
+  payload["cmd"] = commandLabel(cmd.msgType);
+  payload["cmd_code"] = (int)cmd.msgType;
   payload["cmd_seq"] = cmd.seq;
   payload["ok"] = ok;
+  if (status && status[0]) payload["status"] = status;
   if (reason && reason[0]) payload["reason"] = reason;
+  if (operationId && operationId[0]) payload["operation_id"] = operationId;
   reply.payloadLen = serializeJson(payload, reply.payload, sizeof(reply.payload));
 
   if (!lora.sendFrame(reply)) {
@@ -1162,7 +1272,16 @@ static void applyDownlink(const LoRaFrame& frame) {
         sendCommandFeedback(frame, false, err ? err : "invalid_herd_chunk");
         return;
       }
-      sendCommandFeedback(frame, true);
+      const bool herdCompletedAssembly =
+          !herdChunkRx_.active && herding.plan().operationId[0] != '\0';
+      if (herdCompletedAssembly) {
+        sendCommandFeedback(
+            frame,
+            true,
+            "assembled",
+            "assembled",
+            herding.plan().operationId);
+      }
     } else {
       resetHerdChunkRx();
       HerdingPlan plan;
@@ -1170,12 +1289,21 @@ static void applyDownlink(const LoRaFrame& frame) {
         sendCommandFeedback(frame, false, err ? err : "invalid_herd_plan");
         return;
       }
+      copyStringToBuffer(
+          plan.operationId,
+          sizeof(plan.operationId),
+          doc["operation_id"] | "");
       herding.setPlan(plan);
       persistHerdingPlan(plan);
       stateMachine.setMode(CollarMode::CONDUCAO);
       logEvent(EventType::HERD_START, plan.phaseCount, 0);
       LOGI("SET_HERDING_PLAN aplicado: fases=%u", plan.phaseCount);
-      sendCommandFeedback(frame, true);
+      sendCommandFeedback(
+          frame,
+          true,
+          "assembled",
+          "assembled",
+          plan.operationId);
     }
   } else if (frame.msgType == MsgType::SET_PARAMS) {
     if (doc["wifi_ota_enabled"].is<bool>()) {
@@ -1466,6 +1594,9 @@ void loop() {
 
   EventRecord herdEvent;
   if (herding.updateWithGps(t.gps, &herdEvent)) {
+    if (herdEvent.type == EventType::HERD_DONE) {
+      promoteCompletedHerdingFence();
+    }
     logEvent(herdEvent.type, herdEvent.d1, herdEvent.d2);
     persistHerdingPlan(herding.plan());
     if (!herding.active() && stateMachine.mode() == CollarMode::CONDUCAO) {
@@ -1502,10 +1633,16 @@ void loop() {
     ev.seq = nextLoRaSeq();
     ev.timestamp = pending.ts;
     randomNonce(ev.nonce);
-    StaticJsonDocument<128> d;
-    d["type"] = (int)pending.type;
+    StaticJsonDocument<192> d;
+    d["type"] = eventTypeLabel(pending.type);
+    d["event_type"] = eventTypeLabel(pending.type);
+    d["event_code"] = (int)pending.type;
     d["d1"] = pending.d1;
     d["d2"] = pending.d2;
+    if (pending.operationId[0] != '\0') d["operation_id"] = pending.operationId;
+    if (pending.type == EventType::HERD_PHASE_CHANGE) {
+      d["phase_index"] = pending.d1;
+    }
     ev.payloadLen = serializeJson(d, ev.payload, sizeof(ev.payload));
     if (!lora.sendFrame(ev)) break;
     if (otaSessionLikelyActive) {

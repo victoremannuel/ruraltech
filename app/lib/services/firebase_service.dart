@@ -2,22 +2,23 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_database/firebase_database.dart' as rtdb;
 import '../config/manual_settings.dart';
 import '../models/device_model.dart';
+import '../models/herding_operation_model.dart';
 
 class FirebaseService {
   static const String _defaultRtdbUrl = ManualSettings.firebaseRtdbUrl;
   static const int _telemetryRetentionDays = 365;
 
   final FirebaseFirestore _db = FirebaseFirestore.instance;
-  late final FirebaseDatabase _rtdb;
+  late final rtdb.FirebaseDatabase _rtdb;
   final Map<String, int> _telemetryDedupUntilMs = <String, int>{};
   final Map<String, int> _healthDedupUntilMs = <String, int>{};
 
   FirebaseService() {
     final configuredUrl = Firebase.app().options.databaseURL?.trim() ?? '';
-    _rtdb = FirebaseDatabase.instanceFor(
+    _rtdb = rtdb.FirebaseDatabase.instanceFor(
       app: Firebase.app(),
       databaseURL: configuredUrl.isNotEmpty ? configuredUrl : _defaultRtdbUrl,
     );
@@ -195,6 +196,52 @@ class FirebaseService {
     return null;
   }
 
+  Future<String?> resolveMatrixGatewayIdForProperty({
+    required String propertyId,
+  }) async {
+    final normalizedPropertyId = _idFromRefOrPath(propertyId);
+    if (normalizedPropertyId.isEmpty) return null;
+
+    final byProperty = await _db
+        .collection('gateways')
+        .where('propertyId', isEqualTo: _propertyRefOrNull(normalizedPropertyId))
+        .where('is_matrix', isEqualTo: true)
+        .limit(1)
+        .get();
+    if (byProperty.docs.isNotEmpty) return byProperty.docs.first.id;
+
+    final fallback = await _db
+        .collection('gateways')
+        .where('is_matrix', isEqualTo: true)
+        .limit(1)
+        .get();
+    if (fallback.docs.isNotEmpty) return fallback.docs.first.id;
+    return null;
+  }
+
+  Future<String?> resolveMatrixGatewayWsHost({
+    required String propertyId,
+  }) async {
+    final matrixGatewayId =
+        await resolveMatrixGatewayIdForProperty(propertyId: propertyId);
+    if (matrixGatewayId == null || matrixGatewayId.isEmpty) return null;
+    return _resolveGatewayWsHostByGatewayId(matrixGatewayId);
+  }
+
+  Future<void> registerPushToken({
+    required String uid,
+    required String token,
+  }) async {
+    final normalizedUid = _idFromRefOrPath(uid);
+    final normalizedToken = token.trim();
+    if (normalizedUid.isEmpty || normalizedToken.isEmpty) return;
+
+    await _db.collection('users').doc(normalizedUid).set({
+      'fcmTokens': FieldValue.arrayUnion(<String>[normalizedToken]),
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
   DocumentReference<Map<String, dynamic>> _userRef(dynamic value) =>
       _db.collection('users').doc(_idFromRefOrPath(value));
 
@@ -228,6 +275,12 @@ class FirebaseService {
       }
     }
     return out.toList();
+  }
+
+  Future<List<String>> getLinkedUserIdsForProperty(String propertyId) async {
+    final refs = await _linkedUsersForProperty(propertyId);
+    final ids = refs.map((ref) => ref.id).where((id) => id.isNotEmpty).toSet();
+    return ids.toList()..sort();
   }
 
   double? _latFromPosition(Map<String, dynamic> m) {
@@ -381,6 +434,14 @@ class FirebaseService {
       ...data,
       'ownerUid': _idFromRefOrPath(data['ownerUid']),
     };
+  }
+
+  int _herdingOperationSortKeyMs(HerdingOperationModel operation) {
+    final updatedAt = operation.updatedAt;
+    if (updatedAt != null) return updatedAt.millisecondsSinceEpoch;
+    final createdAt = operation.createdAt;
+    if (createdAt != null) return createdAt.millisecondsSinceEpoch;
+    return 0;
   }
 
   String _sanitizeRtdbKey(String raw) {
@@ -1097,6 +1158,38 @@ class FirebaseService {
     });
   }
 
+  Stream<List<HerdingOperationModel>> streamHerdingOperations({
+    required String uid,
+    required bool isAdmin,
+  }) {
+    Query<Map<String, dynamic>> query = _db.collection('herdingOperations');
+    if (!isAdmin) {
+      query = query.where('notifyUserIds', arrayContains: uid);
+    }
+
+    return query.snapshots().map((snapshot) {
+      final operations = snapshot.docs
+          .map(HerdingOperationModel.fromDoc)
+          .toList()
+        ..sort(
+          (a, b) => _herdingOperationSortKeyMs(b)
+              .compareTo(_herdingOperationSortKeyMs(a)),
+        );
+      return operations;
+    });
+  }
+
+  Stream<HerdingOperationModel?> streamHerdingOperation(String operationId) {
+    final normalizedId = _idFromRefOrPath(operationId);
+    if (normalizedId.isEmpty) return Stream.value(null);
+    return _db.collection('herdingOperations').doc(normalizedId).snapshots().map(
+      (snapshot) {
+        if (!snapshot.exists) return null;
+        return HerdingOperationModel.fromDoc(snapshot);
+      },
+    );
+  }
+
   Future<List<Map<String, dynamic>>> getRuralProperties(
       {required String uid, required bool isAdmin}) async {
     if (isAdmin) {
@@ -1339,6 +1432,93 @@ class FirebaseService {
       'perimeter': _encodeLatLonPoints(perimeter),
       'updatedAt': FieldValue.serverTimestamp(),
     });
+  }
+
+  Future<String> createHerdingOperation({
+    required String ownerUid,
+    required String requestedByUid,
+    required String requestedByRole,
+    required String propertyId,
+    required List<List<double>> targetPolygon,
+    required List<String> selectedDeviceIds,
+    required List<String> notifyUserIds,
+    required String matrixGatewayId,
+  }) async {
+    final normalizedOwnerUid = _idFromRefOrPath(ownerUid);
+    final normalizedRequestedByUid = _idFromRefOrPath(requestedByUid);
+    final normalizedPropertyId = _idFromRefOrPath(propertyId);
+    final normalizedMatrixGatewayId = _idFromRefOrPath(matrixGatewayId);
+    final normalizedDeviceIds = selectedDeviceIds
+        .map((id) => _normalizeLoraDeviceId(id))
+        .whereType<String>()
+        .toSet()
+        .toList()
+      ..sort();
+    final normalizedNotifyUserIds = notifyUserIds
+        .followedBy([normalizedRequestedByUid, normalizedOwnerUid])
+        .map(_idFromRefOrPath)
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+
+    if (normalizedOwnerUid.isEmpty ||
+        normalizedRequestedByUid.isEmpty ||
+        normalizedPropertyId.isEmpty ||
+        normalizedMatrixGatewayId.isEmpty) {
+      throw Exception('Dados obrigatorios do arrebanhamento estao incompletos.');
+    }
+    if (normalizedDeviceIds.isEmpty) {
+      throw Exception('Selecione ao menos uma coleira para o arrebanhamento.');
+    }
+    if (targetPolygon.length < 3) {
+      throw Exception('Informe um poligono destino com ao menos 3 pontos.');
+    }
+
+    final docRef = _db.collection('herdingOperations').doc();
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final deviceStatuses = <String, Map<String, dynamic>>{};
+    for (final deviceId in normalizedDeviceIds) {
+      deviceStatuses[deviceId] = <String, dynamic>{
+        'status': 'pending',
+        'retryCount': 0,
+        'updatedAtMs': nowMs,
+      };
+    }
+
+    await docRef.set({
+      'operationId': docRef.id,
+      'ownerUid': _userRef(normalizedOwnerUid),
+      'requestedByUid': _userRef(normalizedRequestedByUid),
+      'requestedByRole': requestedByRole.trim().isEmpty
+          ? 'user'
+          : requestedByRole.trim().toLowerCase(),
+      'propertyId': normalizedPropertyId,
+      'matrixGatewayId': normalizedMatrixGatewayId,
+      'status': herdingOperationStatusValue(HerdingOperationStatus.submitted),
+      'targetPolygon': _encodeLatLonPoints(targetPolygon),
+      'selectedDeviceIds': normalizedDeviceIds,
+      'notifyUserIds': normalizedNotifyUserIds,
+      'deviceStatuses': deviceStatuses,
+      'areaPromotionRequested': true,
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    return docRef.id;
+  }
+
+  Future<void> markHerdingOperationSubmissionFailed({
+    required String operationId,
+    required String reason,
+  }) async {
+    final normalizedId = _idFromRefOrPath(operationId);
+    if (normalizedId.isEmpty) return;
+    await _db.collection('herdingOperations').doc(normalizedId).set({
+      'status': herdingOperationStatusValue(HerdingOperationStatus.failed),
+      'clientFailureReason': reason,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
   }
 
   Future<void> addDevice({

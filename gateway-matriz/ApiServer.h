@@ -14,7 +14,7 @@ class ApiServer {
   void loop();
   void broadcastTelemetry(const String& json);
   bool hasPendingCommand() const;
-  bool popCommand(StaticJsonDocument<512>& out);
+  bool popCommand(StaticJsonDocument<4096>& out);
 
  private:
   static constexpr uint8_t kCommandQueueSize = 8;

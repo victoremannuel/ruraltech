@@ -10,6 +10,7 @@ import 'services/bluetooth_discovery_service.dart';
 import 'services/firebase_service.dart';
 import 'services/gateway_service.dart';
 import 'services/map_filter_service.dart';
+import 'services/notification_service.dart';
 import 'utils/top_feedback.dart';
 
 Future<void> main() async {
@@ -71,6 +72,7 @@ class RuralTechApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => GatewayService()),
         ChangeNotifierProvider(create: (_) => BluetoothDiscoveryService()),
         ChangeNotifierProvider(create: (_) => MapFilterService()),
+        ChangeNotifierProvider(create: (_) => NotificationService()),
       ],
       child: MaterialApp(
         title: 'RuralTech',
@@ -144,10 +146,41 @@ class RuralTechApp extends StatelessWidget {
           ),
         ),
         home: Consumer<AuthService>(
-          builder: (_, auth, __) =>
-              auth.user == null ? const LoginScreen() : const HomeScreen(),
+          builder: (_, auth, __) => auth.user == null
+              ? const LoginScreen()
+              : const _AuthenticatedHome(),
         ),
       ),
     );
+  }
+}
+
+class _AuthenticatedHome extends StatefulWidget {
+  const _AuthenticatedHome();
+
+  @override
+  State<_AuthenticatedHome> createState() => _AuthenticatedHomeState();
+}
+
+class _AuthenticatedHomeState extends State<_AuthenticatedHome> {
+  String? _initializedUid;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final auth = context.read<AuthService>();
+    final firebase = context.read<FirebaseService>();
+    final notifications = context.read<NotificationService>();
+    final uid = auth.user?.uid;
+    if (uid == null || uid == _initializedUid) return;
+    _initializedUid = uid;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      notifications.initialize(uid: uid, firebase: firebase);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const HomeScreen();
   }
 }

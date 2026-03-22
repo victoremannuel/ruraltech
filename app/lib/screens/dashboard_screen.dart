@@ -21,6 +21,7 @@ import '../utils/polygon_metrics.dart';
 import '../utils/top_feedback.dart';
 import 'area_editor_screen.dart';
 import 'events_screen.dart';
+import 'herding_screen.dart';
 import 'map_point_picker_screen.dart';
 import 'polygon_editor_screen.dart';
 import 'profile_screen.dart';
@@ -2737,6 +2738,18 @@ class _HomeScreenState extends State<HomeScreen> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (_) => const AreaEditorScreen()),
+                );
+              },
+            ),
+            ListTile(
+              key: const Key('home_action_start_herding'),
+              leading: const Icon(Icons.alt_route),
+              title: const Text('Solicitar arrebanhamento'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const HerdingScreen()),
                 );
               },
             ),

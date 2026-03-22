@@ -49,6 +49,16 @@ service cloud.firestore {
         );
     }
 
+    function listContainsCurrentUser(listValue) {
+      return signedIn() &&
+        listValue is list &&
+        (
+          userRef() in listValue ||
+          userPath() in listValue ||
+          uid() in listValue
+        );
+    }
+
     function canAccessCollar(collarId) {
       return isAdmin() || (
         exists(/databases/$(database)/documents/collars/$(collarId)) &&
@@ -75,50 +85,42 @@ service cloud.firestore {
         canAccessProperty(propertyPath.split('/')[2]);
     }
 
+    function canAccessPropertyField(propertyField) {
+      return signedIn() &&
+        propertyField != null &&
+        propertyField is string &&
+        (
+          canAccessPropertyByPath(propertyField) ||
+          (
+            !propertyField.matches('^/.+$') &&
+            canAccessProperty(propertyField)
+          )
+        );
+    }
+
     function canAccessGateway(gatewayData) {
       return isAdmin() || (
         ('propertyId' in gatewayData) &&
-        (gatewayData.propertyId != null) &&
-        (
-          (
-            gatewayData.propertyId is path &&
-            canAccessProperty(gatewayData.propertyId.id)
-          ) ||
-          (
-            gatewayData.propertyId is string &&
-            (
-              canAccessPropertyByPath(gatewayData.propertyId) ||
-              (
-                !gatewayData.propertyId.matches('^/.+$') &&
-                canAccessProperty(gatewayData.propertyId)
-              )
-            )
-          )
-        )
+        canAccessPropertyField(gatewayData.propertyId)
       );
     }
 
     function canAccessArea(areaData) {
       return isAdmin() || (
         ('ruralPropertiesID' in areaData) &&
-        (areaData.ruralPropertiesID != null) &&
-        (
-          (
-            areaData.ruralPropertiesID is path &&
-            canAccessProperty(areaData.ruralPropertiesID.id)
-          ) ||
-          (
-            areaData.ruralPropertiesID is string &&
-            (
-              canAccessPropertyByPath(areaData.ruralPropertiesID) ||
-              (
-                !areaData.ruralPropertiesID.matches('^/.+$') &&
-                canAccessProperty(areaData.ruralPropertiesID)
-              )
-            )
-          )
-        )
+        canAccessPropertyField(areaData.ruralPropertiesID)
       );
+    }
+
+    function canAccessHerdingOperation(operationData) {
+      return isAdmin() ||
+        matchesCurrentUserRef(operationData.ownerUid) ||
+        matchesCurrentUserRef(operationData.requestedByUid) ||
+        listContainsCurrentUser(operationData.notifyUserIds) ||
+        (
+          ('propertyId' in operationData) &&
+          canAccessPropertyField(operationData.propertyId)
+        );
     }
 
     match /users/{userId} {
@@ -230,7 +232,25 @@ service cloud.firestore {
             matchesCurrentUserRef(request.resource.data.ownerUid) &&
             canAccessCollar(request.resource.data.deviceId)
           )
-        );
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /herdingOperations/{operationId} {
+      allow read: if signedIn() && canAccessHerdingOperation(resource.data);
+      allow create: if signedIn() && (
+        isAdmin() ||
+        (
+          matchesCurrentUserRef(request.resource.data.requestedByUid) &&
+          canAccessPropertyField(request.resource.data.propertyId) &&
+          listContainsCurrentUser(request.resource.data.notifyUserIds)
+        )
+      );
+      allow update: if signedIn() && (
+        isAdmin() ||
+        matchesCurrentUserRef(resource.data.requestedByUid) ||
+        matchesCurrentUserRef(resource.data.ownerUid)
+      );
       allow delete: if isAdmin();
     }
 

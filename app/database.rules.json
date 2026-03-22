@@ -27,6 +27,32 @@
           }
         }
       }
+    },
+    "healthLatest": {
+      "$deviceId": {
+        ".read": "auth != null",
+        ".write": "auth != null || (auth == null && newData.child('writer').val() === 'gateway_matrix' && newData.child('matrixId').isString() && newData.child('writerKey').isString() && root.child('matrixWriterKeys').child(newData.child('matrixId').val()).val() === newData.child('writerKey').val())",
+        ".validate": "newData.hasChildren(['deviceId','kind','receivedAt','writer']) && newData.child('kind').val() === 'health_daily' && newData.child('receivedAt').isNumber()"
+      }
+    },
+    "healthHistory": {
+      "$deviceId": {
+        "$dayKey": {
+          ".indexOn": ["receivedAt"],
+          "$entryId": {
+            ".read": "auth != null",
+            ".write": "auth != null || (auth == null && newData.child('writer').val() === 'gateway_matrix' && newData.child('matrixId').isString() && newData.child('writerKey').isString() && root.child('matrixWriterKeys').child(newData.child('matrixId').val()).val() === newData.child('writerKey').val())",
+            ".validate": "newData.hasChildren(['deviceId','kind','receivedAt','writer']) && newData.child('kind').val() === 'health_daily' && newData.child('receivedAt').isNumber()"
+          }
+        }
+      }
+    },
+    "herdingOperations": {
+      "$operationId": {
+        ".read": "auth != null",
+        ".write": "auth != null || (auth == null && newData.child('writer').val() === 'gateway_matrix' && newData.child('matrixId').isString() && newData.child('writerKey').isString() && root.child('matrixWriterKeys').child(newData.child('matrixId').val()).val() === newData.child('writerKey').val())",
+        ".validate": "newData.hasChildren(['operationId','status','updatedAt','writer']) && newData.child('operationId').isString() && newData.child('status').isString() && newData.child('updatedAt').isNumber()"
+      }
     }
   }
 }

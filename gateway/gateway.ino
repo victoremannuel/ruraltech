@@ -358,7 +358,9 @@ static bool isRelayCandidate(const LoRaFrame& frame) {
   return frame.msgType == MsgType::TELEMETRY ||
          frame.msgType == MsgType::EVENT ||
          frame.msgType == MsgType::ACK ||
-         frame.msgType == MsgType::NACK;
+         frame.msgType == MsgType::NACK ||
+         frame.msgType == MsgType::SET_FENCE ||
+         frame.msgType == MsgType::SET_HERDING_PLAN;
 }
 
 static const char* uplinkTypeLabel(MsgType t) {
@@ -537,6 +539,8 @@ static bool sendHerdingPlanChunked(uint32_t deviceId, const JsonVariantConst pay
     for (uint8_t part = 0; part < chunkCount; ++part) {
       StaticJsonDocument<384> chunkDoc;
       chunkDoc["chunked"] = true;
+      const char* operationId = payload["operation_id"] | "";
+      if (operationId[0] != '\0') chunkDoc["operation_id"] = operationId;
       chunkDoc["phase_index"] = phaseIdx;
       chunkDoc["phase_total"] = phaseTotal;
       chunkDoc["part"] = part;
@@ -756,7 +760,7 @@ void loop() {
   }
 
   if (api.hasPendingCommand()) {
-    StaticJsonDocument<512> cmd;
+    StaticJsonDocument<4096> cmd;
     if (api.popCommand(cmd)) {
       const String command = cmd["command"] | "PING";
       const JsonVariantConst payload = cmd["payload"].as<JsonVariantConst>();

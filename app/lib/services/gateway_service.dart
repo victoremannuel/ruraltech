@@ -167,6 +167,22 @@ class GatewayService extends ChangeNotifier {
     if (messages.length > 200) messages.removeLast();
   }
 
+  void _pushLocalOperationResult({
+    required String operationId,
+    required bool ok,
+    required String reason,
+  }) {
+    messages.insert(0, {
+      'type': 'herding_operation_update',
+      'source': 'app_validation',
+      'operation_id': operationId,
+      'ok': ok,
+      'status': ok ? 'accepted' : 'failed',
+      'reason': reason,
+    });
+    if (messages.length > 200) messages.removeLast();
+  }
+
   int? _toInt(dynamic value) {
     if (value is int) return value;
     if (value is num) return value.toInt();
@@ -234,6 +250,35 @@ class GatewayService extends ChangeNotifier {
       return null;
     }
     return 'admin_required_for_lora_only';
+  }
+
+  String? _validateHerdingOperationPayload(Map<String, dynamic> payload) {
+    final operationId = (payload['operation_id'] ?? '').toString().trim();
+    if (operationId.isEmpty) return 'missing_operation_id';
+
+    final selectedDeviceIds = payload['selected_device_ids'];
+    if (selectedDeviceIds is! List || selectedDeviceIds.isEmpty) {
+      return 'missing_selected_device_ids';
+    }
+    for (var i = 0; i < selectedDeviceIds.length; i++) {
+      final raw = selectedDeviceIds[i];
+      final parsed = int.tryParse(raw.toString().trim());
+      if (parsed == null || parsed <= 0) {
+        return 'invalid_selected_device_$i';
+      }
+    }
+
+    final targetPolygon = payload['target_polygon'];
+    if (targetPolygon is! List) return 'missing_target_polygon';
+    if (targetPolygon.length < 3) return 'too_few_target_points';
+    if (targetPolygon.length > maxPolygonPoints) return 'too_many_target_points';
+    for (var i = 0; i < targetPolygon.length; i++) {
+      if (!_isValidPointPair(targetPolygon[i])) {
+        return 'invalid_target_point_$i';
+      }
+    }
+
+    return null;
   }
 
   String? _validatePayloadByCommand(
@@ -716,6 +761,65 @@ class GatewayService extends ChangeNotifier {
     if (!connected) return false;
 
     return sendCommand(deviceId: deviceId, command: command, payload: payload);
+  }
+
+  bool startHerdingOperation({
+    required Map<String, dynamic> payload,
+  }) {
+    final operationId = (payload['operation_id'] ?? '').toString().trim();
+    final validationError = _validateHerdingOperationPayload(payload);
+    if (validationError != null) {
+      lastError = '[start_herding_operation] $validationError';
+      _pushLocalOperationResult(
+        operationId: operationId,
+        ok: false,
+        reason: validationError,
+      );
+      notifyListeners();
+      return false;
+    }
+
+    if (!isConnected || _channel == null) {
+      lastError = '[start_herding_operation] gateway_not_connected';
+      _pushLocalOperationResult(
+        operationId: operationId,
+        ok: false,
+        reason: 'gateway_not_connected',
+      );
+      notifyListeners();
+      return false;
+    }
+
+    try {
+      _channel!.sink.add(
+        jsonEncode({
+          'type': 'start_herding_operation',
+          'payload': payload,
+        }),
+      );
+      lastError = null;
+      return true;
+    } catch (e) {
+      lastError = '[start_herding_operation] send_failed: $e';
+      _pushLocalOperationResult(
+        operationId: operationId,
+        ok: false,
+        reason: 'send_failed',
+      );
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> startHerdingOperationEnsuringConnection({
+    required Map<String, dynamic> payload,
+    String? hostOverride,
+    Duration timeout = const Duration(seconds: 4),
+  }) async {
+    final connected =
+        await ensureConnected(hostOverride: hostOverride, timeout: timeout);
+    if (!connected) return false;
+    return startHerdingOperation(payload: payload);
   }
 
   @override

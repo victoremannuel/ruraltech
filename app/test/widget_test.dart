@@ -142,5 +142,28 @@ void main() {
       expect(collars[1]['lat'], -10.0);
       expect(collars[1]['lon'], 20.0);
     });
+
+    test('validates herding operation payload before websocket send', () {
+      final ok = service.startHerdingOperation(
+        payload: const {
+          'operation_id': 'op-1',
+          'selected_device_ids': ['7', 'abc'],
+          'target_polygon': [
+            [-20.1, -43.8],
+            [-20.2, -43.9],
+            [-20.3, -43.7],
+          ],
+        },
+      );
+
+      expect(ok, isFalse);
+      expect(
+        service.lastError,
+        '[start_herding_operation] invalid_selected_device_1',
+      );
+      expect(service.messages.first['type'], 'herding_operation_update');
+      expect(service.messages.first['operation_id'], 'op-1');
+      expect(service.messages.first['reason'], 'invalid_selected_device_1');
+    });
   });
 }

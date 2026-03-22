@@ -12,6 +12,10 @@
 #define RT_MATRIX_OLED_ENABLED 0
 #endif
 
+#ifndef RT_MATRIX_LOG_LEVEL
+#define RT_MATRIX_LOG_LEVEL 2
+#endif
+
 // BLE da matriz:
 // - em partições maiores que min_spiffs, padrão = 1 (onboarding BLE ativo);
 // - em min_spiffs, padrão = 0 para caber em flash sem trocar partição.
@@ -26,7 +30,7 @@
 
 namespace cfg {
 constexpr char FW_VERSION[] = "gateway-matriz-1.0.0";
-constexpr uint8_t LOG_LEVEL = 2;
+constexpr uint8_t LOG_LEVEL = RT_MATRIX_LOG_LEVEL;
 constexpr uint32_t SERIAL_BAUD = 115200;
 constexpr uint16_t TASK_WDT_TIMEOUT_SEC = 30;
 
@@ -72,6 +76,10 @@ constexpr char BLE_SERVICE_UUID[] = "7f920001-0a26-4d09-a606-0cfef4f9a1f0";
 constexpr uint8_t LORA_MAX_PAYLOAD_BYTES = 128;
 constexpr uint8_t MAX_POLYGON_POINTS = 32;
 constexpr uint8_t MAX_HERD_PHASES = 8;
+constexpr uint8_t MAX_HERD_OPERATION_DEVICES = 16;
+constexpr uint32_t HERD_OPERATION_RETRY_MS = 15000;
+constexpr uint32_t HERD_OPERATION_TIMEOUT_MS = 600000;
+constexpr uint32_t HERD_OPERATION_STATUS_PUBLISH_MS = 3000;
 
 // Relay entre gateways (multi-hop best effort)
 constexpr bool GATEWAY_RELAY_ENABLED = true;

@@ -115,6 +115,7 @@ constexpr uint16_t EEPROM_LAST_GOOD_FIX_ADDR = 1792;
 // Geofence e condução
 constexpr uint8_t MAX_POLYGON_POINTS = 32;
 constexpr uint8_t MAX_HERD_PHASES = 8;
+constexpr uint8_t OPERATION_ID_MAX_LEN = 40;
 constexpr float FENCE_WARNING_METERS = 20.0f;
 
 // Criptografia (MVP: chave estática por device; em produção provisionar seguro)

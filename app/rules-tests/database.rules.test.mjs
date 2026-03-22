@@ -52,6 +52,26 @@ describe("Realtime Database rules", () => {
     await assertSucceeds(
       set(ref(db, "telemetryHistory/101/20260227/1730000000000"), payload),
     );
+    await assertSucceeds(
+      set(ref(db, "healthLatest/101"), {
+        deviceId: "101",
+        kind: "health_daily",
+        receivedAt: 1730000000,
+        writer: "gateway_matrix",
+        matrixId: "MATRIX_A",
+        writerKey: "super-secret-key",
+      }),
+    );
+    await assertSucceeds(
+      set(ref(db, "herdingOperations/op-1"), {
+        operationId: "op-1",
+        status: "dispatching",
+        updatedAt: 1730000000000,
+        writer: "gateway_matrix",
+        matrixId: "MATRIX_A",
+        writerKey: "super-secret-key",
+      }),
+    );
   });
 
   it("rejects unauthenticated matrix writer with invalid key", async () => {
