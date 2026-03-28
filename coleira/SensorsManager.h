@@ -30,6 +30,8 @@ class SensorsManager {
   uint16_t gpsBootDollarCount() const { return gpsBootDollarCount_; }
   const String& gpsBootSample() const { return gpsBootSample_; }
   uint32_t gpsBaudUsed() const { return gpsBaudUsed_; }
+  bool gpsBootFixValid() const { return gpsBootFixValid_; }
+  const GpsData& gpsBootFix() const { return gpsBootFix_; }
 
  private:
   bool probeI2cAddress(uint8_t address) const;
@@ -54,4 +56,6 @@ class SensorsManager {
   uint16_t gpsBootDollarCount_ = 0;
   String gpsBootSample_;
   uint32_t gpsBaudUsed_ = 9600;
+  bool gpsBootFixValid_ = false;
+  GpsData gpsBootFix_;
 };

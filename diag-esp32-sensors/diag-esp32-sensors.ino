@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_MLX90614.h>
+#include <TinyGPSPlus.h>
 #include <math.h>
 #include <string.h>
 
@@ -35,6 +36,7 @@ struct GpsProbeResult {
 
 HardwareSerial gpsSerial(1);
 Adafruit_MLX90614 mlx;
+TinyGPSPlus gpsParser;
 
 bool gpsLiveConfigured = false;
 GpsProbeResult gpsLiveConfig;
@@ -266,20 +268,38 @@ void loop() {
     ++gpsLiveBytes;
     if (c == '$') ++gpsLiveDollar;
     if (c == '\n') ++gpsLiveLines;
+    gpsParser.encode((char)c);
     if (c == '\r' || c == '\n' || (c >= 32 && c <= 126)) {
       Serial.write((char)c);
     }
   }
 
   if ((uint32_t)(millis() - gpsLastReportMs) >= diag::GPS_REPORT_MS) {
-    Serial.printf(
-        "\n[GPS-LIVE] rx=%d tx=%d baud=%lu bytes=%lu dollar=%lu lines=%lu\n",
-        gpsLiveConfig.rxPin,
-        gpsLiveConfig.txPin,
-        (unsigned long)gpsLiveConfig.baud,
-        (unsigned long)gpsLiveBytes,
-        (unsigned long)gpsLiveDollar,
-        (unsigned long)gpsLiveLines);
+    if (gpsParser.location.isValid()) {
+      Serial.printf(
+          "\n[GPS-LIVE] status=OK lat=%.6f lon=%.6f rx=%d tx=%d baud=%lu bytes=%lu dollar=%lu lines=%lu\n",
+          gpsParser.location.lat(),
+          gpsParser.location.lng(),
+          gpsLiveConfig.rxPin,
+          gpsLiveConfig.txPin,
+          (unsigned long)gpsLiveConfig.baud,
+          (unsigned long)gpsLiveBytes,
+          (unsigned long)gpsLiveDollar,
+          (unsigned long)gpsLiveLines);
+    } else {
+      const char* status = gpsLiveDollar > 0 ? "WAIT_FIX"
+                                             : (gpsLiveBytes > 0 ? "SERIAL_ONLY"
+                                                                 : "NO_DATA");
+      Serial.printf(
+          "\n[GPS-LIVE] status=%s rx=%d tx=%d baud=%lu bytes=%lu dollar=%lu lines=%lu\n",
+          status,
+          gpsLiveConfig.rxPin,
+          gpsLiveConfig.txPin,
+          (unsigned long)gpsLiveConfig.baud,
+          (unsigned long)gpsLiveBytes,
+          (unsigned long)gpsLiveDollar,
+          (unsigned long)gpsLiveLines);
+    }
     gpsLastReportMs = millis();
   }
 

@@ -152,20 +152,18 @@ class BluetoothDiscoveryService extends ChangeNotifier {
     }
 
     final device = BluetoothDevice.fromId(remoteId.trim());
-    final wasConnected = device.isConnected;
+    var connectedByUs = false;
     try {
       // iOS fica mais estavel para conectar quando o scan e pausado antes do GATT.
       await stopScan();
-      if (!wasConnected) {
-        await _connectWithRetry(
-          device,
-          firstTimeout: connectTimeout,
-          secondTimeout: connectTimeout + const Duration(seconds: 8),
-        );
-      }
+      await Future<void>.delayed(const Duration(milliseconds: 250));
 
-      final services =
-          await device.discoverServices(timeout: operationTimeoutSeconds);
+      final services = await _discoverServicesWithRecovery(
+        device,
+        connectTimeout: connectTimeout,
+        operationTimeoutSeconds: operationTimeoutSeconds,
+        markConnectedByUs: () => connectedByUs = true,
+      );
       BluetoothCharacteristic? positionCharacteristic;
       for (final service in services) {
         if (service.uuid.str.toLowerCase() != ruraltechServiceUuid) continue;
@@ -212,7 +210,7 @@ class BluetoothDiscoveryService extends ChangeNotifier {
       notifyListeners();
       return null;
     } finally {
-      if (!wasConnected && device.isConnected) {
+      if (connectedByUs && device.isConnected) {
         try {
           await device.disconnect(timeout: operationTimeoutSeconds);
         } catch (_) {}
@@ -507,11 +505,12 @@ class BluetoothDiscoveryService extends ChangeNotifier {
       final timeout = timeouts[i];
       try {
         await device.connect(timeout: timeout, mtu: null);
+        await Future<void>.delayed(const Duration(milliseconds: 250));
         return;
       } catch (e) {
         lastConnectError = e;
         final shouldRetry =
-            i < (timeouts.length - 1) && _isRetryableConnectError(e);
+            i < (timeouts.length - 1) && isRetryableBleConnectError(e);
         if (!shouldRetry) break;
 
         try {
@@ -526,9 +525,57 @@ class BluetoothDiscoveryService extends ChangeNotifier {
     throw Exception('ble_connect_failed_without_details');
   }
 
-  bool _isRetryableConnectError(Object error) {
+  @visibleForTesting
+  static bool isRetryableBleConnectError(Object error) {
     final lower = error.toString().toLowerCase();
     if (lower.contains('| connect |')) return true;
+    if (lower.contains('fbp-code: 1')) return true;
+    if (lower.contains('timed out')) return true;
+    return false;
+  }
+
+  Future<List<BluetoothService>> _discoverServicesWithRecovery(
+    BluetoothDevice device, {
+    required Duration connectTimeout,
+    required int operationTimeoutSeconds,
+    required VoidCallback markConnectedByUs,
+  }) async {
+    Object? lastError;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (device.isDisconnected) {
+          await _connectWithRetry(
+            device,
+            firstTimeout: connectTimeout,
+            secondTimeout: connectTimeout + const Duration(seconds: 8),
+          );
+          markConnectedByUs();
+        } else if (attempt > 0) {
+          await Future<void>.delayed(const Duration(milliseconds: 250));
+        }
+        return await device.discoverServices(timeout: operationTimeoutSeconds);
+      } catch (e) {
+        lastError = e;
+        final shouldRetry =
+            attempt == 0 && isRetryableBleDiscoverError(e);
+        if (!shouldRetry) break;
+
+        try {
+          await device.disconnect(timeout: 4, queue: false);
+        } catch (_) {}
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+      }
+    }
+
+    if (lastError != null) throw lastError;
+    throw Exception('ble_discover_failed_without_details');
+  }
+
+  @visibleForTesting
+  static bool isRetryableBleDiscoverError(Object error) {
+    final lower = error.toString().toLowerCase();
+    if (lower.contains('device is disconnected')) return true;
+    if (lower.contains('fbp-code: 6')) return true;
     if (lower.contains('fbp-code: 1')) return true;
     if (lower.contains('timed out')) return true;
     return false;
@@ -552,7 +599,7 @@ class BluetoothDiscoveryService extends ChangeNotifier {
         );
       } catch (e) {
         lastError = e;
-        final canRetry = attempt == 0 && _isRetryableReadError(e);
+        final canRetry = attempt == 0 && isRetryableBleReadError(e);
         if (!canRetry) break;
 
         final services =
@@ -634,7 +681,8 @@ class BluetoothDiscoveryService extends ChangeNotifier {
     }
   }
 
-  bool _isRetryableReadError(Object error) {
+  @visibleForTesting
+  static bool isRetryableBleReadError(Object error) {
     final lower = error.toString().toLowerCase();
     if (lower.contains('| readcharacteristic |')) return true;
     if (lower.contains('fbp-code: 1')) return true;

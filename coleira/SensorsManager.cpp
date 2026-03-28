@@ -11,6 +11,7 @@ constexpr uint8_t kMlxAddress = 0x5A;
 constexpr uint8_t kMpuAddr0 = 0x68;
 constexpr uint8_t kMpuAddr1 = 0x69;
 constexpr uint32_t kGpsProbeWindowMsPerBaud = 1200;
+constexpr uint32_t kGpsFixCaptureWindowMsAfterNmea = 1500;
 constexpr size_t kGpsBootSampleMaxLen = 24;
 constexpr uint16_t kGpsBootNoiseFloorBytes = 8;
 constexpr uint8_t kI2cScanDetailLimit = 10;
@@ -71,6 +72,8 @@ void SensorsManager::begin() {
   gpsBootBytes_ = 0;
   gpsBootDollarCount_ = 0;
   gpsBootSample_ = "";
+  gpsBootFixValid_ = false;
+  gpsBootFix_ = GpsData{};
   for (size_t i = 0; i < (sizeof(kGpsProbeBauds) / sizeof(kGpsProbeBauds[0])); ++i) {
     const uint32_t baud = kGpsProbeBauds[i];
     // Mantem RX estável quando o GPS está desconectado para reduzir leitura
@@ -81,7 +84,8 @@ void SensorsManager::begin() {
     gpsUartReady_ = true;
 
     const uint32_t gpsProbeStart = millis();
-    while ((uint32_t)(millis() - gpsProbeStart) < kGpsProbeWindowMsPerBaud) {
+    uint32_t gpsNmeaSeenAtMs = 0;
+    while (true) {
       while (gpsSerial_.available()) {
         const int c = gpsSerial_.read();
         if (c < 0) continue;
@@ -92,9 +96,24 @@ void SensorsManager::begin() {
           gpsNmeaSeen_ = true;
           ++gpsBootDollarCount_;
           gpsBaudUsed_ = baud;
+          if (gpsNmeaSeenAtMs == 0) gpsNmeaSeenAtMs = millis();
+        }
+        if (!gpsBootFixValid_) {
+          const GpsData bootFix = readGpsSnapshot();
+          if (bootFix.valid) {
+            gpsBootFix_ = bootFix;
+            gpsBootFixValid_ = true;
+            gpsBaudUsed_ = baud;
+          }
         }
       }
-      if (gpsNmeaSeen_) break;
+      if (gpsBootFixValid_) break;
+      if (!gpsNmeaSeen_) {
+        if ((uint32_t)(millis() - gpsProbeStart) >= kGpsProbeWindowMsPerBaud) break;
+      } else if (gpsNmeaSeenAtMs != 0 &&
+                 (uint32_t)(millis() - gpsNmeaSeenAtMs) >= kGpsFixCaptureWindowMsAfterNmea) {
+        break;
+      }
       delay(10);
     }
     if (gpsNmeaSeen_) break;

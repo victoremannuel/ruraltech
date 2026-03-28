@@ -59,6 +59,7 @@ bool wasInside = true;
 bool otaModeActive = false;
 bool wifiOtaEnabled = cfg::WIFI_OTA_DEFAULT_ENABLED;
 bool watchdogTaskRegistered = false;
+TaskHandle_t watchdogOwnerTask = nullptr;
 bool otaUploadInProgress = false;
 uint32_t wifiOtaEnabledAtMs = 0;
 uint32_t otaApLastClientSeenMs = 0;
@@ -87,6 +88,7 @@ static uint32_t gpsDayKey(const GpsData& gps);
 static void persistHealthReportDayKey(uint32_t dayKey);
 static uint32_t loadPersistedHealthReportDayKey();
 static bool sendDailyHealthReport(const Telemetry& t, uint32_t intervalMs);
+static TaskHandle_t watchdogTargetTask();
 
 struct FenceChunkRxState {
   bool active = false;
@@ -667,12 +669,72 @@ static bool applyHerdChunkJson(const JsonObject& doc, const char** err) {
 }
 
 static void setWatchdogEnabled(bool enabled) {
+  TaskHandle_t targetTask = watchdogTargetTask();
   if (enabled && !watchdogTaskRegistered) {
-    esp_task_wdt_add(NULL);
-    watchdogTaskRegistered = true;
+    if (targetTask == nullptr) {
+      LOGW("TWDT add ignorado: task alvo indisponivel");
+      return;
+    }
+    const esp_err_t err = esp_task_wdt_add(targetTask);
+    if (err == ESP_OK || esp_task_wdt_status(targetTask) == ESP_OK) {
+      watchdogTaskRegistered = true;
+    } else {
+      watchdogTaskRegistered = false;
+      LOGW("TWDT add task falhou err=%d", (int)err);
+    }
   } else if (!enabled && watchdogTaskRegistered) {
-    esp_task_wdt_delete(NULL);
+    if (targetTask == nullptr) {
+      watchdogTaskRegistered = false;
+      return;
+    }
+    const esp_err_t statusErr = esp_task_wdt_status(targetTask);
+    if (statusErr == ESP_ERR_NOT_FOUND) {
+      watchdogTaskRegistered = false;
+      return;
+    }
+    const esp_err_t err = esp_task_wdt_delete(targetTask);
+    if (err == ESP_OK || esp_task_wdt_status(targetTask) == ESP_ERR_NOT_FOUND) {
+      watchdogTaskRegistered = false;
+    } else {
+      LOGW("TWDT delete task falhou err=%d", (int)err);
+    }
+  }
+}
+
+static TaskHandle_t watchdogTargetTask() {
+  return watchdogOwnerTask != nullptr ? watchdogOwnerTask : xTaskGetCurrentTaskHandle();
+}
+
+static void feedWatchdogIfEnabled() {
+  if (!watchdogTaskRegistered) return;
+  const TaskHandle_t targetTask = watchdogTargetTask();
+  if (targetTask == nullptr) {
     watchdogTaskRegistered = false;
+    LOGW("TWDT feed cancelado: task alvo indisponivel");
+    return;
+  }
+  if (xTaskGetCurrentTaskHandle() != targetTask) {
+    LOGW("TWDT feed ignorado fora da task dona");
+    return;
+  }
+  const esp_err_t statusErr = esp_task_wdt_status(targetTask);
+  if (statusErr == ESP_ERR_NOT_FOUND) {
+    const esp_err_t addErr = esp_task_wdt_add(targetTask);
+    if (addErr != ESP_OK && esp_task_wdt_status(targetTask) != ESP_OK) {
+      watchdogTaskRegistered = false;
+      LOGW("TWDT re-add falhou err=%d; feed desabilitado", (int)addErr);
+      return;
+    }
+    LOGW("TWDT task nao registrada; re-add aplicado");
+  } else if (statusErr != ESP_OK) {
+    watchdogTaskRegistered = false;
+    LOGW("TWDT status falhou err=%d; feed desabilitado", (int)statusErr);
+    return;
+  }
+  const esp_err_t err = esp_task_wdt_reset();
+  if (err != ESP_OK) {
+    watchdogTaskRegistered = false;
+    LOGW("TWDT reset falhou err=%d; feed desabilitado", (int)err);
   }
 }
 
@@ -822,6 +884,10 @@ static void printBootChecklist(bool bleInitOk, bool storageOk, bool loraOk) {
       "WIFI_OTA_SERVICE",
       !wifiOtaEnabled || otaModeActive,
       "wifi_ota_enabled=true sem OTA ativo; revisar AP/SSID/senha.");
+  Serial.printf(
+      "[MODE ] %-24s : %s\n",
+      "WIFI_OTA_ENABLED",
+      wifiOtaEnabled ? "true" : "false");
   checklistLine(
       "STATUS_HTTP_80",
       true,
@@ -854,10 +920,21 @@ static void printBootChecklist(bool bleInitOk, bool storageOk, bool loraOk) {
   const char* gpsNmeaOffHint = gpsHasRxBytes
       ? "Recebe bytes sem '$'; verificar baud do GPS (9600/38400/57600/115200), TX->D16 e ruido na UART."
       : "Sem sentencas NMEA no boot; verificar TX do GPS->D16, alimentacao e visada do ceu.";
+  String gpsNmeaDetail;
+  const char* gpsNmeaOkDetail = nullptr;
+  if (sensors.gpsBootFixValid()) {
+    const GpsData& bootFix = sensors.gpsBootFix();
+    gpsNmeaDetail = String("lat=") + String(bootFix.lat, 6) +
+        " lon=" + String(bootFix.lon, 6) +
+        " sats=" + String(bootFix.sats) +
+        " hdop=" + String(bootFix.hdop, 2);
+    gpsNmeaOkDetail = gpsNmeaDetail.c_str();
+  }
   checklistLine(
       "GPS_NMEA",
       sensors.gpsNmeaSeen(),
-      gpsNmeaOffHint);
+      gpsNmeaOffHint,
+      gpsNmeaOkDetail);
 
   const bool i2cBusAlive = sensors.i2cDevicesFound() > 0;
   const String i2cDetail = String("found=") + sensors.i2cDevicesFound() +
@@ -1427,6 +1504,7 @@ static void runSmartGpsSelfTest() {
 void setup() {
   Serial.begin(cfg::SERIAL_BAUD);
   LOGI("Boot reset_reason=%d", (int)esp_reset_reason());
+  watchdogOwnerTask = xTaskGetCurrentTaskHandle();
 #if defined(ESP_IDF_VERSION_MAJOR) && ESP_IDF_VERSION_MAJOR >= 5
   esp_task_wdt_config_t wdtConfig = {};
   wdtConfig.timeout_ms = (uint32_t)cfg::TASK_WDT_TIMEOUT_SEC * 1000U;
@@ -1495,9 +1573,7 @@ void loop() {
   const bool apClientConnected = otaApClientConnected();
   if (wifiOtaEnabled && otaModeActive) {
     ArduinoOTA.handle();
-    if (watchdogTaskRegistered) {
-      esp_task_wdt_reset();
-    }
+    feedWatchdogIfEnabled();
     if (otaUploadInProgress) {
       delay(2);
       return;
@@ -1505,7 +1581,7 @@ void loop() {
   }
   const bool otaSessionLikelyActive = otaUploadInProgress || apClientConnected;
 
-  if (watchdogTaskRegistered) esp_task_wdt_reset();
+  feedWatchdogIfEnabled();
   if (cfg::BLE_PRESENCE_ENABLED) {
     const bool bleEnabled = shouldBlePresenceBeEnabled();
     blePresence.setEnabled(bleEnabled);
@@ -1514,7 +1590,7 @@ void loop() {
     if (bleEnabled && blePresence.clientConnected()) {
       // Durante leitura BLE no onboarding, evita janela longa de LoRa/JSON que
       // pode causar timeout no readCharacteristic do app iOS.
-      if (watchdogTaskRegistered) esp_task_wdt_reset();
+      feedWatchdogIfEnabled();
       delay(2);
       return;
     }
