@@ -88,6 +88,14 @@ class GatewayService extends ChangeNotifier {
       _telemetryController.stream;
   Stream<Map<String, dynamic>> get messageStream => _messageController.stream;
 
+  void clearTransientDiscoveryState({bool notify = true}) {
+    messages.clear();
+    _networkDiscoveredCollars.clear();
+    if (notify) {
+      notifyListeners();
+    }
+  }
+
   void connect() {
     _channel?.sink.close();
     isConnected = false;
@@ -271,7 +279,9 @@ class GatewayService extends ChangeNotifier {
     final targetPolygon = payload['target_polygon'];
     if (targetPolygon is! List) return 'missing_target_polygon';
     if (targetPolygon.length < 3) return 'too_few_target_points';
-    if (targetPolygon.length > maxPolygonPoints) return 'too_many_target_points';
+    if (targetPolygon.length > maxPolygonPoints) {
+      return 'too_many_target_points';
+    }
     for (var i = 0; i < targetPolygon.length; i++) {
       if (!_isValidPointPair(targetPolygon[i])) {
         return 'invalid_target_point_$i';
@@ -654,6 +664,7 @@ class GatewayService extends ChangeNotifier {
         'device_id_str': deviceIdStr,
         'lat': lat,
         'lon': lon,
+        'gateway_id': (msg['gateway_id'] ?? msg['gatewayId'])?.toString(),
         'source_type': 'wifi',
       };
     }

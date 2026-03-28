@@ -17,6 +17,7 @@ import '../services/bluetooth_discovery_service.dart';
 import '../services/firebase_service.dart';
 import '../services/gateway_service.dart';
 import '../services/map_filter_service.dart';
+import '../utils/onboarding_gateway_utils.dart';
 import '../utils/polygon_metrics.dart';
 import '../utils/top_feedback.dart';
 import 'area_editor_screen.dart';
@@ -166,10 +167,9 @@ class _HomeScreenState extends State<HomeScreen> {
         (message['gateway_id'] ?? message['gatewayId'])?.toString().trim();
     final gatewayRole =
         (message['gateway_role'] ?? message['gatewayRole'])?.toString().trim();
-    final gatewayWifiOtaEnabled =
-        message['gateway_wifi_ota_enabled'] is bool
-            ? message['gateway_wifi_ota_enabled'] as bool
-            : null;
+    final gatewayWifiOtaEnabled = message['gateway_wifi_ota_enabled'] is bool
+        ? message['gateway_wifi_ota_enabled'] as bool
+        : null;
     final eventType = (payload == null
             ? null
             : (payload['type'] ?? payload['event_type'] ?? payload['reason']))
@@ -1356,6 +1356,53 @@ class _HomeScreenState extends State<HomeScreen> {
       return '$name ($id)';
     }
 
+    var dialogIsOpen = true;
+
+    String? selectedGatewayWsHost() {
+      return resolveSelectedGatewayWsHost(
+        selectedGatewayId: selectedGatewayId,
+        gateways: gateways,
+        connectedGatewayCandidate: gatewayService.connectedGatewayCandidate,
+        normalizeRefId: _normalizeRefId,
+      );
+    }
+
+    Future<void> syncSelectedGatewayConnection(
+      void Function(VoidCallback fn) dialogSetState, {
+      bool forceReconnect = false,
+      bool showFeedbackOnFailure = false,
+    }) async {
+      final normalizedSelectedGatewayId = _normalizeRefId(selectedGatewayId);
+      if (normalizedSelectedGatewayId.isEmpty) return;
+
+      final wsHost = selectedGatewayWsHost();
+      if (wsHost == null) {
+        if (showFeedbackOnFailure && context.mounted) {
+          AppFeedback.warning(
+            'Gateway selecionado sem host configurado. A telemetria ao vivo fica indisponivel ate informar IP/host.',
+          );
+        }
+        return;
+      }
+
+      final mustReconnect = forceReconnect ||
+          !gatewayService.isConnected ||
+          gatewayService.gatewayHost != wsHost;
+      if (!mustReconnect) return;
+
+      gatewayService.clearTransientDiscoveryState(notify: false);
+      final connected =
+          await gatewayService.ensureConnected(hostOverride: wsHost);
+      if (!dialogIsOpen || !context.mounted) return;
+
+      dialogSetState(() {});
+      if (!connected && showFeedbackOnFailure) {
+        AppFeedback.warning(
+          'Nao foi possivel conectar ao gateway selecionado para receber telemetria ao vivo.',
+        );
+      }
+    }
+
     void selectOwner(Map<String, String> owner) {
       selectedOwnerUid = owner['uid'];
       ownerCtrl.text = (owner['email'] ?? owner['uid'] ?? '').trim();
@@ -1530,7 +1577,13 @@ class _HomeScreenState extends State<HomeScreen> {
     List<Map<String, dynamic>> mergedDiscoveredCollars() {
       final byId = <String, Map<String, dynamic>>{};
 
-      for (final lora in gatewayService.discoveredCollars) {
+      for (final lora in gatewayService.discoveredCollars.where(
+        (candidate) => matchesSelectedGatewayId(
+          selectedGatewayId: selectedGatewayId,
+          candidateGatewayId: candidate['gateway_id'],
+          normalizeRefId: _normalizeRefId,
+        ),
+      )) {
         final id = lora['device_id_str']?.toString();
         if (id == null || id.isEmpty) continue;
         byId[id] = {
@@ -1575,6 +1628,9 @@ class _HomeScreenState extends State<HomeScreen> {
         if (id.isEmpty) continue;
         final current = byId[id];
         if (current == null) {
+          if (_normalizeRefId(selectedGatewayId).isNotEmpty) {
+            continue;
+          }
           byId[id] = {
             'device_id': int.tryParse(id),
             'device_id_str': id,
@@ -1652,7 +1708,6 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
 
-    var dialogIsOpen = true;
     try {
       await showDialog<void>(
         context: context,
@@ -1742,14 +1797,48 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                           ],
-                          onChanged: (v) => setState(
-                            () => selectedGatewayId =
-                                (v == null || v.trim().isEmpty) ? null : v,
-                          ),
+                          onChanged: (v) {
+                            setState(
+                              () => selectedGatewayId =
+                                  (v == null || v.trim().isEmpty) ? null : v,
+                            );
+                            if (_normalizeRefId(selectedGatewayId).isEmpty) {
+                              gatewayService.clearTransientDiscoveryState();
+                              return;
+                            }
+                            unawaited(
+                              syncSelectedGatewayConnection(
+                                setState,
+                                forceReconnect: true,
+                                showFeedbackOnFailure: true,
+                              ),
+                            );
+                          },
                           decoration: const InputDecoration(
                             labelText: 'Gateway vinculado',
                           ),
                         ),
+                        if (_normalizeRefId(selectedGatewayId).isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                () {
+                                  final wsHost = selectedGatewayWsHost();
+                                  if (wsHost == null) {
+                                    return 'Gateway selecionado sem host configurado para telemetria ao vivo.';
+                                  }
+                                  if (gatewayService.isConnected &&
+                                      gatewayService.gatewayHost == wsHost) {
+                                    return 'Telemetria ao vivo conectada em $wsHost';
+                                  }
+                                  return 'Preparando conexao de telemetria com $wsHost';
+                                }(),
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ),
+                          ),
                         const SizedBox(height: 8),
                         Align(
                           alignment: Alignment.centerLeft,
@@ -1770,7 +1859,13 @@ class _HomeScreenState extends State<HomeScreen> {
                                 key: const Key('add_device_scan_ble_button'),
                                 onPressed: bleService.isScanning
                                     ? null
-                                    : () => bleService.startScan(),
+                                    : () async {
+                                        await syncSelectedGatewayConnection(
+                                          setState,
+                                        );
+                                        if (!dialogIsOpen) return;
+                                        await bleService.startScan();
+                                      },
                                 icon: Icon(
                                   bleService.isScanning
                                       ? Icons.bluetooth_connected
@@ -2029,6 +2124,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         return;
                       }
 
+                      if (!manualPositionChosen &&
+                          _normalizeRefId(selectedGatewayId).isNotEmpty) {
+                        await syncSelectedGatewayConnection(setState);
+                        if (!context.mounted) return;
+                      }
+
                       final normalizedLoraId =
                           normalizeLoraDeviceId(loraIdCtrl.text);
                       if (normalizedLoraId == null) {
@@ -2114,7 +2215,12 @@ class _HomeScreenState extends State<HomeScreen> {
                           propertyId: propertyId,
                           gatewayId: selectedGatewayId,
                         );
-                        if (context.mounted) Navigator.pop(context);
+                        if (context.mounted) {
+                          Navigator.pop(context);
+                          AppFeedback.success(
+                            'Coleira incluida com sucesso.',
+                          );
+                        }
                       } catch (e) {
                         if (!context.mounted) return;
                         AppFeedback.error('Erro ao salvar coleira: $e');

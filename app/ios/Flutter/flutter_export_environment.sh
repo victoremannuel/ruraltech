@@ -1,9 +1,9 @@
 #!/bin/sh
 # This is a generated file; do not edit or check into version control.
 export "FLUTTER_ROOT=/Users/victoremannuel/Documents/Dev/flutter"
-export "FLUTTER_APPLICATION_PATH=/Users/victoremannuel/Library/Mobile Documents/com~apple~CloudDocs/Nuvem/1 - PROJETOS/RuralTech/ruraltech/app"
+export "FLUTTER_APPLICATION_PATH=/Users/victoremannuel/Documents/Dev/ruraltech/app"
 export "COCOAPODS_PARALLEL_CODE_SIGN=true"
-export "FLUTTER_TARGET=/Users/victoremannuel/Library/Mobile Documents/com~apple~CloudDocs/Nuvem/1 - PROJETOS/RuralTech/ruraltech/app/lib/main.dart"
+export "FLUTTER_TARGET=/Users/victoremannuel/Documents/Dev/ruraltech/app/lib/main.dart"
 export "FLUTTER_BUILD_DIR=build"
 export "FLUTTER_BUILD_NAME=1.0.0"
 export "FLUTTER_BUILD_NUMBER=1"
@@ -11,4 +11,4 @@ export "DART_DEFINES=RkxVVFRFUl9WRVJTSU9OPTMuNDEuNg==,RkxVVFRFUl9DSEFOTkVMPXN0YW
 export "DART_OBFUSCATION=false"
 export "TRACK_WIDGET_CREATION=true"
 export "TREE_SHAKE_ICONS=false"
-export "PACKAGE_CONFIG=/Users/victoremannuel/Library/Mobile Documents/com~apple~CloudDocs/Nuvem/1 - PROJETOS/RuralTech/ruraltech/app/.dart_tool/package_config.json"
+export "PACKAGE_CONFIG=/Users/victoremannuel/Documents/Dev/ruraltech/app/.dart_tool/package_config.json"

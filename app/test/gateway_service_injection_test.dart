@@ -66,5 +66,33 @@ void main() {
       expect(service.lastError, 'gateway_not_connected');
       expect(ticks, greaterThanOrEqualTo(2));
     });
+
+    test('clearTransientDiscoveryState removes stale discovered collars', () {
+      final service = GatewayService();
+      service.messages.add({
+        'type': 'telemetry',
+        'device_id': 7,
+        'payload': '{"lat":-16.675965,"lon":-49.485274}',
+      });
+
+      expect(service.discoveredCollars, isNotEmpty);
+
+      service.clearTransientDiscoveryState(notify: false);
+
+      expect(service.messages, isEmpty);
+      expect(service.discoveredCollars, isEmpty);
+    });
+
+    test('discovered collars preserve telemetry gateway id', () {
+      final service = GatewayService();
+      service.messages.add({
+        'type': 'telemetry',
+        'device_id': 8,
+        'gateway_id': 'RT-M-01',
+        'payload': '{"lat":-16.675965,"lon":-49.485274}',
+      });
+
+      expect(service.discoveredCollars.single['gateway_id'], 'RT-M-01');
+    });
   });
 }
