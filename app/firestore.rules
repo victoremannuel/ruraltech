@@ -123,6 +123,14 @@ service cloud.firestore {
         );
     }
 
+    function canAccessAnySelectedCollar(operationData) {
+      return signedIn() &&
+        ('selectedDeviceIds' in operationData) &&
+        operationData.selectedDeviceIds is list &&
+        operationData.selectedDeviceIds.size() > 0 &&
+        canAccessCollar(operationData.selectedDeviceIds[0]);
+    }
+
     match /users/{userId} {
       // Required by profile filters to resolve owner emails for related entities.
       allow read: if signedIn();
@@ -242,7 +250,10 @@ service cloud.firestore {
         isAdmin() ||
         (
           matchesCurrentUserRef(request.resource.data.requestedByUid) &&
-          canAccessPropertyField(request.resource.data.propertyId) &&
+          (
+            canAccessPropertyField(request.resource.data.propertyId) ||
+            canAccessAnySelectedCollar(request.resource.data)
+          ) &&
           listContainsCurrentUser(request.resource.data.notifyUserIds)
         )
       );

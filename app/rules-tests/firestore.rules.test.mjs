@@ -181,4 +181,27 @@ describe("Firestore rules", () => {
       }),
     );
   });
+
+  it("allows owner to create herding operation when property id is unavailable but collar access is valid", async () => {
+    const ownerCtx = testEnv.authenticatedContext("owner-user");
+    const ownerDb = ownerCtx.firestore();
+
+    await assertSucceeds(
+      setDoc(doc(ownerDb, "herdingOperations/op-fallback"), {
+        ownerUid: doc(ownerDb, "users/owner-user"),
+        requestedByUid: doc(ownerDb, "users/owner-user"),
+        requestedByRole: "user",
+        propertyId: "missing-property-id",
+        matrixGatewayId: "matrix-1",
+        status: "submitted",
+        selectedDeviceIds: ["101"],
+        notifyUserIds: ["owner-user"],
+        targetPolygon: [
+          { lat: -20.1, lon: -43.8 },
+          { lat: -20.2, lon: -43.9 },
+          { lat: -20.3, lon: -43.7 },
+        ],
+      }),
+    );
+  });
 });

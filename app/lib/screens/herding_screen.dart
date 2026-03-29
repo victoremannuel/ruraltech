@@ -37,6 +37,7 @@ class _HerdingScreenState extends State<HerdingScreen> {
   bool _isSubmitting = false;
   bool _didSeedInitialDevice = false;
   int _lastViewportSignature = 0;
+  bool _viewportPinnedByUser = false;
 
   @override
   void initState() {
@@ -223,6 +224,8 @@ class _HerdingScreenState extends State<HerdingScreen> {
       _selectedDeviceIds.clear();
       _targetPolygon.clear();
       _createdOperationId = null;
+      _viewportPinnedByUser = false;
+      _lastViewportSignature = 0;
     });
   }
 
@@ -251,9 +254,9 @@ class _HerdingScreenState extends State<HerdingScreen> {
     required List<LatLng> propertyPolygon,
     required List<DeviceModel> propertyDevices,
   }) {
+    if (_viewportPinnedByUser) return;
     final points = <LatLng>[
       ...propertyPolygon,
-      ..._targetPolygon,
       ...propertyDevices.map(_devicePosition).whereType<LatLng>(),
       if (widget.initialLat != null && widget.initialLon != null)
         LatLng(widget.initialLat!, widget.initialLon!),
@@ -692,6 +695,10 @@ class _HerdingScreenState extends State<HerdingScreen> {
                                             widget.initialLon ?? -46.0,
                                           ),
                                     initialZoom: 15,
+                                    onPositionChanged: (position, hasGesture) {
+                                      if (!hasGesture || _viewportPinnedByUser) return;
+                                      setState(() => _viewportPinnedByUser = true);
+                                    },
                                     onTap: (_, point) => _addPolygonPoint(point),
                                   ),
                                   children: [
