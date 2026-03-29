@@ -20,6 +20,10 @@ constexpr uint32_t DEVICE_ID = 0xC011A001;
 constexpr uint8_t LOG_LEVEL = 2;  // 1=ERRO,2=WARNING,3=INFO
 constexpr uint32_t SERIAL_BAUD = 115200;
 constexpr uint16_t TASK_WDT_TIMEOUT_SEC = 30;
+// Mitigacao de bancada: a stack atual desta placa esta panicking no TWDT antes
+// de concluir o onboarding BLE/GPS. Mantemos desabilitado ate isolar a causa
+// raiz no IDF/driver, priorizando a validacao funcional fim a fim.
+constexpr bool TASK_WDT_ENABLED = false;
 
 // Pinos ESP32 DevKit V1
 constexpr int PIN_GPS_RX = 16;

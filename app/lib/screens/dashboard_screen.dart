@@ -363,6 +363,16 @@ class _HomeScreenState extends State<HomeScreen> {
     return value.toString().trim();
   }
 
+  String _gatewayConnectionFailureMessage(String wsHost) {
+    final host = Uri.tryParse(wsHost)?.host.trim() ?? wsHost.trim();
+    if (host == '192.168.4.1') {
+      return 'Nao foi possivel conectar ao gateway selecionado ($wsHost). '
+          'Conecte o celular na rede Wi-Fi/AP do gateway ou atualize o IP dele na rede local.';
+    }
+    return 'Nao foi possivel conectar ao gateway selecionado ($wsHost) '
+        'para receber telemetria ao vivo.';
+  }
+
   String _normalizeNumericDeviceId(String? raw) {
     if (raw == null) return '';
     final trimmed = raw.trim();
@@ -1391,14 +1401,36 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mustReconnect) return;
 
       gatewayService.clearTransientDiscoveryState(notify: false);
-      final connected =
+      var connected =
           await gatewayService.ensureConnected(hostOverride: wsHost);
+      String? effectiveWsHost = wsHost;
+      if (!connected) {
+        final discoveredGateways =
+            await gatewayService.discoverGatewaysOnLocalNetwork(maxHosts: 120);
+        final fallbackWsHost = fallbackSelectedGatewayWsHost(
+          propertyGateways: gatewaysForProperty(propertyId),
+          discoveredGateways: discoveredGateways,
+        );
+        if (fallbackWsHost != null && fallbackWsHost != wsHost) {
+          connected = await gatewayService.ensureConnected(
+            hostOverride: fallbackWsHost,
+          );
+          if (connected) {
+            effectiveWsHost = fallbackWsHost;
+          }
+        }
+      }
       if (!dialogIsOpen || !context.mounted) return;
 
       dialogSetState(() {});
+      if (connected && effectiveWsHost != wsHost && context.mounted) {
+        AppFeedback.success(
+          'Gateway encontrado na rede em $effectiveWsHost. Telemetria ao vivo reconectada.',
+        );
+      }
       if (!connected && showFeedbackOnFailure) {
         AppFeedback.warning(
-          'Nao foi possivel conectar ao gateway selecionado para receber telemetria ao vivo.',
+          _gatewayConnectionFailureMessage(wsHost),
         );
       }
     }

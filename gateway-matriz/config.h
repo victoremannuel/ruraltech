@@ -64,6 +64,8 @@ constexpr const char* RTDB_MATRIX_ID = cfg_manual::RTDB_MATRIX_ID;
 constexpr const char* RTDB_WRITER_KEY = cfg_manual::RTDB_WRITER_KEY;
 constexpr uint16_t CLOUD_HTTP_TIMEOUT_MS = 3500;
 constexpr uint32_t CLOUD_BACKHAUL_RETRY_MS = 10000;
+constexpr uint32_t CLOUD_BACKHAUL_CONNECT_TIMEOUT_MS = 30000;
+constexpr uint32_t CLOUD_BACKHAUL_DIAG_SCAN_INTERVAL_MS = 60000;
 constexpr uint16_t TELEMETRY_RETENTION_DAYS = 365;
 
 // BLE discovery for app onboarding

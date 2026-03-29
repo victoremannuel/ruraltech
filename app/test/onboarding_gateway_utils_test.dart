@@ -60,5 +60,25 @@ void main() {
         isFalse,
       );
     });
+
+    test('fallbackSelectedGatewayWsHost uses singleton discovery as fallback',
+        () {
+      final wsHost = fallbackSelectedGatewayWsHost(
+        propertyGateways: const [
+          {
+            'id': 'gw-01',
+            'host': '192.168.4.1',
+          },
+        ],
+        discoveredGateways: const [
+          {
+            'gateway_id': 'RT-M-ABC123',
+            'host_ws': 'ws://192.168.1.55:81',
+          },
+        ],
+      );
+
+      expect(wsHost, 'ws://192.168.1.55:81');
+    });
   });
 }

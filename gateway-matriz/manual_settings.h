@@ -33,10 +33,10 @@
 // Backhaul com internet (telemetria para Firebase RTDB)
 // Valores "SET_*" sao placeholders e desativam cloud telemetry ate override local.
 #ifndef RT_CFG_BACKHAUL_WIFI_SSID
-#define RT_CFG_BACKHAUL_WIFI_SSID "SET_BACKHAUL_WIFI_SSID"
+#define RT_CFG_BACKHAUL_WIFI_SSID "VICTOR_E_CAROL"
 #endif
 #ifndef RT_CFG_BACKHAUL_WIFI_PASS
-#define RT_CFG_BACKHAUL_WIFI_PASS "SET_BACKHAUL_WIFI_PASS"
+#define RT_CFG_BACKHAUL_WIFI_PASS "15101510"
 #endif
 
 // Firebase RTDB (writer do gateway matriz para telemetria cloud)
@@ -44,10 +44,10 @@
 #define RT_CFG_FIREBASE_RTDB_HOST "ruraltech10-default-rtdb.firebaseio.com"
 #endif
 #ifndef RT_CFG_RTDB_MATRIX_ID
-#define RT_CFG_RTDB_MATRIX_ID "SET_RTDB_MATRIX_ID"
+#define RT_CFG_RTDB_MATRIX_ID "matriz_fazenda_01"
 #endif
 #ifndef RT_CFG_RTDB_WRITER_KEY
-#define RT_CFG_RTDB_WRITER_KEY "SET_RTDB_WRITER_KEY"
+#define RT_CFG_RTDB_WRITER_KEY "HXz3wo8uWQWIeHmZ5QLbgyw7QiOHvF3xHvVH56WKjEWsrzbZ5aBPCbHPKPgiNuYG"
 #endif
 
 namespace cfg_manual {

@@ -63,3 +63,25 @@ bool matchesSelectedGatewayId({
   if (normalizedCandidateGatewayId.isEmpty) return allowMissingGatewayId;
   return normalizedCandidateGatewayId == normalizedSelectedGatewayId;
 }
+
+String? fallbackSelectedGatewayWsHost({
+  required Iterable<Map<String, dynamic>> propertyGateways,
+  required Iterable<Map<String, dynamic>> discoveredGateways,
+}) {
+  final discovered = discoveredGateways
+      .map((gateway) => normalizeGatewayWsHost(gateway['host_ws']?.toString()))
+      .whereType<String>()
+      .toSet()
+      .toList();
+  if (discovered.isEmpty) return null;
+
+  if (propertyGateways.length == 1 && discovered.length == 1) {
+    return discovered.first;
+  }
+
+  if (discovered.length == 1) {
+    return discovered.first;
+  }
+
+  return null;
+}

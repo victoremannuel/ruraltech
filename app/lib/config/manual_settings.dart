@@ -21,6 +21,9 @@ class ManualSettings {
   // Sub-redes usadas na descoberta local de gateway/coleira via Wi-Fi.
   static const List<String> onboardingSubnets = <String>[
     '192.168.4',
+    '192.168.1',
+    '192.168.0',
+    '10.0.0',
   ];
 
   // Limite de hosts por sub-rede na descoberta ativa.

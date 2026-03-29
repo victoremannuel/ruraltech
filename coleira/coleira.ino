@@ -48,6 +48,7 @@ BlePresence blePresence;
 HerdingController herding;
 StateMachine stateMachine;
 WebServer statusServer(80);
+extern bool loopTaskWDTEnabled;
 
 RTC_DATA_ATTR uint32_t seq = 1;
 RTC_DATA_ATTR uint64_t healthFallbackAccumMs_ = 0;
@@ -73,6 +74,10 @@ uint32_t lastHealthReportDayKey_ = 0;
 bool storageReady_ = false;
 bool loraReady_ = false;
 bool lastLoRaTxOk_ = false;
+uint32_t lastGpsFailEventAtMs_ = 0;
+uint32_t lastGpsInvalidFixEventAtMs_ = 0;
+uint32_t lastGpsOutlierEventAtMs_ = 0;
+bool gpsFailEventActive_ = false;
 static void logEvent(EventType type, int32_t d1, int32_t d2);
 static void copyStringToBuffer(char* dst, size_t dstSize, const char* src);
 static const char* eventTypeLabel(EventType type);
@@ -81,6 +86,10 @@ static const char* activeHerdOperationId();
 static void promoteCompletedHerdingFence();
 static bool isValidPolygon(const Polygon& p);
 static bool beginPrefs();
+static bool gpsFixUsableForOnboarding(const GpsData& gps);
+static void updateBlePositionForOnboarding(
+    const GpsData* preferred,
+    const GpsData* fallback = nullptr);
 static void refreshBlePositionForOnboarding();
 static void printBootChecklist(bool bleInitOk, bool storageOk, bool loraOk);
 static void runSmartGpsSelfTest();
@@ -197,7 +206,11 @@ static void restoreLoRaSeq() {
     seq = persistedHi + 1;
     if (seq == 0) seq = 1;
   }
-  LOGI("Seq uplink restaurado next=%lu hi=%lu", seq, seqPersistedHi_);
+  // Mitigacao de bancada: a escrita recorrente do high-watermark em Preferences
+  // esta disparando panic de alinhamento nesta placa. Mantemos a restauracao do
+  // ultimo valor salvo e seguimos com monotonicidade em RTC durante a sessao.
+  seqPersistReady_ = false;
+  LOGW("Seq uplink restaurado next=%lu hi=%lu (persistencia write-through desabilitada)", seq, seqPersistedHi_);
 }
 
 static void ensureLoRaSeqReservation(uint32_t nextSeq) {
@@ -256,12 +269,17 @@ static String collarAdvName() {
 }
 
 static String collarApSsid() {
-  String suffix = String((uint32_t)cfg::DEVICE_ID, HEX);
-  suffix.toUpperCase();
-  if (suffix.length() > 6) suffix = suffix.substring(suffix.length() - 6);
-  String ssid = String(cfg::OTA_AP_SSID) + "-" + suffix;
-  if (ssid.length() > 31) ssid = ssid.substring(0, 31);
-  return ssid;
+  char suffix[7] = {};
+  snprintf(
+      suffix,
+      sizeof(suffix),
+      "%06lX",
+      (unsigned long)((uint32_t)cfg::DEVICE_ID & 0xFFFFFFUL));
+
+  char ssid[32] = {};
+  snprintf(ssid, sizeof(ssid), "%s-%s", cfg::OTA_AP_SSID, suffix);
+  ssid[sizeof(ssid) - 1] = '\0';
+  return String(ssid);
 }
 
 static void setupStatusServer() {
@@ -669,34 +687,26 @@ static bool applyHerdChunkJson(const JsonObject& doc, const char** err) {
 }
 
 static void setWatchdogEnabled(bool enabled) {
-  TaskHandle_t targetTask = watchdogTargetTask();
+  if (!cfg::TASK_WDT_ENABLED) {
+    (void)enabled;
+    watchdogTaskRegistered = false;
+    return;
+  }
+
+  TaskHandle_t target = watchdogTargetTask();
   if (enabled && !watchdogTaskRegistered) {
-    if (targetTask == nullptr) {
-      LOGW("TWDT add ignorado: task alvo indisponivel");
-      return;
-    }
-    const esp_err_t err = esp_task_wdt_add(targetTask);
-    if (err == ESP_OK || esp_task_wdt_status(targetTask) == ESP_OK) {
+    const esp_err_t err = esp_task_wdt_add(target);
+    if (err == ESP_OK) {
       watchdogTaskRegistered = true;
-    } else {
-      watchdogTaskRegistered = false;
-      LOGW("TWDT add task falhou err=%d", (int)err);
+    } else if (err != ESP_ERR_INVALID_STATE) {
+      LOGW("TWDT add falhou err=%d", (int)err);
     }
   } else if (!enabled && watchdogTaskRegistered) {
-    if (targetTask == nullptr) {
-      watchdogTaskRegistered = false;
-      return;
-    }
-    const esp_err_t statusErr = esp_task_wdt_status(targetTask);
-    if (statusErr == ESP_ERR_NOT_FOUND) {
-      watchdogTaskRegistered = false;
-      return;
-    }
-    const esp_err_t err = esp_task_wdt_delete(targetTask);
-    if (err == ESP_OK || esp_task_wdt_status(targetTask) == ESP_ERR_NOT_FOUND) {
+    const esp_err_t err = esp_task_wdt_delete(target);
+    if (err == ESP_OK || err == ESP_ERR_NOT_FOUND) {
       watchdogTaskRegistered = false;
     } else {
-      LOGW("TWDT delete task falhou err=%d", (int)err);
+      LOGW("TWDT delete falhou err=%d", (int)err);
     }
   }
 }
@@ -706,35 +716,10 @@ static TaskHandle_t watchdogTargetTask() {
 }
 
 static void feedWatchdogIfEnabled() {
-  if (!watchdogTaskRegistered) return;
-  const TaskHandle_t targetTask = watchdogTargetTask();
-  if (targetTask == nullptr) {
-    watchdogTaskRegistered = false;
-    LOGW("TWDT feed cancelado: task alvo indisponivel");
-    return;
-  }
-  if (xTaskGetCurrentTaskHandle() != targetTask) {
-    LOGW("TWDT feed ignorado fora da task dona");
-    return;
-  }
-  const esp_err_t statusErr = esp_task_wdt_status(targetTask);
-  if (statusErr == ESP_ERR_NOT_FOUND) {
-    const esp_err_t addErr = esp_task_wdt_add(targetTask);
-    if (addErr != ESP_OK && esp_task_wdt_status(targetTask) != ESP_OK) {
-      watchdogTaskRegistered = false;
-      LOGW("TWDT re-add falhou err=%d; feed desabilitado", (int)addErr);
-      return;
-    }
-    LOGW("TWDT task nao registrada; re-add aplicado");
-  } else if (statusErr != ESP_OK) {
-    watchdogTaskRegistered = false;
-    LOGW("TWDT status falhou err=%d; feed desabilitado", (int)statusErr);
-    return;
-  }
+  if (!cfg::TASK_WDT_ENABLED || !watchdogTaskRegistered) return;
   const esp_err_t err = esp_task_wdt_reset();
-  if (err != ESP_OK) {
-    watchdogTaskRegistered = false;
-    LOGW("TWDT reset falhou err=%d; feed desabilitado", (int)err);
+  if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+    LOGW("TWDT reset falhou err=%d", (int)err);
   }
 }
 
@@ -833,21 +818,39 @@ static bool shouldBlePresenceBeEnabled() {
   return true;
 }
 
-static void refreshBlePositionForOnboarding() {
-  if (!cfg::BLE_PRESENCE_ENABLED) return;
+static bool gpsFixUsableForOnboarding(const GpsData& gps) {
+  return gps.valid && isfinite(gps.lat) && isfinite(gps.lon) &&
+         gps.lat >= -90.0 && gps.lat <= 90.0 &&
+         gps.lon >= -180.0 && gps.lon <= 180.0;
+}
 
+static void updateBlePositionForOnboarding(
+    const GpsData* preferred,
+    const GpsData* fallback) {
+  if (!cfg::BLE_PRESENCE_ENABLED) return;
+  if (preferred != nullptr && gpsFixUsableForOnboarding(*preferred)) {
+    blePresence.setPosition(preferred->lat, preferred->lon, true);
+    return;
+  }
+  if (fallback != nullptr && gpsFixUsableForOnboarding(*fallback)) {
+    blePresence.setPosition(fallback->lat, fallback->lon, true);
+    return;
+  }
+  blePresence.setPosition(0.0, 0.0, false);
+}
+
+static void refreshBlePositionForOnboarding() {
   // Prioriza última posição oficial já validada (inclusive restaurada da EEPROM).
   if (smartGps.hasLastGoodFix()) {
     const GpsData& lastGood = smartGps.lastGoodFix();
-    blePresence.setPosition(lastGood.lat, lastGood.lon, lastGood.valid);
+    updateBlePositionForOnboarding(&lastGood);
     return;
   }
 
   // Sem last-good ainda: onboarding BLE aceita fix bruto valido para reduzir
   // bloqueio no cadastro inicial; a telemetria oficial continua com gate estrito.
   const GpsData live = sensors.readGpsSnapshot();
-  const bool hasUsableFix = live.valid;
-  blePresence.setPosition(live.lat, live.lon, hasUsableFix);
+  updateBlePositionForOnboarding(&live);
 }
 
 static void checklistLine(
@@ -1505,21 +1508,35 @@ void setup() {
   Serial.begin(cfg::SERIAL_BAUD);
   LOGI("Boot reset_reason=%d", (int)esp_reset_reason());
   watchdogOwnerTask = xTaskGetCurrentTaskHandle();
+  if (cfg::TASK_WDT_ENABLED) {
 #if defined(ESP_IDF_VERSION_MAJOR) && ESP_IDF_VERSION_MAJOR >= 5
-  esp_task_wdt_config_t wdtConfig = {};
-  wdtConfig.timeout_ms = (uint32_t)cfg::TASK_WDT_TIMEOUT_SEC * 1000U;
-  wdtConfig.idle_core_mask = 0;
-  wdtConfig.trigger_panic = true;
-  esp_err_t wdtErr = esp_task_wdt_reconfigure(&wdtConfig);
-  if (wdtErr == ESP_ERR_INVALID_STATE) {
-    wdtErr = esp_task_wdt_init(&wdtConfig);
-  }
-  if (wdtErr != ESP_OK) {
-    LOGW("TWDT setup retornou err=%d", (int)wdtErr);
-  }
+    esp_task_wdt_config_t wdtConfig = {};
+    wdtConfig.timeout_ms = (uint32_t)cfg::TASK_WDT_TIMEOUT_SEC * 1000U;
+    wdtConfig.idle_core_mask = 0;
+    wdtConfig.trigger_panic = true;
+    esp_err_t wdtErr = esp_task_wdt_reconfigure(&wdtConfig);
+    if (wdtErr == ESP_ERR_INVALID_STATE) {
+      wdtErr = esp_task_wdt_init(&wdtConfig);
+    }
+    if (wdtErr != ESP_OK) {
+      LOGW("TWDT setup retornou err=%d", (int)wdtErr);
+    }
 #else
-  esp_task_wdt_init(cfg::TASK_WDT_TIMEOUT_SEC, true);
+    esp_task_wdt_init(cfg::TASK_WDT_TIMEOUT_SEC, true);
 #endif
+  } else {
+    LOGW("TWDT desabilitado na coleira para validacao de bancada");
+    loopTaskWDTEnabled = false;
+    disableLoopWDT();
+    const esp_err_t deinitErr = esp_task_wdt_deinit();
+    if (deinitErr != ESP_OK && deinitErr != ESP_ERR_INVALID_STATE) {
+      LOGW("TWDT deinit falhou err=%d; removendo tarefas IDLE", (int)deinitErr);
+      disableCore0WDT();
+#ifndef CONFIG_FREERTOS_UNICORE
+      disableCore1WDT();
+#endif
+    }
+  }
   loadPersistedConfig();
 
   if (cfg::SMART_GPS_TEST_MODE) {
@@ -1629,19 +1646,35 @@ void loop() {
   lastGpsForStatus_ = t.gps;
   hasLastGpsForStatus_ = t.gps.valid;
   if (cfg::BLE_PRESENCE_ENABLED) {
-    blePresence.setPosition(t.gps.lat, t.gps.lon, t.gps.valid);
+    updateBlePositionForOnboarding(&t.gps, &rawTelemetry.gps);
   }
 
-  if (smartFix.flags.invalidFixRejected) {
+  if (smartFix.flags.invalidFixRejected &&
+      (lastGpsInvalidFixEventAtMs_ == 0 ||
+       (uint32_t)(now - lastGpsInvalidFixEventAtMs_) >= 15000UL)) {
     logEvent(EventType::GPS_INVALID_FIX, (int32_t)lround(rawTelemetry.gps.hdop * 100.0f), rawTelemetry.gps.sats);
+    lastGpsInvalidFixEventAtMs_ = now;
   }
-  if (smartFix.flags.outlierDropped) {
+  if (smartFix.flags.outlierDropped &&
+      (lastGpsOutlierEventAtMs_ == 0 ||
+       (uint32_t)(now - lastGpsOutlierEventAtMs_) >= 15000UL)) {
     logEvent(EventType::GPS_OUTLIER, (int32_t)lround(smartFix.flags.outlierSpeedMps * 100.0f), 0);
+    lastGpsOutlierEventAtMs_ = now;
   }
   if (smartFix.flags.lockStateChanged) {
     logEvent(t.gps.locked ? EventType::GPS_LOCKED : EventType::GPS_UNLOCKED);
   }
-  if (!t.gps.valid) logEvent(EventType::GPS_FAIL);
+  if (!t.gps.valid) {
+    if (!gpsFailEventActive_ ||
+        lastGpsFailEventAtMs_ == 0 ||
+        (uint32_t)(now - lastGpsFailEventAtMs_) >= 60000UL) {
+      logEvent(EventType::GPS_FAIL);
+      lastGpsFailEventAtMs_ = now;
+      gpsFailEventActive_ = true;
+    }
+  } else {
+    gpsFailEventActive_ = false;
+  }
 
   const bool inside = geofence.isInside(t.gps);
   const bool nearBoundary = geofence.isNearBoundary(t.gps, cfg::FENCE_WARNING_METERS);

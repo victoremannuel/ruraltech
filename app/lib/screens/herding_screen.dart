@@ -37,6 +37,7 @@ class _HerdingScreenState extends State<HerdingScreen> {
   bool _isSubmitting = false;
   bool _didSeedInitialDevice = false;
   int _lastViewportSignature = 0;
+  bool _viewportPinnedByUser = false;
 
   @override
   void initState() {
@@ -104,7 +105,8 @@ class _HerdingScreenState extends State<HerdingScreen> {
     return id.isEmpty ? 'Propriedade' : 'Propriedade $id';
   }
 
-  HerdingOperationStatus? _statusFromOperation(HerdingOperationModel? operation) {
+  HerdingOperationStatus? _statusFromOperation(
+      HerdingOperationModel? operation) {
     if (operation == null) return null;
     return operation.status;
   }
@@ -164,7 +166,8 @@ class _HerdingScreenState extends State<HerdingScreen> {
       final preferred = widget.initialPropertyId?.trim();
       if (preferred != null &&
           preferred.isNotEmpty &&
-          properties.any((property) => property['id']?.toString() == preferred)) {
+          properties
+              .any((property) => property['id']?.toString() == preferred)) {
         _selectedPropertyId = preferred;
       } else if (properties.isNotEmpty) {
         _selectedPropertyId = properties.first['id']?.toString();
@@ -196,12 +199,15 @@ class _HerdingScreenState extends State<HerdingScreen> {
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
   }
 
-  List<Map<String, dynamic>> _areasForProperty(List<Map<String, dynamic>> areas) {
+  List<Map<String, dynamic>> _areasForProperty(
+      List<Map<String, dynamic>> areas) {
     final propertyId = _selectedPropertyId?.trim();
     if (propertyId == null || propertyId.isEmpty) {
       return const <Map<String, dynamic>>[];
     }
-    return areas.where((area) => area['propertyId']?.toString() == propertyId).toList();
+    return areas
+        .where((area) => area['propertyId']?.toString() == propertyId)
+        .toList();
   }
 
   void _toggleDevice(DeviceModel device) {
@@ -223,6 +229,8 @@ class _HerdingScreenState extends State<HerdingScreen> {
       _selectedDeviceIds.clear();
       _targetPolygon.clear();
       _createdOperationId = null;
+      _viewportPinnedByUser = false;
+      _lastViewportSignature = 0;
     });
   }
 
@@ -251,9 +259,9 @@ class _HerdingScreenState extends State<HerdingScreen> {
     required List<LatLng> propertyPolygon,
     required List<DeviceModel> propertyDevices,
   }) {
+    if (_viewportPinnedByUser) return;
     final points = <LatLng>[
       ...propertyPolygon,
-      ..._targetPolygon,
       ...propertyDevices.map(_devicePosition).whereType<LatLng>(),
       if (widget.initialLat != null && widget.initialLon != null)
         LatLng(widget.initialLat!, widget.initialLon!),
@@ -261,7 +269,8 @@ class _HerdingScreenState extends State<HerdingScreen> {
     if (points.isEmpty) return;
 
     final signature = Object.hashAll(
-      points.map((point) => '${point.latitude.toStringAsFixed(5)}:${point.longitude.toStringAsFixed(5)}'),
+      points.map((point) =>
+          '${point.latitude.toStringAsFixed(5)}:${point.longitude.toStringAsFixed(5)}'),
     );
     if (_lastViewportSignature == signature) return;
     _lastViewportSignature = signature;
@@ -291,8 +300,12 @@ class _HerdingScreenState extends State<HerdingScreen> {
     if (_isSubmitting) return;
     final propertyId = _selectedPropertyId?.trim();
     final uid = auth.user?.uid.trim();
-    if (propertyId == null || propertyId.isEmpty || uid == null || uid.isEmpty) {
-      _showFeedback('Nao foi possivel identificar a propriedade ou o usuario.', error: true);
+    if (propertyId == null ||
+        propertyId.isEmpty ||
+        uid == null ||
+        uid.isEmpty) {
+      _showFeedback('Nao foi possivel identificar a propriedade ou o usuario.',
+          error: true);
       return;
     }
 
@@ -300,16 +313,18 @@ class _HerdingScreenState extends State<HerdingScreen> {
         .where((device) => _selectedDeviceIds.contains(device.loraDeviceId))
         .toList();
     if (selectedDevices.isEmpty) {
-      _showFeedback('Selecione no mapa quais animais devem ser arrebanhados.', error: true);
+      _showFeedback('Selecione no mapa quais animais devem ser arrebanhados.',
+          error: true);
       return;
     }
     if (_targetPolygon.length < 3) {
-      _showFeedback('Desenhe no mapa o poligono de destino do arrebanhamento.', error: true);
+      _showFeedback('Desenhe no mapa o poligono de destino do arrebanhamento.',
+          error: true);
       return;
     }
 
-    final matrixGatewayId =
-        await firebase.resolveMatrixGatewayIdForProperty(propertyId: propertyId);
+    final matrixGatewayId = await firebase.resolveMatrixGatewayIdForProperty(
+        propertyId: propertyId);
     final matrixGatewayWsHost =
         await firebase.resolveMatrixGatewayWsHost(propertyId: propertyId);
     if (matrixGatewayId == null ||
@@ -323,7 +338,8 @@ class _HerdingScreenState extends State<HerdingScreen> {
       return;
     }
 
-    final notifyUserIds = await firebase.getLinkedUserIdsForProperty(propertyId);
+    final notifyUserIds =
+        await firebase.getLinkedUserIdsForProperty(propertyId);
     final ownerUid = _userIdFrom(property['ownerUid']) ??
         _userIdFrom(property['createdByUid']) ??
         uid;
@@ -332,8 +348,9 @@ class _HerdingScreenState extends State<HerdingScreen> {
         .whereType<String>()
         .toList()
       ..sort();
-    final targetPolygon =
-        _targetPolygon.map((point) => <double>[point.latitude, point.longitude]).toList();
+    final targetPolygon = _targetPolygon
+        .map((point) => <double>[point.latitude, point.longitude])
+        .toList();
 
     setState(() => _isSubmitting = true);
     String? operationId;
@@ -408,7 +425,9 @@ class _HerdingScreenState extends State<HerdingScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              operation == null ? 'Ultima operacao' : 'Operacao ${operation.id}',
+              operation == null
+                  ? 'Ultima operacao'
+                  : 'Operacao ${operation.id}',
               style: theme.textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
@@ -454,13 +473,16 @@ class _HerdingScreenState extends State<HerdingScreen> {
         builder: (context, propertySnap) {
           if (propertySnap.hasError) {
             return Center(
-              child: Text('Erro ao carregar propriedades: ${propertySnap.error}'),
+              child:
+                  Text('Erro ao carregar propriedades: ${propertySnap.error}'),
             );
           }
-          final properties = propertySnap.data ?? const <Map<String, dynamic>>[];
+          final properties =
+              propertySnap.data ?? const <Map<String, dynamic>>[];
           if (properties.isEmpty) {
             return const Center(
-              child: Text('Cadastre ou vincule uma propriedade para usar o arrebanhamento.'),
+              child: Text(
+                  'Cadastre ou vincule uma propriedade para usar o arrebanhamento.'),
             );
           }
 
@@ -475,11 +497,14 @@ class _HerdingScreenState extends State<HerdingScreen> {
               final devices = deviceSnap.data ?? const <DeviceModel>[];
               _syncInitialPropertyAndSelection(properties, devices);
 
-              final selectedProperty = properties.cast<Map<String, dynamic>?>().firstWhere(
-                    (property) => property?['id']?.toString() == _selectedPropertyId,
-                    orElse: () => null,
-                  );
-              final propertyPolygon = _decodePolygon(selectedProperty?['points']);
+              final selectedProperty =
+                  properties.cast<Map<String, dynamic>?>().firstWhere(
+                        (property) =>
+                            property?['id']?.toString() == _selectedPropertyId,
+                        orElse: () => null,
+                      );
+              final propertyPolygon =
+                  _decodePolygon(selectedProperty?['points']);
               final propertyDevices = _devicesForProperty(devices);
 
               return StreamBuilder<List<Map<String, dynamic>>>(
@@ -490,8 +515,8 @@ class _HerdingScreenState extends State<HerdingScreen> {
                       child: Text('Erro ao carregar areas: ${areaSnap.error}'),
                     );
                   }
-                  final propertyAreas =
-                      _areasForProperty(areaSnap.data ?? const <Map<String, dynamic>>[]);
+                  final propertyAreas = _areasForProperty(
+                      areaSnap.data ?? const <Map<String, dynamic>>[]);
                   _fitViewport(
                     propertyPolygon: propertyPolygon,
                     propertyDevices: propertyDevices,
@@ -503,16 +528,22 @@ class _HerdingScreenState extends State<HerdingScreen> {
                       isAdmin: auth.isAdmin,
                     ),
                     builder: (context, operationsSnap) {
-                      final operations =
-                          operationsSnap.data ?? const <HerdingOperationModel>[];
+                      final operations = operationsSnap.data ??
+                          const <HerdingOperationModel>[];
                       final trackedOperation = _createdOperationId == null
-                          ? operations.cast<HerdingOperationModel?>().firstWhere(
+                          ? operations
+                              .cast<HerdingOperationModel?>()
+                              .firstWhere(
                                 (operation) =>
-                                    operation?.propertyId == _selectedPropertyId,
+                                    operation?.propertyId ==
+                                    _selectedPropertyId,
                                 orElse: () => null,
                               )
-                          : operations.cast<HerdingOperationModel?>().firstWhere(
-                                (operation) => operation?.id == _createdOperationId,
+                          : operations
+                              .cast<HerdingOperationModel?>()
+                              .firstWhere(
+                                (operation) =>
+                                    operation?.id == _createdOperationId,
                                 orElse: () => null,
                               );
 
@@ -548,8 +579,10 @@ class _HerdingScreenState extends State<HerdingScreen> {
                           .map((device) {
                             final deviceId = device.loraDeviceId;
                             final position = _devicePosition(device);
-                            if (deviceId == null || position == null) return null;
-                            final selected = _selectedDeviceIds.contains(deviceId);
+                            if (deviceId == null || position == null)
+                              return null;
+                            final selected =
+                                _selectedDeviceIds.contains(deviceId);
                             return Marker(
                               point: position,
                               width: 78,
@@ -560,7 +593,9 @@ class _HerdingScreenState extends State<HerdingScreen> {
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
                                     Icon(
-                                      selected ? Icons.pets : Icons.pets_outlined,
+                                      selected
+                                          ? Icons.pets
+                                          : Icons.pets_outlined,
                                       color: selected
                                           ? Colors.red.shade700
                                           : Colors.brown.shade700,
@@ -573,7 +608,8 @@ class _HerdingScreenState extends State<HerdingScreen> {
                                       ),
                                       decoration: BoxDecoration(
                                         color: Colors.white,
-                                        borderRadius: BorderRadius.circular(999),
+                                        borderRadius:
+                                            BorderRadius.circular(999),
                                         boxShadow: const [
                                           BoxShadow(
                                             blurRadius: 8,
@@ -605,7 +641,8 @@ class _HerdingScreenState extends State<HerdingScreen> {
                                 decoration: BoxDecoration(
                                   color: Colors.blue.shade700,
                                   shape: BoxShape.circle,
-                                  border: Border.all(color: Colors.white, width: 2),
+                                  border:
+                                      Border.all(color: Colors.white, width: 2),
                                 ),
                               ),
                             ),
@@ -639,16 +676,21 @@ class _HerdingScreenState extends State<HerdingScreen> {
                                 Expanded(
                                   child: Text(
                                     'Toque nas coleiras no mapa para selecionar os animais. Toque no mapa para desenhar o poligono destino.',
-                                    style: Theme.of(context).textTheme.bodySmall,
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
                                   ),
                                 ),
                                 TextButton.icon(
-                                  onPressed: _targetPolygon.isEmpty ? null : _undoPoint,
+                                  onPressed: _targetPolygon.isEmpty
+                                      ? null
+                                      : _undoPoint,
                                   icon: const Icon(Icons.undo),
                                   label: const Text('Desfazer'),
                                 ),
                                 TextButton.icon(
-                                  onPressed: _targetPolygon.isEmpty ? null : _clearPolygon,
+                                  onPressed: _targetPolygon.isEmpty
+                                      ? null
+                                      : _clearPolygon,
                                   icon: const Icon(Icons.delete_outline),
                                   label: const Text('Limpar'),
                                 ),
@@ -679,7 +721,8 @@ class _HerdingScreenState extends State<HerdingScreen> {
                           ),
                           Expanded(
                             child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 12),
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(24),
                                 child: FlutterMap(
@@ -692,7 +735,14 @@ class _HerdingScreenState extends State<HerdingScreen> {
                                             widget.initialLon ?? -46.0,
                                           ),
                                     initialZoom: 15,
-                                    onTap: (_, point) => _addPolygonPoint(point),
+                                    onPositionChanged: (position, hasGesture) {
+                                      if (!hasGesture || _viewportPinnedByUser)
+                                        return;
+                                      setState(
+                                          () => _viewportPinnedByUser = true);
+                                    },
+                                    onTap: (_, point) =>
+                                        _addPolygonPoint(point),
                                   ),
                                   children: [
                                     TileLayer(
@@ -700,9 +750,14 @@ class _HerdingScreenState extends State<HerdingScreen> {
                                           'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                                       userAgentPackageName: 'ruraltech_app',
                                     ),
-                                    if (polygons.isNotEmpty) PolygonLayer(polygons: polygons),
-                                    if (markers.isNotEmpty || polygonVertices.isNotEmpty)
-                                      MarkerLayer(markers: <Marker>[...markers, ...polygonVertices]),
+                                    if (polygons.isNotEmpty)
+                                      PolygonLayer(polygons: polygons),
+                                    if (markers.isNotEmpty ||
+                                        polygonVertices.isNotEmpty)
+                                      MarkerLayer(markers: <Marker>[
+                                        ...markers,
+                                        ...polygonVertices
+                                      ]),
                                   ],
                                 ),
                               ),
@@ -720,8 +775,10 @@ class _HerdingScreenState extends State<HerdingScreen> {
                                 SizedBox(
                                   width: double.infinity,
                                   child: ElevatedButton.icon(
-                                    key: const Key('submit_herding_operation_button'),
-                                    onPressed: _isSubmitting || selectedProperty == null
+                                    key: const Key(
+                                        'submit_herding_operation_button'),
+                                    onPressed: _isSubmitting ||
+                                            selectedProperty == null
                                         ? null
                                         : () => _submitOperation(
                                               selectedProperty,

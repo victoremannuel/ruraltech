@@ -58,6 +58,10 @@ uint32_t wifiRecoveryAttemptAtMs = 0;
 uint8_t wifiRecoveryAttemptCount = 0;
 uint32_t cloudBackhaulAttemptAtMs = 0;
 uint32_t cloudLastPublishAtMs = 0;
+bool cloudBackhaulConnecting = false;
+uint32_t cloudBackhaulConnectStartedAtMs = 0;
+wifi_err_reason_t cloudBackhaulLastDisconnectReason = WIFI_REASON_UNSPECIFIED;
+uint32_t cloudBackhaulLastDiagScanAtMs = 0;
 
 struct HerdPoint {
   double lat = 0.0;
@@ -106,6 +110,7 @@ struct CloudPublishContext {
 };
 
 static void setWatchdogEnabled(bool enabled);
+static void feedWatchdogIfEnabled();
 static void printBootChecklist(
     bool displayOk,
     bool wifiOk,
@@ -133,6 +138,82 @@ static const char* otaErrorText(ota_error_t error) {
     case OTA_END_ERROR: return "end";
     default: return "unknown";
   }
+}
+
+static const char* wifiStatusLabel(wl_status_t status) {
+  switch (status) {
+    case WL_NO_SHIELD: return "no_shield";
+    case WL_IDLE_STATUS: return "idle";
+    case WL_NO_SSID_AVAIL: return "no_ssid";
+    case WL_SCAN_COMPLETED: return "scan_completed";
+    case WL_CONNECTED: return "connected";
+    case WL_CONNECT_FAILED: return "connect_failed";
+    case WL_CONNECTION_LOST: return "connection_lost";
+    case WL_DISCONNECTED: return "disconnected";
+    case WL_STOPPED: return "stopped";
+    default: return "unknown";
+  }
+}
+
+static const char* wifiDisconnectReasonLabel(wifi_err_reason_t reason) {
+  const char* label = WiFi.disconnectReasonName(reason);
+  return (label != nullptr && label[0] != '\0') ? label : "unknown";
+}
+
+static const char* wifiAuthModeLabel(wifi_auth_mode_t authMode) {
+  switch (authMode) {
+    case WIFI_AUTH_OPEN: return "OPEN";
+    case WIFI_AUTH_WEP: return "WEP";
+    case WIFI_AUTH_WPA_PSK: return "WPA_PSK";
+    case WIFI_AUTH_WPA2_PSK: return "WPA2_PSK";
+    case WIFI_AUTH_WPA_WPA2_PSK: return "WPA_WPA2_PSK";
+    case WIFI_AUTH_WPA2_ENTERPRISE: return "WPA2_ENTERPRISE";
+    case WIFI_AUTH_WPA3_PSK: return "WPA3_PSK";
+    case WIFI_AUTH_WPA2_WPA3_PSK: return "WPA2_WPA3_PSK";
+    case WIFI_AUTH_WAPI_PSK: return "WAPI_PSK";
+    case WIFI_AUTH_OWE: return "OWE";
+    case WIFI_AUTH_WPA3_ENT_192: return "WPA3_ENT_192";
+    default: return "UNKNOWN";
+  }
+}
+
+static void logBackhaulScanDiagnostics(uint32_t now) {
+  if (cloudBackhaulLastDiagScanAtMs != 0 &&
+      (uint32_t)(now - cloudBackhaulLastDiagScanAtMs) <
+          cfg::CLOUD_BACKHAUL_DIAG_SCAN_INTERVAL_MS) {
+    return;
+  }
+  cloudBackhaulLastDiagScanAtMs = now;
+
+  LOGI("Backhaul Wi-Fi: escaneando SSID alvo=%s", cfg::BACKHAUL_WIFI_SSID);
+  const int16_t networkCount = WiFi.scanNetworks(false, true);
+  if (networkCount < 0) {
+    LOGW("Backhaul Wi-Fi: scan falhou codigo=%d", (int)networkCount);
+    WiFi.scanDelete();
+    return;
+  }
+
+  uint8_t matchCount = 0;
+  for (int16_t i = 0; i < networkCount; ++i) {
+    const String ssid = WiFi.SSID((uint8_t)i);
+    if (ssid != cfg::BACKHAUL_WIFI_SSID) continue;
+    matchCount++;
+    LOGI(
+        "Backhaul scan alvo[%u/%d]: bssid=%s canal=%d rssi=%d auth=%s(%d)",
+        (unsigned)matchCount,
+        (int)networkCount,
+        WiFi.BSSIDstr((uint8_t)i).c_str(),
+        (int)WiFi.channel((uint8_t)i),
+        (int)WiFi.RSSI((uint8_t)i),
+        wifiAuthModeLabel(WiFi.encryptionType((uint8_t)i)),
+        (int)WiFi.encryptionType((uint8_t)i));
+  }
+
+  if (matchCount == 0) {
+    LOGW("Backhaul scan: SSID alvo %s nao apareceu entre %d redes visiveis",
+         cfg::BACKHAUL_WIFI_SSID, (int)networkCount);
+  }
+  WiFi.scanDelete();
 }
 
 static void logOtaPartitionInfo(const char* context) {
@@ -404,17 +485,46 @@ static bool publishCloudLatestAndHistory(
 
 static bool ensureCloudBackhaulConnected() {
   if (!cloudTelemetryConfigured()) return false;
-  if (WiFi.status() == WL_CONNECTED) return true;
+  if (WiFi.status() == WL_CONNECTED) {
+    cloudBackhaulConnecting = false;
+    cloudBackhaulConnectStartedAtMs = 0;
+    cloudBackhaulLastDisconnectReason = WIFI_REASON_UNSPECIFIED;
+    return true;
+  }
 
   const uint32_t now = millis();
+  if (cloudBackhaulConnecting) {
+    if (cloudBackhaulConnectStartedAtMs != 0 &&
+        (uint32_t)(now - cloudBackhaulConnectStartedAtMs) <
+            cfg::CLOUD_BACKHAUL_CONNECT_TIMEOUT_MS) {
+      return false;
+    }
+    LOGW(
+        "Backhaul Wi-Fi: tentativa expirou sem IP ssid=%s wl=%s(%d) ultimo_motivo=%s(%u); reiniciando STA",
+        cfg::BACKHAUL_WIFI_SSID,
+        wifiStatusLabel(WiFi.status()),
+        (int)WiFi.status(),
+        wifiDisconnectReasonLabel(cloudBackhaulLastDisconnectReason),
+        (unsigned)cloudBackhaulLastDisconnectReason);
+    logBackhaulScanDiagnostics(now);
+    cloudBackhaulConnecting = false;
+    cloudBackhaulConnectStartedAtMs = 0;
+    WiFi.disconnect(false, false);
+  }
   if (cloudBackhaulAttemptAtMs != 0 &&
       (uint32_t)(now - cloudBackhaulAttemptAtMs) < cfg::CLOUD_BACKHAUL_RETRY_MS) {
     return false;
   }
   cloudBackhaulAttemptAtMs = now;
   // Em modo OTA/manual, preserva AP local e sobe STA para backhaul cloud.
-  WiFi.mode(wifiOtaEnabled ? WIFI_AP_STA : WIFI_STA);
+  const wifi_mode_t desiredMode = wifiOtaEnabled ? WIFI_AP_STA : WIFI_STA;
+  if (WiFi.getMode() != desiredMode) {
+    WiFi.mode(desiredMode);
+  }
   WiFi.setSleep(false);
+  cloudBackhaulConnecting = true;
+  cloudBackhaulConnectStartedAtMs = now;
+  cloudBackhaulLastDisconnectReason = WIFI_REASON_UNSPECIFIED;
   WiFi.begin(cfg::BACKHAUL_WIFI_SSID, cfg::BACKHAUL_WIFI_PASS);
   LOGI("Backhaul Wi-Fi: tentando conectar em %s", cfg::BACKHAUL_WIFI_SSID);
   return false;
@@ -559,6 +669,9 @@ static void stopWifiAndOta() {
   wifiApRunning = false;
   wifiRecoveryAttemptCount = 0;
   wifiRecoveryAttemptAtMs = 0;
+  cloudBackhaulAttemptAtMs = 0;
+  cloudBackhaulConnecting = false;
+  cloudBackhaulConnectStartedAtMs = 0;
   if (WiFi.getMode() == WIFI_STA || WiFi.getMode() == WIFI_AP_STA) {
     WiFi.disconnect(true, true);
   }
@@ -569,7 +682,7 @@ static void stopWifiAndOta() {
   LOGI("Gateway matriz em modo LoRa-only");
 }
 
-static void onWifiEvent(WiFiEvent_t event) {
+static void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
 #if defined(ARDUINO_EVENT_WIFI_AP_START)
   if (event == ARDUINO_EVENT_WIFI_AP_START) {
     wifiApRunning = true;
@@ -595,12 +708,36 @@ static void onWifiEvent(WiFiEvent_t event) {
 #endif
 #if defined(ARDUINO_EVENT_WIFI_STA_GOT_IP)
   if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+    cloudBackhaulConnecting = false;
+    cloudBackhaulConnectStartedAtMs = 0;
+    cloudBackhaulAttemptAtMs = 0;
+    cloudBackhaulLastDisconnectReason = WIFI_REASON_UNSPECIFIED;
     LOGI("Backhaul conectado: %s", WiFi.localIP().toString().c_str());
   }
 #endif
+#if defined(ARDUINO_EVENT_WIFI_STA_CONNECTED)
+  if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
+    cloudBackhaulConnecting = true;
+    cloudBackhaulConnectStartedAtMs = millis();
+    LOGI("Backhaul Wi-Fi associado ao AP");
+  }
+#endif
 #if defined(ARDUINO_EVENT_WIFI_STA_DISCONNECTED)
-  if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED && !wifiOtaEnabled) {
-    LOGW("Backhaul desconectado");
+  if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+    const uint8_t rawReason = info.wifi_sta_disconnected.reason;
+    const wifi_err_reason_t reason =
+        rawReason == 0 ? WIFI_REASON_UNSPECIFIED : (wifi_err_reason_t)rawReason;
+    cloudBackhaulLastDisconnectReason = reason;
+    cloudBackhaulConnecting = false;
+    cloudBackhaulConnectStartedAtMs = 0;
+    if (cloudTelemetryConfigured() || !wifiOtaEnabled) {
+      LOGW(
+          "Backhaul desconectado: motivo=%s(%u) wl=%s(%d)",
+          wifiDisconnectReasonLabel(reason),
+          (unsigned)reason,
+          wifiStatusLabel(WiFi.status()),
+          (int)WiFi.status());
+    }
   }
 #endif
 }
@@ -646,11 +783,31 @@ static void ensureWifiOtaServices() {
 
 static void setWatchdogEnabled(bool enabled) {
   if (enabled && !watchdogTaskRegistered) {
-    esp_task_wdt_add(NULL);
-    watchdogTaskRegistered = true;
+    const esp_err_t err = esp_task_wdt_add(NULL);
+    if (err == ESP_OK) {
+      watchdogTaskRegistered = true;
+    } else if (err != ESP_ERR_INVALID_STATE) {
+      LOGW("TWDT add falhou err=%d", (int)err);
+    }
   } else if (!enabled && watchdogTaskRegistered) {
-    esp_task_wdt_delete(NULL);
+    const esp_err_t err = esp_task_wdt_delete(NULL);
+    if (err == ESP_OK || err == ESP_ERR_NOT_FOUND) {
+      watchdogTaskRegistered = false;
+    } else {
+      LOGW("TWDT delete falhou err=%d", (int)err);
+    }
+  }
+}
+
+static void feedWatchdogIfEnabled() {
+  if (!watchdogTaskRegistered) return;
+  const esp_err_t err = esp_task_wdt_reset();
+  if (err == ESP_ERR_NOT_FOUND) {
     watchdogTaskRegistered = false;
+    return;
+  }
+  if (err != ESP_OK) {
+    LOGW("TWDT reset falhou err=%d", (int)err);
   }
 }
 
@@ -1454,7 +1611,13 @@ void setup() {
   wdtConfig.timeout_ms = (uint32_t)cfg::TASK_WDT_TIMEOUT_SEC * 1000U;
   wdtConfig.idle_core_mask = 0;
   wdtConfig.trigger_panic = true;
-  esp_task_wdt_init(&wdtConfig);
+  esp_err_t wdtErr = esp_task_wdt_reconfigure(&wdtConfig);
+  if (wdtErr == ESP_ERR_INVALID_STATE) {
+    wdtErr = esp_task_wdt_init(&wdtConfig);
+  }
+  if (wdtErr != ESP_OK) {
+    LOGW("TWDT setup retornou err=%d", (int)wdtErr);
+  }
 #else
   esp_task_wdt_init(cfg::TASK_WDT_TIMEOUT_SEC, true);
 #endif
@@ -1510,12 +1673,15 @@ void setup() {
 }
 
 void loop() {
+  feedWatchdogIfEnabled();
   ensureWifiOtaServices();
+  feedWatchdogIfEnabled();
   ensureCloudBackhaulConnected();
+  feedWatchdogIfEnabled();
   const bool apClientConnected = wifiApClientConnected();
   if (wifiOtaEnabled && cfg::OTA_ENABLED) {
     ArduinoOTA.handle();
-    if (watchdogTaskRegistered) esp_task_wdt_reset();
+    feedWatchdogIfEnabled();
     if (otaUploadInProgress || apClientConnected) {
       delay(2);
       return;
@@ -1527,8 +1693,9 @@ void loop() {
     blePresence.setFlags(wifiOtaEnabled, WiFi.status() == WL_CONNECTED);
     if (bleEnabled) blePresence.loop();
   }
-  if (watchdogTaskRegistered) esp_task_wdt_reset();
+  feedWatchdogIfEnabled();
   if (wifiOtaEnabled && WiFi.getMode() != WIFI_OFF) api.loop();
+  feedWatchdogIfEnabled();
 
   LoRaFrame rx;
   if (lora.receive(rx)) {
@@ -1576,6 +1743,7 @@ void loop() {
     publishTelemetryToCloud(rx);
     publishDailyHealthToCloud(rx);
   }
+  feedWatchdogIfEnabled();
 
   if (api.hasPendingCommand()) {
     StaticJsonDocument<4096> cmd;
@@ -1690,6 +1858,7 @@ void loop() {
   }
 
   dispatchActiveHerdingOperation();
+  feedWatchdogIfEnabled();
 
   delay(5);
 }
