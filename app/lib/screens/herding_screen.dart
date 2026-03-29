@@ -579,8 +579,9 @@ class _HerdingScreenState extends State<HerdingScreen> {
                           .map((device) {
                             final deviceId = device.loraDeviceId;
                             final position = _devicePosition(device);
-                            if (deviceId == null || position == null)
+                            if (deviceId == null || position == null) {
                               return null;
+                            }
                             final selected =
                                 _selectedDeviceIds.contains(deviceId);
                             return Marker(
@@ -736,8 +737,10 @@ class _HerdingScreenState extends State<HerdingScreen> {
                                           ),
                                     initialZoom: 15,
                                     onPositionChanged: (position, hasGesture) {
-                                      if (!hasGesture || _viewportPinnedByUser)
+                                      if (!hasGesture ||
+                                          _viewportPinnedByUser) {
                                         return;
+                                      }
                                       setState(
                                           () => _viewportPinnedByUser = true);
                                     },
