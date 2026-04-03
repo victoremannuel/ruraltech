@@ -7,6 +7,13 @@
 #include <string.h>
 #include <WiFi.h>
 
+extern char bindingPropertyId[48];
+extern char bindingPropertyScopeId[17];
+extern char bindingMatrixGatewayId[32];
+extern uint32_t bindingVersion;
+extern bool bindingReady;
+extern bool supportsScopedLora;
+
 static ApiServer* g_server = nullptr;
 
 static String compactIdentifier(const String& raw) {
@@ -78,6 +85,12 @@ void ApiServer::begin() {
     doc["gatewayId"] = compactIdentifier(WiFi.softAPmacAddress());
     doc["ota"] = cfg::OTA_ENABLED;
     doc["wifi_ota_enabled"] = WiFi.getMode() != WIFI_OFF;
+    doc["supportsScopedLora"] = supportsScopedLora;
+    doc["bindingReady"] = bindingReady;
+    doc["bindingVersion"] = bindingVersion;
+    if (bindingPropertyId[0]) doc["propertyId"] = bindingPropertyId;
+    if (bindingPropertyScopeId[0]) doc["propertyScopeId"] = bindingPropertyScopeId;
+    if (bindingMatrixGatewayId[0]) doc["matrixGatewayId"] = bindingMatrixGatewayId;
     String out;
     serializeJson(doc, out);
     http_.send(200, "application/json", out);

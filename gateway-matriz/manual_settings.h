@@ -49,6 +49,9 @@
 #ifndef RT_CFG_RTDB_WRITER_KEY
 #define RT_CFG_RTDB_WRITER_KEY "SET_RTDB_WRITER_KEY"
 #endif
+#ifndef RT_CFG_RTDB_QUEUE_KEY
+#define RT_CFG_RTDB_QUEUE_KEY "SET_RTDB_QUEUE_KEY"
+#endif
 
 namespace cfg_manual {
 constexpr char AP_SSID[] = RT_CFG_AP_SSID;
@@ -60,4 +63,5 @@ constexpr char BACKHAUL_WIFI_PASS[] = RT_CFG_BACKHAUL_WIFI_PASS;
 constexpr char FIREBASE_RTDB_HOST[] = RT_CFG_FIREBASE_RTDB_HOST;
 constexpr char RTDB_MATRIX_ID[] = RT_CFG_RTDB_MATRIX_ID;
 constexpr char RTDB_WRITER_KEY[] = RT_CFG_RTDB_WRITER_KEY;
+constexpr char RTDB_QUEUE_KEY[] = RT_CFG_RTDB_QUEUE_KEY;
 }

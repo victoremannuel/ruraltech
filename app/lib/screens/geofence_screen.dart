@@ -6,11 +6,11 @@ import 'package:provider/provider.dart';
 import '../config/manual_settings.dart';
 import '../services/auth_service.dart';
 import '../services/firebase_service.dart';
-import '../services/gateway_service.dart';
 import '../utils/top_feedback.dart';
 
 class GeofenceScreen extends StatefulWidget {
   final String deviceId;
+  final String? propertyId;
   final String? gatewayId;
   final double? initialLat;
   final double? initialLon;
@@ -18,6 +18,7 @@ class GeofenceScreen extends StatefulWidget {
   const GeofenceScreen({
     super.key,
     required this.deviceId,
+    this.propertyId,
     this.gatewayId,
     this.initialLat,
     this.initialLon,
@@ -28,7 +29,7 @@ class GeofenceScreen extends StatefulWidget {
 }
 
 class _GeofenceScreenState extends State<GeofenceScreen> {
-  static const int _maxFencePoints = GatewayService.maxPolygonPoints;
+  static const int _maxFencePoints = 32;
   late LatLng _center;
   final List<LatLng> _polygonPoints = [];
   bool _isLoadingSavedFence = true;
@@ -71,34 +72,37 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
     }
 
     final uid = context.read<AuthService>().user?.uid;
+    final auth = context.read<AuthService>();
     if (uid == null) return;
+    final propertyId = widget.propertyId?.trim();
+    if (propertyId == null || propertyId.isEmpty) {
+      AppFeedback.error(
+        'A coleira precisa estar vinculada a uma propriedade para receber comandos LoRa.',
+      );
+      return;
+    }
     final firebase = context.read<FirebaseService>();
-    final gateway = context.read<GatewayService>();
 
     final points =
         _polygonPoints.map((p) => <double>[p.latitude, p.longitude]).toList();
     await firebase.saveFence(widget.deviceId, uid, points);
-    final gatewayWsHost = await firebase.resolveGatewayWsHostForDevice(
-      deviceId: widget.deviceId,
-      fallbackGatewayId: widget.gatewayId,
-    );
-    final sent = await gateway.sendCommandEnsuringConnection(
-      deviceId: widget.deviceId,
-      command: 'SET_FENCE',
-      hostOverride: gatewayWsHost,
-      payload: {'points': points},
-    );
-
-    if (!mounted) return;
-    if (sent) {
-      AppFeedback.success('Cerca publicada com sucesso.');
-      return;
+    try {
+      await firebase.enqueueScopedCommand(
+        command: 'SET_FENCE',
+        propertyId: propertyId,
+        requestedByUid: uid,
+        requestedByRole: auth.role,
+        targetDeviceIds: <String>[widget.deviceId],
+        payload: {'points': points},
+      );
+      if (!mounted) return;
+      AppFeedback.success('Cerca salva e enfileirada para a matriz.');
+    } catch (e) {
+      if (!mounted) return;
+      AppFeedback.warning(
+        'Cerca salva, mas falhou o enfileiramento para envio LoRa ($e).',
+      );
     }
-
-    final reason = gateway.lastError ?? 'gateway_not_connected';
-    AppFeedback.warning(
-      'Cerca salva, mas falhou o envio para a coleira ($reason).',
-    );
   }
 
   @override
