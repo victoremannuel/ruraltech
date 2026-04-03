@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 import '../models/device_model.dart';
 import '../models/herding_operation_model.dart';
+import '../models/polygon_map_context.dart';
 import '../services/auth_service.dart';
 import '../services/firebase_service.dart';
+import '../utils/polygon_edit_session.dart';
 import '../utils/top_feedback.dart';
+import '../widgets/polygon_editing_map.dart';
 
 class HerdingScreen extends StatefulWidget {
   final String? initialDeviceId;
@@ -29,19 +31,18 @@ class HerdingScreen extends StatefulWidget {
 
 class _HerdingScreenState extends State<HerdingScreen> {
   static const int _maxTargetPolygonPoints = 32;
-  final MapController _mapController = MapController();
+
   final Set<String> _selectedDeviceIds = <String>{};
-  final List<LatLng> _targetPolygon = <LatLng>[];
+  late final PolygonEditSessionController _polygonController;
   String? _selectedPropertyId;
   String? _createdOperationId;
   bool _isSubmitting = false;
   bool _didSeedInitialDevice = false;
-  int _lastViewportSignature = 0;
-  bool _viewportPinnedByUser = false;
 
   @override
   void initState() {
     super.initState();
+    _polygonController = PolygonEditSessionController();
     final initialDeviceId = widget.initialDeviceId?.trim();
     if (initialDeviceId != null && initialDeviceId.isNotEmpty) {
       _selectedDeviceIds.add(initialDeviceId);
@@ -50,6 +51,12 @@ class _HerdingScreenState extends State<HerdingScreen> {
     if (initialPropertyId != null && initialPropertyId.isNotEmpty) {
       _selectedPropertyId = initialPropertyId;
     }
+  }
+
+  @override
+  void dispose() {
+    _polygonController.dispose();
+    super.dispose();
   }
 
   String _idFromRefOrPath(dynamic value) {
@@ -98,6 +105,22 @@ class _HerdingScreenState extends State<HerdingScreen> {
     return LatLng(lat, lon);
   }
 
+  LatLng? _gatewayPosition(Map<String, dynamic> gateway) {
+    final lat = gateway['lat'];
+    final lon = gateway['lon'];
+    if (lat is! num || lon is! num) return null;
+    final parsedLat = lat.toDouble();
+    final parsedLon = lon.toDouble();
+    if (!parsedLat.isFinite || !parsedLon.isFinite) return null;
+    if (parsedLat < -90 ||
+        parsedLat > 90 ||
+        parsedLon < -180 ||
+        parsedLon > 180) {
+      return null;
+    }
+    return LatLng(parsedLat, parsedLon);
+  }
+
   String _propertyLabel(Map<String, dynamic> property) {
     final name = (property['name'] ?? '').toString().trim();
     if (name.isNotEmpty) return name;
@@ -105,8 +128,16 @@ class _HerdingScreenState extends State<HerdingScreen> {
     return id.isEmpty ? 'Propriedade' : 'Propriedade $id';
   }
 
+  String _gatewayLabel(Map<String, dynamic> gateway) {
+    final name = (gateway['name'] ?? '').toString().trim();
+    if (name.isNotEmpty) return name;
+    final id = _idFromRefOrPath(gateway['id'] ?? gateway['gatewayId']);
+    return id.isEmpty ? 'Gateway' : id;
+  }
+
   HerdingOperationStatus? _statusFromOperation(
-      HerdingOperationModel? operation) {
+    HerdingOperationModel? operation,
+  ) {
     if (operation == null) return null;
     return operation.status;
   }
@@ -210,6 +241,19 @@ class _HerdingScreenState extends State<HerdingScreen> {
         .toList();
   }
 
+  List<Map<String, dynamic>> _gatewaysForProperty(
+    List<Map<String, dynamic>> gateways,
+  ) {
+    final propertyId = _selectedPropertyId?.trim();
+    if (propertyId == null || propertyId.isEmpty) {
+      return const <Map<String, dynamic>>[];
+    }
+    return gateways
+        .where(
+            (gateway) => _idFromRefOrPath(gateway['propertyId']) == propertyId)
+        .toList();
+  }
+
   void _toggleDevice(DeviceModel device) {
     final deviceId = device.loraDeviceId;
     if (deviceId == null) return;
@@ -227,66 +271,8 @@ class _HerdingScreenState extends State<HerdingScreen> {
     setState(() {
       _selectedPropertyId = propertyId;
       _selectedDeviceIds.clear();
-      _targetPolygon.clear();
+      _polygonController.resetSession(const <LatLng>[]);
       _createdOperationId = null;
-      _viewportPinnedByUser = false;
-      _lastViewportSignature = 0;
-    });
-  }
-
-  void _addPolygonPoint(LatLng point) {
-    if (_targetPolygon.length >= _maxTargetPolygonPoints) {
-      _showFeedback(
-        'O poligono suporta no maximo $_maxTargetPolygonPoints pontos.',
-        error: true,
-      );
-      return;
-    }
-    setState(() => _targetPolygon.add(point));
-  }
-
-  void _undoPoint() {
-    if (_targetPolygon.isEmpty) return;
-    setState(() => _targetPolygon.removeLast());
-  }
-
-  void _clearPolygon() {
-    if (_targetPolygon.isEmpty) return;
-    setState(_targetPolygon.clear);
-  }
-
-  void _fitViewport({
-    required List<LatLng> propertyPolygon,
-    required List<DeviceModel> propertyDevices,
-  }) {
-    if (_viewportPinnedByUser) return;
-    final points = <LatLng>[
-      ...propertyPolygon,
-      ...propertyDevices.map(_devicePosition).whereType<LatLng>(),
-      if (widget.initialLat != null && widget.initialLon != null)
-        LatLng(widget.initialLat!, widget.initialLon!),
-    ];
-    if (points.isEmpty) return;
-
-    final signature = Object.hashAll(
-      points.map((point) =>
-          '${point.latitude.toStringAsFixed(5)}:${point.longitude.toStringAsFixed(5)}'),
-    );
-    if (_lastViewportSignature == signature) return;
-    _lastViewportSignature = signature;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (points.length == 1) {
-        _mapController.move(points.first, 16);
-        return;
-      }
-      _mapController.fitCamera(
-        CameraFit.bounds(
-          bounds: LatLngBounds.fromPoints(points),
-          padding: const EdgeInsets.all(42),
-        ),
-      );
     });
   }
 
@@ -303,8 +289,10 @@ class _HerdingScreenState extends State<HerdingScreen> {
         propertyId.isEmpty ||
         uid == null ||
         uid.isEmpty) {
-      _showFeedback('Nao foi possivel identificar a propriedade ou o usuario.',
-          error: true);
+      _showFeedback(
+        'Nao foi possivel identificar a propriedade ou o usuario.',
+        error: true,
+      );
       return;
     }
 
@@ -312,18 +300,22 @@ class _HerdingScreenState extends State<HerdingScreen> {
         .where((device) => _selectedDeviceIds.contains(device.loraDeviceId))
         .toList();
     if (selectedDevices.isEmpty) {
-      _showFeedback('Selecione no mapa quais animais devem ser arrebanhados.',
-          error: true);
+      _showFeedback(
+        'Selecione no mapa quais animais devem ser arrebanhados.',
+        error: true,
+      );
       return;
     }
-    if (_targetPolygon.length < 3) {
-      _showFeedback('Desenhe no mapa o poligono de destino do arrebanhamento.',
-          error: true);
+    if (_polygonController.points.length < 3) {
+      _showFeedback(
+        'Desenhe no mapa o poligono de destino do arrebanhamento.',
+        error: true,
+      );
       return;
     }
 
-    final matrixGatewayId =
-        await firebase.resolveMatrixGatewayIdForProperty(propertyId: propertyId);
+    final matrixGatewayId = await firebase.resolveMatrixGatewayIdForProperty(
+        propertyId: propertyId);
     if (matrixGatewayId == null || matrixGatewayId.isEmpty) {
       _showFeedback(
         'Nao encontrei um gateway matriz conectado para essa propriedade.',
@@ -342,7 +334,7 @@ class _HerdingScreenState extends State<HerdingScreen> {
         .whereType<String>()
         .toList()
       ..sort();
-    final targetPolygon = _targetPolygon
+    final targetPolygon = _polygonController.points
         .map((point) => <double>[point.latitude, point.longitude])
         .toList();
 
@@ -477,7 +469,8 @@ class _HerdingScreenState extends State<HerdingScreen> {
           if (properties.isEmpty) {
             return const Center(
               child: Text(
-                  'Cadastre ou vincule uma propriedade para usar o arrebanhamento.'),
+                'Cadastre ou vincule uma propriedade para usar o arrebanhamento.',
+              ),
             );
           }
 
@@ -512,298 +505,269 @@ class _HerdingScreenState extends State<HerdingScreen> {
                   }
                   final propertyAreas = _areasForProperty(
                       areaSnap.data ?? const <Map<String, dynamic>>[]);
-                  _fitViewport(
-                    propertyPolygon: propertyPolygon,
-                    propertyDevices: propertyDevices,
-                  );
 
-                  return StreamBuilder<List<HerdingOperationModel>>(
-                    stream: firebase.streamHerdingOperations(
+                  return StreamBuilder<List<Map<String, dynamic>>>(
+                    stream: firebase.streamGateways(
                       uid: uid,
                       isAdmin: auth.isAdmin,
                     ),
-                    builder: (context, operationsSnap) {
-                      final operations = operationsSnap.data ??
-                          const <HerdingOperationModel>[];
-                      final trackedOperation = _createdOperationId == null
-                          ? operations
-                              .cast<HerdingOperationModel?>()
-                              .firstWhere(
-                                (operation) =>
-                                    operation?.propertyId ==
-                                    _selectedPropertyId,
-                                orElse: () => null,
-                              )
-                          : operations
-                              .cast<HerdingOperationModel?>()
-                              .firstWhere(
-                                (operation) =>
-                                    operation?.id == _createdOperationId,
-                                orElse: () => null,
-                              );
-
-                      final polygons = <Polygon<Object>>[
-                        if (propertyPolygon.length >= 3)
-                          Polygon<Object>(
-                            points: propertyPolygon,
-                            color: Colors.green.withValues(alpha: 0.16),
-                            borderColor: Colors.green.shade700,
-                            borderStrokeWidth: 3,
+                    builder: (context, gatewaySnap) {
+                      if (gatewaySnap.hasError) {
+                        return Center(
+                          child: Text(
+                            'Erro ao carregar gateways: ${gatewaySnap.error}',
                           ),
-                        ...propertyAreas
-                            .map((area) => _decodePolygon(area['perimeter']))
-                            .where((points) => points.length >= 3)
-                            .map(
-                              (points) => Polygon<Object>(
-                                points: points,
-                                color: Colors.orange.withValues(alpha: 0.08),
-                                borderColor: Colors.orange.shade700,
-                                borderStrokeWidth: 2,
-                              ),
-                            ),
-                        if (_targetPolygon.length >= 2)
-                          Polygon<Object>(
-                            points: _targetPolygon,
-                            color: Colors.blue.withValues(alpha: 0.18),
-                            borderColor: Colors.blue.shade700,
-                            borderStrokeWidth: 3,
-                          ),
-                      ];
+                        );
+                      }
+                      final propertyGateways = _gatewaysForProperty(
+                        gatewaySnap.data ?? const <Map<String, dynamic>>[],
+                      );
 
-                      final markers = propertyDevices
-                          .map((device) {
-                            final deviceId = device.loraDeviceId;
-                            final position = _devicePosition(device);
-                            if (deviceId == null || position == null) {
-                              return null;
-                            }
-                            final selected =
-                                _selectedDeviceIds.contains(deviceId);
-                            return Marker(
-                              point: position,
-                              width: 78,
-                              height: 78,
-                              child: GestureDetector(
-                                onTap: () => _toggleDevice(device),
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      selected
-                                          ? Icons.pets
-                                          : Icons.pets_outlined,
-                                      color: selected
-                                          ? Colors.red.shade700
-                                          : Colors.brown.shade700,
-                                      size: 28,
+                      return StreamBuilder<List<HerdingOperationModel>>(
+                        stream: firebase.streamHerdingOperations(
+                          uid: uid,
+                          isAdmin: auth.isAdmin,
+                        ),
+                        builder: (context, operationsSnap) {
+                          final operations = operationsSnap.data ??
+                              const <HerdingOperationModel>[];
+                          final trackedOperation = _createdOperationId == null
+                              ? operations
+                                  .cast<HerdingOperationModel?>()
+                                  .firstWhere(
+                                    (operation) =>
+                                        operation?.propertyId ==
+                                        _selectedPropertyId,
+                                    orElse: () => null,
+                                  )
+                              : operations
+                                  .cast<HerdingOperationModel?>()
+                                  .firstWhere(
+                                    (operation) =>
+                                        operation?.id == _createdOperationId,
+                                    orElse: () => null,
+                                  );
+
+                          final mapContext = PolygonMapContext(
+                            boundaryPolygon: propertyPolygon,
+                            areaPolygons: propertyAreas
+                                .map(
+                                    (area) => _decodePolygon(area['perimeter']))
+                                .where((points) => points.length >= 3)
+                                .toList(),
+                            devices: propertyDevices
+                                .map((device) {
+                                  final deviceId = device.loraDeviceId;
+                                  final point = _devicePosition(device);
+                                  if (deviceId == null || point == null) {
+                                    return null;
+                                  }
+                                  return PolygonMapDeviceOverlay(
+                                    id: deviceId,
+                                    label: device.name,
+                                    point: point,
+                                    selected:
+                                        _selectedDeviceIds.contains(deviceId),
+                                    onTap: () => _toggleDevice(device),
+                                  );
+                                })
+                                .whereType<PolygonMapDeviceOverlay>()
+                                .toList(),
+                            gateways: propertyGateways
+                                .map((gateway) {
+                                  final point = _gatewayPosition(gateway);
+                                  if (point == null) return null;
+                                  return PolygonMapGatewayOverlay(
+                                    id: _idFromRefOrPath(
+                                      gateway['id'] ?? gateway['gatewayId'],
                                     ),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 6,
-                                        vertical: 2,
+                                    label: _gatewayLabel(gateway),
+                                    point: point,
+                                  );
+                                })
+                                .whereType<PolygonMapGatewayOverlay>()
+                                .toList(),
+                          );
+
+                          return Column(
+                            children: [
+                              Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                                child: DropdownButtonFormField<String>(
+                                  initialValue: _selectedPropertyId,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Propriedade',
+                                  ),
+                                  items: properties
+                                      .map(
+                                        (property) => DropdownMenuItem<String>(
+                                          value: property['id']?.toString(),
+                                          child: Text(_propertyLabel(property)),
+                                        ),
+                                      )
+                                      .toList(),
+                                  onChanged: _setProperty,
+                                ),
+                              ),
+                              Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 12),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        'Toque nas coleiras no mapa para selecionar os animais. Toque no mapa para desenhar o poligono destino.',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall,
                                       ),
-                                      decoration: BoxDecoration(
-                                        color: Colors.white,
-                                        borderRadius:
-                                            BorderRadius.circular(999),
-                                        boxShadow: const [
-                                          BoxShadow(
-                                            blurRadius: 8,
-                                            color: Color(0x22000000),
+                                    ),
+                                    AnimatedBuilder(
+                                      animation: _polygonController,
+                                      builder: (context, _) {
+                                        return TextButton.icon(
+                                          onPressed: _polygonController.canUndo
+                                              ? _polygonController.undo
+                                              : null,
+                                          icon: const Icon(Icons.undo),
+                                          label: const Text('Desfazer'),
+                                        );
+                                      },
+                                    ),
+                                    AnimatedBuilder(
+                                      animation: _polygonController,
+                                      builder: (context, _) {
+                                        return TextButton.icon(
+                                          onPressed:
+                                              _polygonController.points.isEmpty
+                                                  ? null
+                                                  : _polygonController.clear,
+                                          icon:
+                                              const Icon(Icons.delete_outline),
+                                          label: const Text('Limpar'),
+                                        );
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: AnimatedBuilder(
+                                    animation: _polygonController,
+                                    builder: (context, _) {
+                                      return Wrap(
+                                        spacing: 8,
+                                        runSpacing: 8,
+                                        children: [
+                                          Chip(
+                                            label: Text(
+                                              '${_selectedDeviceIds.length} animais selecionados',
+                                            ),
+                                          ),
+                                          Chip(
+                                            label: Text(
+                                              '${_polygonController.points.length} pontos no poligono',
+                                            ),
                                           ),
                                         ],
-                                      ),
-                                      child: Text(
-                                        device.name,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(fontSize: 11),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          })
-                          .whereType<Marker>()
-                          .toList();
-
-                      final polygonVertices = _targetPolygon
-                          .map(
-                            (point) => Marker(
-                              point: point,
-                              width: 18,
-                              height: 18,
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.blue.shade700,
-                                  shape: BoxShape.circle,
-                                  border:
-                                      Border.all(color: Colors.white, width: 2),
-                                ),
-                              ),
-                            ),
-                          )
-                          .toList();
-
-                      return Column(
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-                            child: DropdownButtonFormField<String>(
-                              initialValue: _selectedPropertyId,
-                              decoration: const InputDecoration(
-                                labelText: 'Propriedade',
-                              ),
-                              items: properties
-                                  .map(
-                                    (property) => DropdownMenuItem<String>(
-                                      value: property['id']?.toString(),
-                                      child: Text(_propertyLabel(property)),
-                                    ),
-                                  )
-                                  .toList(),
-                              onChanged: _setProperty,
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    'Toque nas coleiras no mapa para selecionar os animais. Toque no mapa para desenhar o poligono destino.',
-                                    style:
-                                        Theme.of(context).textTheme.bodySmall,
-                                  ),
-                                ),
-                                TextButton.icon(
-                                  onPressed: _targetPolygon.isEmpty
-                                      ? null
-                                      : _undoPoint,
-                                  icon: const Icon(Icons.undo),
-                                  label: const Text('Desfazer'),
-                                ),
-                                TextButton.icon(
-                                  onPressed: _targetPolygon.isEmpty
-                                      ? null
-                                      : _clearPolygon,
-                                  icon: const Icon(Icons.delete_outline),
-                                  label: const Text('Limpar'),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                            child: Align(
-                              alignment: Alignment.centerLeft,
-                              child: Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  Chip(
-                                    label: Text(
-                                      '${_selectedDeviceIds.length} animais selecionados',
-                                    ),
-                                  ),
-                                  Chip(
-                                    label: Text(
-                                      '${_targetPolygon.length} pontos no poligono',
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          Expanded(
-                            child: Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 12),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(24),
-                                child: FlutterMap(
-                                  mapController: _mapController,
-                                  options: MapOptions(
-                                    initialCenter: propertyPolygon.isNotEmpty
-                                        ? propertyPolygon.first
-                                        : LatLng(
-                                            widget.initialLat ?? -23.0,
-                                            widget.initialLon ?? -46.0,
-                                          ),
-                                    initialZoom: 15,
-                                    onPositionChanged: (position, hasGesture) {
-                                      if (!hasGesture ||
-                                          _viewportPinnedByUser) {
-                                        return;
-                                      }
-                                      setState(
-                                          () => _viewportPinnedByUser = true);
+                                      );
                                     },
-                                    onTap: (_, point) =>
-                                        _addPolygonPoint(point),
                                   ),
-                                  children: [
-                                    TileLayer(
-                                      urlTemplate:
-                                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                                      userAgentPackageName: 'ruraltech_app',
+                                ),
+                              ),
+                              Expanded(
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                  ),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(24),
+                                    child: PolygonEditingMap(
+                                      controller: _polygonController,
+                                      contextData: mapContext,
+                                      enforceBoundary: true,
+                                      maxPoints: _maxTargetPolygonPoints,
+                                      allowFreeAdd: true,
+                                      viewportSignature:
+                                          'herding:${_selectedPropertyId ?? ''}',
+                                      fallbackCenter: propertyPolygon.isNotEmpty
+                                          ? propertyPolygon.first
+                                          : LatLng(
+                                              widget.initialLat ?? -23.0,
+                                              widget.initialLon ?? -46.0,
+                                            ),
+                                      boundaryFillColor:
+                                          const Color(0x291B5E20),
+                                      boundaryBorderColor:
+                                          const Color(0xFF2E7D32),
+                                      areaFillColor: const Color(0x14FB8C00),
+                                      areaBorderColor: const Color(0xFFF57C00),
+                                      draftFillColor: const Color(0x2D1565C0),
+                                      draftBorderColor: const Color(0xFF1565C0),
+                                      vertexColor: const Color(0xFF1565C0),
+                                      selectedVertexColor:
+                                          const Color(0xFFC62828),
+                                      outOfBoundaryMessage:
+                                          'Ponto fora do limite da propriedade selecionada.',
+                                      idleTapMessage:
+                                          'Toque em um ponto para mover, no perimetro para inserir ou em uma area livre para adicionar.',
                                     ),
-                                    if (polygons.isNotEmpty)
-                                      PolygonLayer(polygons: polygons),
-                                    if (markers.isNotEmpty ||
-                                        polygonVertices.isNotEmpty)
-                                      MarkerLayer(markers: <Marker>[
-                                        ...markers,
-                                        ...polygonVertices
-                                      ]),
+                                  ),
+                                ),
+                              ),
+                              Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                                child: Column(
+                                  children: [
+                                    _buildOperationStatusCard(
+                                      Theme.of(context),
+                                      trackedOperation,
+                                    ),
+                                    const SizedBox(height: 8),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: ElevatedButton.icon(
+                                        key: const Key(
+                                          'submit_herding_operation_button',
+                                        ),
+                                        onPressed: _isSubmitting ||
+                                                selectedProperty == null
+                                            ? null
+                                            : () => _submitOperation(
+                                                  selectedProperty,
+                                                  propertyDevices,
+                                                  auth,
+                                                  firebase,
+                                                ),
+                                        icon: _isSubmitting
+                                            ? const SizedBox(
+                                                width: 18,
+                                                height: 18,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                ),
+                                              )
+                                            : const Icon(Icons.alt_route),
+                                        label: Text(
+                                          _isSubmitting
+                                              ? 'Enviando para a matriz...'
+                                              : 'Solicitar arrebanhamento',
+                                        ),
+                                      ),
+                                    ),
                                   ],
                                 ),
                               ),
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-                            child: Column(
-                              children: [
-                                _buildOperationStatusCard(
-                                  Theme.of(context),
-                                  trackedOperation,
-                                ),
-                                const SizedBox(height: 8),
-                                SizedBox(
-                                  width: double.infinity,
-                                  child: ElevatedButton.icon(
-                                    key: const Key(
-                                        'submit_herding_operation_button'),
-                                    onPressed: _isSubmitting ||
-                                            selectedProperty == null
-                                        ? null
-                                        : () => _submitOperation(
-                                              selectedProperty,
-                                              propertyDevices,
-                                              auth,
-                                              firebase,
-                                            ),
-                                    icon: _isSubmitting
-                                        ? const SizedBox(
-                                            width: 18,
-                                            height: 18,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                            ),
-                                          )
-                                        : const Icon(Icons.alt_route),
-                                    label: Text(
-                                      _isSubmitting
-                                          ? 'Enviando para a matriz...'
-                                          : 'Solicitar arrebanhamento',
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+                            ],
+                          );
+                        },
                       );
                     },
                   );

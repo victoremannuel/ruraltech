@@ -5,14 +5,17 @@ import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
-import '../config/manual_settings.dart';
+import '../models/device_model.dart';
+import '../models/polygon_map_context.dart';
 import '../services/auth_service.dart';
 import '../services/firebase_service.dart';
+import '../utils/polygon_edit_session.dart';
+import '../utils/polygon_metrics.dart';
 import '../utils/top_feedback.dart';
+import '../widgets/polygon_editing_map.dart';
 
 class RuralPropertyEditorScreen extends StatefulWidget {
   final Map<String, dynamic>? initialProperty;
@@ -29,10 +32,8 @@ class RuralPropertyEditorScreen extends StatefulWidget {
 
 class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
   final _nameCtrl = TextEditingController();
-  final List<LatLng> _points = [];
-  final LatLng _fallbackCenter = const LatLng(-23.0, -46.0);
-  final MapController _mapController = MapController();
   final Set<String> _selectedUserUids = <String>{};
+  late final PolygonEditSessionController _draftController;
 
   List<Map<String, String>> _userOptions = const <Map<String, String>>[];
   Set<String> _initialLinkedUserUids = <String>{};
@@ -41,19 +42,16 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
   bool _isSaving = false;
   bool _didTimeout = false;
   bool _isLoadingUsers = false;
-  bool _fitDone = false;
+  int _viewportRevision = 0;
 
   bool get _isEditMode => widget.initialProperty != null;
 
   String? get _editingPropertyId {
     final raw = widget.initialProperty?['id'];
     if (raw == null) return null;
-    final id = raw.toString().trim();
+    final id = _normalizeId(raw);
     return id.isEmpty ? null : id;
   }
-
-  LatLng get _initialCenter =>
-      _points.isNotEmpty ? _points.first : _fallbackCenter;
 
   Future<void> _showMessage(String title, String message) async {
     if (!mounted) return;
@@ -75,6 +73,9 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
   @override
   void initState() {
     super.initState();
+    _draftController = PolygonEditSessionController(
+      initialPoints: _initialPropertyPoints(widget.initialProperty),
+    );
     _hydrateInitialProperty();
     unawaited(_loadUserOptionsIfNeeded());
   }
@@ -82,12 +83,29 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
   @override
   void dispose() {
     _nameCtrl.dispose();
-    _mapController.dispose();
+    _draftController.dispose();
     super.dispose();
+  }
+
+  String _normalizeId(dynamic value) {
+    if (value is DocumentReference) return value.id;
+    if (value is String) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty) return '';
+      if (!trimmed.contains('/')) return trimmed;
+      final parts = trimmed.split('/').where((e) => e.isNotEmpty).toList();
+      return parts.isEmpty ? '' : parts.last;
+    }
+    if (value is Map && value['id'] != null) {
+      return value['id'].toString().trim();
+    }
+    if (value == null) return '';
+    return value.toString().trim();
   }
 
   LatLng? _toLatLng(dynamic value) {
     if (value is GeoPoint) return LatLng(value.latitude, value.longitude);
+    if (value is LatLng) return value;
     if (value is List && value.length >= 2) {
       final a = value[0];
       final b = value[1];
@@ -104,67 +122,36 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
     return null;
   }
 
-  String _extractUserId(dynamic rawUser) {
-    if (rawUser is DocumentReference) return rawUser.id;
-    if (rawUser is String) {
-      final trimmed = rawUser.trim();
-      if (trimmed.isEmpty) return '';
-      if (!trimmed.contains('/')) return trimmed;
-      final parts = trimmed.split('/').where((e) => e.isNotEmpty).toList();
-      return parts.isEmpty ? '' : parts.last;
-    }
-    if (rawUser is Map && rawUser['id'] != null) {
-      return rawUser['id'].toString().trim();
-    }
-    return '';
+  List<LatLng> _initialPropertyPoints(Map<String, dynamic>? property) {
+    final rawPoints = property?['points'];
+    if (rawPoints is! List) return const <LatLng>[];
+    return rawPoints.map(_toLatLng).whereType<LatLng>().toList();
   }
+
+  String _extractUserId(dynamic rawUser) => _normalizeId(rawUser);
 
   Set<String> _extractUserIds(dynamic rawUsers) {
     final out = <String>{};
     if (rawUsers is! List) return out;
-    for (final u in rawUsers) {
-      final id = _extractUserId(u);
+    for (final user in rawUsers) {
+      final id = _extractUserId(user);
       if (id.isNotEmpty) out.add(id);
     }
     return out;
   }
 
   void _hydrateInitialProperty() {
-    final p = widget.initialProperty;
-    if (p == null) return;
+    final property = widget.initialProperty;
+    if (property == null) return;
 
-    _nameCtrl.text = (p['name'] ?? '').toString().trim();
-    _initialLinkedUserUids = _extractUserIds(p['userUids']);
-    final ownerId = _extractUserId(p['ownerUid']);
-    final createdById = _extractUserId(p['createdByUid']);
+    _nameCtrl.text = (property['name'] ?? '').toString().trim();
+    _initialLinkedUserUids = _extractUserIds(property['userUids']);
+    final ownerId = _extractUserId(property['ownerUid']);
+    final createdById = _extractUserId(property['createdByUid']);
     _initialOwnerUid = ownerId.isNotEmpty ? ownerId : createdById;
     if (_initialOwnerUid.isNotEmpty) {
       _selectedOwnerUid = _initialOwnerUid;
     }
-
-    final rawPoints = p['points'];
-    if (rawPoints is List) {
-      final parsed = rawPoints.map(_toLatLng).whereType<LatLng>().toList();
-      if (parsed.length >= 3) {
-        _points
-          ..clear()
-          ..addAll(parsed);
-      }
-    }
-  }
-
-  void _fitToPoints(List<LatLng> points) {
-    if (_fitDone || points.length < 2) return;
-    _fitDone = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _mapController.fitCamera(
-        CameraFit.bounds(
-          bounds: LatLngBounds.fromPoints(points),
-          padding: const EdgeInsets.all(42),
-        ),
-      );
-    });
   }
 
   Future<void> _loadUserOptionsIfNeeded() async {
@@ -176,8 +163,8 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
       final users = await context.read<FirebaseService>().getUserOptions();
       if (!mounted) return;
       final validUids = users
-          .map((u) => (u['uid'] ?? '').trim())
-          .where((u) => u.isNotEmpty)
+          .map((user) => (user['uid'] ?? '').trim())
+          .where((uid) => uid.isNotEmpty)
           .toSet();
       final seeded = _initialLinkedUserUids.where(validUids.contains).toSet();
       final currentUid = auth.user?.uid;
@@ -219,9 +206,9 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
       caseSensitive: false,
     ).allMatches(kml);
 
-    List<LatLng> best = [];
-    for (final m in matches) {
-      final raw = m.group(1);
+    List<LatLng> best = <LatLng>[];
+    for (final match in matches) {
+      final raw = match.group(1);
       if (raw == null || raw.trim().isEmpty) continue;
 
       final points = <LatLng>[];
@@ -301,6 +288,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
       );
       return;
     }
+
     final imported = _extractPolygonFromKml(kmlText);
     if (imported.length < 3) {
       await _showMessage(
@@ -310,20 +298,15 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
       return;
     }
 
-    setState(() {
-      _points
-        ..clear()
-        ..addAll(imported);
-      _fitDone = false;
-    });
-    _fitToPoints(imported);
+    _draftController.replaceAllPoints(imported);
     if (!mounted) return;
+    setState(() => _viewportRevision++);
     AppFeedback.success('KML importado com ${imported.length} pontos.');
   }
 
   String _emailForUid(String uid) {
     final user = _userOptions.cast<Map<String, String>?>().firstWhere(
-          (u) => (u?['uid'] ?? '').trim() == uid,
+          (option) => (option?['uid'] ?? '').trim() == uid,
           orElse: () => null,
         );
     return (user?['email'] ?? uid).trim();
@@ -342,8 +325,8 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
           return StatefulBuilder(
             builder: (context, setPickerState) {
               final query = searchCtrl.text.trim().toLowerCase();
-              final filtered = _userOptions.where((u) {
-                final email = (u['email'] ?? '').trim().toLowerCase();
+              final filtered = _userOptions.where((user) {
+                final email = (user['email'] ?? '').trim().toLowerCase();
                 return query.isEmpty || email.contains(query);
               }).toList();
 
@@ -374,8 +357,8 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
                             : ListView.builder(
                                 shrinkWrap: true,
                                 itemCount: filtered.length,
-                                itemBuilder: (_, i) {
-                                  final user = filtered[i];
+                                itemBuilder: (_, index) {
+                                  final user = filtered[index];
                                   final uid = (user['uid'] ?? '').trim();
                                   final email = (user['email'] ?? uid).trim();
                                   final checked = tempSelected.contains(uid);
@@ -385,9 +368,9 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
                                         ListTileControlAffinity.leading,
                                     value: checked,
                                     title: Text(email),
-                                    onChanged: (v) {
+                                    onChanged: (value) {
                                       setPickerState(() {
-                                        if (v == true) {
+                                        if (value == true) {
                                           tempSelected.add(uid);
                                         } else {
                                           tempSelected.remove(uid);
@@ -471,13 +454,186 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
     }
   }
 
+  String? _contextOwnerUid(AuthService auth) {
+    final candidate = auth.isAdmin ? _selectedOwnerUid : auth.user?.uid;
+    final normalized = candidate?.trim() ?? '';
+    return normalized.isEmpty ? null : normalized;
+  }
+
+  bool _propertyBelongsToOwner(
+    Map<String, dynamic> property,
+    String ownerUid,
+  ) {
+    final propertyOwner = _normalizeId(property['ownerUid']);
+    if (propertyOwner == ownerUid) return true;
+    final createdBy = _normalizeId(property['createdByUid']);
+    return createdBy == ownerUid;
+  }
+
+  LatLng? _devicePosition(DeviceModel device) {
+    final lat = device.lat;
+    final lon = device.lon;
+    if (lat == null || lon == null) return null;
+    if (!lat.isFinite || !lon.isFinite) return null;
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+    return LatLng(lat, lon);
+  }
+
+  LatLng? _gatewayPosition(Map<String, dynamic> gateway) {
+    final lat = gateway['lat'];
+    final lon = gateway['lon'];
+    if (lat is! num || lon is! num) return null;
+    final parsedLat = lat.toDouble();
+    final parsedLon = lon.toDouble();
+    if (!parsedLat.isFinite || !parsedLon.isFinite) return null;
+    if (parsedLat < -90 ||
+        parsedLat > 90 ||
+        parsedLon < -180 ||
+        parsedLon > 180) {
+      return null;
+    }
+    return LatLng(parsedLat, parsedLon);
+  }
+
+  String _gatewayLabel(Map<String, dynamic> gateway) {
+    final name = (gateway['name'] ?? '').toString().trim();
+    if (name.isNotEmpty) return name;
+    final id = _normalizeId(gateway['id'] ?? gateway['gatewayId']);
+    return id.isEmpty ? 'Gateway' : id;
+  }
+
+  bool _gatewayAccessibleToOwner(
+    Map<String, dynamic> gateway,
+    String ownerUid,
+    Set<String> ownerPropertyIds,
+  ) {
+    final linkedUserIds = _extractUserIds(gateway['userUids']);
+    if (linkedUserIds.contains(ownerUid)) {
+      return true;
+    }
+    final propertyId = _normalizeId(gateway['propertyId']);
+    return propertyId.isNotEmpty && ownerPropertyIds.contains(propertyId);
+  }
+
+  PolygonMapContext _buildMapContext({
+    required AuthService auth,
+    required List<Map<String, dynamic>> properties,
+    required List<Map<String, dynamic>> areas,
+    required List<DeviceModel> devices,
+    required List<Map<String, dynamic>> gateways,
+  }) {
+    if (_isEditMode) {
+      final propertyId = _editingPropertyId;
+      if (propertyId == null || propertyId.isEmpty) {
+        return const PolygonMapContext();
+      }
+
+      final areaPolygons = areas
+          .where((area) => _normalizeId(area['propertyId']) == propertyId)
+          .map((area) {
+            final raw = (area['perimeter'] as List?) ?? const <dynamic>[];
+            return raw.map(_toLatLng).whereType<LatLng>().toList();
+          })
+          .where((polygon) => polygon.length >= 3)
+          .toList();
+
+      final propertyDevices = devices
+          .where((device) => (device.propertyId ?? '').trim() == propertyId)
+          .map((device) {
+            final point = _devicePosition(device);
+            if (point == null) return null;
+            return PolygonMapDeviceOverlay(
+              id: device.loraDeviceId ?? device.id,
+              label: device.name,
+              point: point,
+            );
+          })
+          .whereType<PolygonMapDeviceOverlay>()
+          .toList();
+
+      final propertyGateways = gateways
+          .where((gateway) => _normalizeId(gateway['propertyId']) == propertyId)
+          .map((gateway) {
+            final point = _gatewayPosition(gateway);
+            if (point == null) return null;
+            return PolygonMapGatewayOverlay(
+              id: _normalizeId(gateway['id'] ?? gateway['gatewayId']),
+              label: _gatewayLabel(gateway),
+              point: point,
+            );
+          })
+          .whereType<PolygonMapGatewayOverlay>()
+          .toList();
+
+      return PolygonMapContext(
+        areaPolygons: areaPolygons,
+        devices: propertyDevices,
+        gateways: propertyGateways,
+      );
+    }
+
+    final ownerUid = _contextOwnerUid(auth);
+    if (ownerUid == null || ownerUid.isEmpty) {
+      return const PolygonMapContext();
+    }
+
+    final ownerPropertyIds = properties
+        .where((property) => _propertyBelongsToOwner(property, ownerUid))
+        .map((property) => _normalizeId(property['id']))
+        .where((id) => id.isNotEmpty)
+        .toSet();
+
+    final ownerDevices = devices
+        .where((device) => (device.ownerUid ?? '').trim() == ownerUid)
+        .map((device) {
+          final point = _devicePosition(device);
+          if (point == null) return null;
+          return PolygonMapDeviceOverlay(
+            id: device.loraDeviceId ?? device.id,
+            label: device.name,
+            point: point,
+          );
+        })
+        .whereType<PolygonMapDeviceOverlay>()
+        .toList();
+
+    final ownerGateways = gateways
+        .where(
+          (gateway) =>
+              _gatewayAccessibleToOwner(gateway, ownerUid, ownerPropertyIds),
+        )
+        .map((gateway) {
+          final point = _gatewayPosition(gateway);
+          if (point == null) return null;
+          return PolygonMapGatewayOverlay(
+            id: _normalizeId(gateway['id'] ?? gateway['gatewayId']),
+            label: _gatewayLabel(gateway),
+            point: point,
+          );
+        })
+        .whereType<PolygonMapGatewayOverlay>()
+        .toList();
+
+    return PolygonMapContext(
+      devices: ownerDevices,
+      gateways: ownerGateways,
+    );
+  }
+
+  Object _viewportSignature(AuthService auth) {
+    if (_isEditMode) {
+      return 'property:${_editingPropertyId ?? ''}:$_viewportRevision';
+    }
+    return 'owner:${_contextOwnerUid(auth) ?? ''}:$_viewportRevision';
+  }
+
   Future<void> _save() async {
     if (_isSaving) return;
     if (_nameCtrl.text.trim().isEmpty) {
       _showMessage('Campo obrigatorio', 'Informe o nome da propriedade.');
       return;
     }
-    if (_points.length < 3) {
+    if (_draftController.points.length < 3) {
       _showMessage(
         'Pontos insuficientes',
         'Desenhe ao menos 3 pontos no mapa.',
@@ -491,17 +647,21 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
     final ownerUid = auth.isAdmin ? _selectedOwnerUid?.trim() : uid;
     if (ownerUid == null || ownerUid.isEmpty) {
       await _showMessage(
-          'Campo obrigatorio', 'Selecione o dono da propriedade.');
+        'Campo obrigatorio',
+        'Selecione o dono da propriedade.',
+      );
       return;
     }
 
     final emails = _selectedUserUids
         .map(_emailForUid)
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
+        .map((email) => email.trim())
+        .where((email) => email.isNotEmpty)
         .toList();
 
-    final points = _points.map((p) => [p.latitude, p.longitude]).toList();
+    final points = _draftController.points
+        .map((point) => <double>[point.latitude, point.longitude])
+        .toList();
     setState(() => _isSaving = true);
     _didTimeout = false;
     Timer? watchdog;
@@ -516,13 +676,13 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
         );
       });
 
-      final fb = context.read<FirebaseService>();
+      final firebase = context.read<FirebaseService>();
       if (_isEditMode) {
         final id = _editingPropertyId;
         if (id == null || id.isEmpty) {
           throw Exception('id_da_propriedade_invalido');
         }
-        await fb
+        await firebase
             .updateRuralProperty(
               id: id,
               name: _nameCtrl.text.trim(),
@@ -534,7 +694,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
             )
             .timeout(const Duration(seconds: 15));
       } else {
-        await fb
+        await firebase
             .addRuralProperty(
               name: _nameCtrl.text.trim(),
               points: points,
@@ -583,27 +743,32 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
-    _fitToPoints(_points);
+    final uid = auth.user?.uid;
+    if (uid == null || uid.trim().isEmpty) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
     final selectedEmails = _selectedUserUids.map(_emailForUid).toList()..sort();
     final ownerOptions = <Map<String, String>>[..._userOptions];
     final ownerUid = _selectedOwnerUid?.trim();
     if (ownerUid != null &&
         ownerUid.isNotEmpty &&
-        ownerOptions.every((u) => (u['uid'] ?? '').trim() != ownerUid)) {
+        ownerOptions.every((user) => (user['uid'] ?? '').trim() != ownerUid)) {
       ownerOptions
           .insert(0, <String, String>{'uid': ownerUid, 'email': ownerUid});
     }
     final ownerValue = ownerUid != null &&
             ownerUid.isNotEmpty &&
-            ownerOptions.any((u) => (u['uid'] ?? '').trim() == ownerUid)
+            ownerOptions.any((user) => (user['uid'] ?? '').trim() == ownerUid)
         ? ownerUid
         : null;
+    final firebase = context.read<FirebaseService>();
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_isEditMode
-            ? 'Editar propriedade rural'
-            : 'Nova propriedade rural'),
+        title: Text(
+          _isEditMode ? 'Editar propriedade rural' : 'Nova propriedade rural',
+        ),
         actions: [
           if (_isEditMode && auth.isAdmin)
             IconButton(
@@ -646,7 +811,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
                     .toList(),
                 onChanged: _isSaving || _isLoadingUsers
                     ? null
-                    : (v) => setState(() => _selectedOwnerUid = v),
+                    : (value) => setState(() => _selectedOwnerUid = value),
               ),
             ),
           if (auth.isAdmin)
@@ -704,117 +869,182 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
               ],
             ),
           ),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            color: Colors.green.withValues(alpha: 0.08),
-            child: Text(
-              'Desenhe no mapa ou importe KML (${_points.length} pontos)',
-            ),
+          AnimatedBuilder(
+            animation: _draftController,
+            builder: (context, _) {
+              return Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                color: Colors.green.withValues(alpha: 0.08),
+                child: Text(
+                  'Toque no mapa para adicionar os primeiros pontos. Toque em um ponto para mover e no perimetro para inserir novos pontos. '
+                  'Pontos: ${_draftController.points.length}',
+                ),
+              );
+            },
           ),
           Expanded(
-            child: FlutterMap(
-              mapController: _mapController,
-              options: MapOptions(
-                initialCenter: _initialCenter,
-                initialZoom: 15,
-                onTap: (_, p) => setState(() => _points.add(p)),
+            child: StreamBuilder<List<Map<String, dynamic>>>(
+              stream: firebase.streamRuralProperties(
+                uid: uid,
+                isAdmin: auth.isAdmin,
               ),
-              children: [
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: ManualSettings.mapUserAgentPackageName,
-                ),
-                PolygonLayer(
-                  polygons: [
-                    if (_points.length >= 3)
-                      Polygon(
-                        points: _points,
-                        color: Colors.orange.withValues(alpha: 0.3),
-                        borderColor: Colors.orange.shade800,
-                        borderStrokeWidth: 3,
+              builder: (context, propertySnap) {
+                if (propertySnap.hasError) {
+                  return Center(
+                    child: Text(
+                      'Erro ao carregar propriedades: ${propertySnap.error}',
+                    ),
+                  );
+                }
+                final properties =
+                    propertySnap.data ?? const <Map<String, dynamic>>[];
+
+                return StreamBuilder<List<Map<String, dynamic>>>(
+                  stream: firebase.streamAreas(uid: uid, isAdmin: auth.isAdmin),
+                  builder: (context, areaSnap) {
+                    if (areaSnap.hasError) {
+                      return Center(
+                        child:
+                            Text('Erro ao carregar areas: ${areaSnap.error}'),
+                      );
+                    }
+                    final areas =
+                        areaSnap.data ?? const <Map<String, dynamic>>[];
+
+                    return StreamBuilder<List<DeviceModel>>(
+                      stream: firebase.streamDevices(
+                        uid: uid,
+                        isAdmin: auth.isAdmin,
                       ),
-                  ],
-                ),
-                MarkerLayer(
-                  markers: _points
-                      .map(
-                        (p) => Marker(
-                          point: p,
-                          width: 16,
-                          height: 16,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.orange.shade800,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 2),
+                      builder: (context, deviceSnap) {
+                        if (deviceSnap.hasError) {
+                          return Center(
+                            child: Text(
+                              'Erro ao carregar coleiras: ${deviceSnap.error}',
                             ),
+                          );
+                        }
+                        final devices =
+                            deviceSnap.data ?? const <DeviceModel>[];
+
+                        return StreamBuilder<List<Map<String, dynamic>>>(
+                          stream: firebase.streamGateways(
+                            uid: uid,
+                            isAdmin: auth.isAdmin,
                           ),
-                        ),
-                      )
-                      .toList(),
-                ),
-                const Scalebar(
-                  alignment: Alignment.bottomRight,
-                  padding: EdgeInsets.only(
-                    right: 12,
-                    bottom: 12,
-                  ),
-                  lineColor: Color(0xFF173120),
-                  textStyle: TextStyle(
-                    color: Color(0xFF173120),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
+                          builder: (context, gatewaySnap) {
+                            if (gatewaySnap.hasError) {
+                              return Center(
+                                child: Text(
+                                  'Erro ao carregar gateways: ${gatewaySnap.error}',
+                                ),
+                              );
+                            }
+                            final gateways = gatewaySnap.data ??
+                                const <Map<String, dynamic>>[];
+                            final mapContext = _buildMapContext(
+                              auth: auth,
+                              properties: properties,
+                              areas: areas,
+                              devices: devices,
+                              gateways: gateways,
+                            );
+
+                            return Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 12),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(24),
+                                child: PolygonEditingMap(
+                                  controller: _draftController,
+                                  contextData: mapContext,
+                                  allowFreeAdd: !_isEditMode,
+                                  viewportSignature: _viewportSignature(auth),
+                                  boundaryFillColor: const Color(0x26FF9800),
+                                  boundaryBorderColor: const Color(0xFFE65100),
+                                  areaFillColor: const Color(0x26009688),
+                                  areaBorderColor: const Color(0xFF00897B),
+                                  draftFillColor: const Color(0x4DFF9800),
+                                  draftBorderColor: const Color(0xFFE65100),
+                                  vertexColor: const Color(0xFFE65100),
+                                  selectedVertexColor: const Color(0xFFC62828),
+                                  idleTapMessage: _isEditMode
+                                      ? 'Toque em um ponto para mover ou no perimetro para inserir novo ponto.'
+                                      : 'Toque em um ponto para mover, no perimetro para inserir ou em uma area livre para adicionar.',
+                                ),
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    );
+                  },
+                );
+              },
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    key: const Key('property_clear_points_button'),
-                    onPressed: _isSaving || _points.isEmpty
-                        ? null
-                        : () => setState(() {
-                              _points.clear();
-                              _fitDone = false;
-                            }),
-                    child: const Text('Limpar'),
-                  ),
+          AnimatedBuilder(
+            animation: _draftController,
+            builder: (context, _) {
+              return Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                color: Colors.green.withValues(alpha: 0.08),
+                child: Text(
+                  'Area da edicao: ${PolygonMetrics.areaTextInline(_draftController.points)}'
+                  ' | Pontos: ${_draftController.points.length}',
+                  textAlign: TextAlign.center,
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton(
-                    key: const Key('property_undo_point_button'),
-                    onPressed: _isSaving || _points.isEmpty
-                        ? null
-                        : () => setState(() {
-                              _points.removeLast();
-                              _fitDone = false;
-                            }),
-                    child: const Text('Desfazer'),
-                  ),
+              );
+            },
+          ),
+          AnimatedBuilder(
+            animation: _draftController,
+            builder: (context, _) {
+              return Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        key: const Key('property_clear_points_button'),
+                        onPressed: _isSaving || _draftController.points.isEmpty
+                            ? null
+                            : _draftController.clear,
+                        child: const Text('Limpar'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton(
+                        key: const Key('property_undo_point_button'),
+                        onPressed: _isSaving || !_draftController.canUndo
+                            ? null
+                            : _draftController.undo,
+                        child: const Text('Desfazer'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ElevatedButton(
+                        key: const Key('property_save_button'),
+                        onPressed: _isSaving ? null : _save,
+                        child: _isSaving
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Text('Salvar'),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ElevatedButton(
-                    key: const Key('property_save_button'),
-                    onPressed: _isSaving ? null : _save,
-                    child: _isSaving
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('Salvar'),
-                  ),
-                ),
-              ],
-            ),
+              );
+            },
           ),
         ],
       ),
