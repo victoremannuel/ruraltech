@@ -1,16 +1,24 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
-import '../config/manual_settings.dart';
+import '../models/device_model.dart';
+import '../models/polygon_map_context.dart';
 import '../services/auth_service.dart';
 import '../services/firebase_service.dart';
 import '../services/gateway_service.dart';
+import '../utils/polygon_edit_session.dart';
+import '../utils/polygon_metrics.dart';
 import '../utils/top_feedback.dart';
+import '../widgets/polygon_editing_map.dart';
 
 class AreaEditorScreen extends StatefulWidget {
-  const AreaEditorScreen({super.key});
+  const AreaEditorScreen({
+    super.key,
+    this.initialArea,
+  });
+
+  final Map<String, dynamic>? initialArea;
 
   @override
   State<AreaEditorScreen> createState() => _AreaEditorScreenState();
@@ -19,12 +27,45 @@ class AreaEditorScreen extends StatefulWidget {
 class _AreaEditorScreenState extends State<AreaEditorScreen> {
   static const int _maxAreaPoints = GatewayService.maxPolygonPoints;
 
-  final List<LatLng> _points = [];
+  late final PolygonEditSessionController _draftController;
   String? _selectedPropertyId;
   bool _loadingProperties = true;
-  List<Map<String, dynamic>> _properties = const [];
-  final MapController _mapController = MapController();
-  bool _fittedToProperty = false;
+  bool _saving = false;
+  List<Map<String, dynamic>> _properties = const <Map<String, dynamic>>[];
+
+  bool get _isEditMode => widget.initialArea != null;
+
+  String? get _editingAreaId {
+    final raw = widget.initialArea?['id'];
+    if (raw == null) return null;
+    final id = _normalizeId(raw);
+    return id.isEmpty ? null : id;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedPropertyId = _normalizeId(widget.initialArea?['propertyId']);
+    _draftController = PolygonEditSessionController(
+      initialPoints: _decodePolygon(widget.initialArea?['perimeter']),
+    );
+    _loadProperties();
+  }
+
+  @override
+  void dispose() {
+    _draftController.dispose();
+    super.dispose();
+  }
+
+  String _normalizeId(dynamic value) {
+    if (value == null) return '';
+    final raw = value.toString().trim();
+    if (raw.isEmpty) return '';
+    if (!raw.contains('/')) return raw;
+    final parts = raw.split('/').where((entry) => entry.isNotEmpty).toList();
+    return parts.isEmpty ? raw : parts.last;
+  }
 
   LatLng? _toLatLng(dynamic value) {
     if (value is LatLng) return value;
@@ -45,253 +86,418 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
     return null;
   }
 
-  List<LatLng> get _selectedPropertyPolygon {
-    if (_selectedPropertyId == null) return const [];
-    final property = _properties.cast<Map<String, dynamic>?>().firstWhere(
-          (p) => p?['id'].toString() == _selectedPropertyId,
-          orElse: () => null,
-        );
-    if (property == null) return const [];
-    final raw = (property['points'] as List?) ?? const [];
+  List<LatLng> _decodePolygon(dynamic raw) {
+    if (raw is! List) return const <LatLng>[];
     return raw.map(_toLatLng).whereType<LatLng>().toList();
   }
 
-  bool _isPointInsidePolygon(LatLng point, List<LatLng> polygon) {
-    if (polygon.length < 3) return false;
-    var inside = false;
-    for (var i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-      final xi = polygon[i].longitude;
-      final yi = polygon[i].latitude;
-      final xj = polygon[j].longitude;
-      final yj = polygon[j].latitude;
-      final intersects = ((yi > point.latitude) != (yj > point.latitude)) &&
-          (point.longitude <
-              (xj - xi) * (point.latitude - yi) / ((yj - yi) + 1e-12) + xi);
-      if (intersects) inside = !inside;
+  LatLng? _devicePosition(DeviceModel device) {
+    final lat = device.lat;
+    final lon = device.lon;
+    if (lat == null || lon == null) return null;
+    if (!lat.isFinite || !lon.isFinite) return null;
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+    return LatLng(lat, lon);
+  }
+
+  LatLng? _gatewayPosition(Map<String, dynamic> gateway) {
+    final lat = gateway['lat'];
+    final lon = gateway['lon'];
+    if (lat is! num || lon is! num) return null;
+    final parsedLat = lat.toDouble();
+    final parsedLon = lon.toDouble();
+    if (!parsedLat.isFinite || !parsedLon.isFinite) return null;
+    if (parsedLat < -90 ||
+        parsedLat > 90 ||
+        parsedLon < -180 ||
+        parsedLon > 180) {
+      return null;
     }
-    return inside;
+    return LatLng(parsedLat, parsedLon);
   }
 
-  void _fitToSelectedProperty() {
-    if (_fittedToProperty || _selectedPropertyPolygon.length < 3) return;
-    _fittedToProperty = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _mapController.fitCamera(
-        CameraFit.bounds(
-          bounds: LatLngBounds.fromPoints(_selectedPropertyPolygon),
-          padding: const EdgeInsets.all(42),
-        ),
-      );
-    });
+  String _propertyLabel(Map<String, dynamic> property) {
+    final name = (property['name'] ?? '').toString().trim();
+    if (name.isNotEmpty) return name;
+    final id = _normalizeId(property['id']);
+    return id.isEmpty ? 'Propriedade rural' : id;
   }
 
-  @override
-  void initState() {
-    super.initState();
-    _loadProperties();
+  String _gatewayLabel(Map<String, dynamic> gateway) {
+    final name = (gateway['name'] ?? '').toString().trim();
+    if (name.isNotEmpty) return name;
+    final id = _normalizeId(gateway['id'] ?? gateway['gatewayId']);
+    return id.isEmpty ? 'Gateway' : id;
+  }
+
+  Map<String, dynamic>? get _selectedProperty {
+    final propertyId = _selectedPropertyId;
+    if (propertyId == null || propertyId.isEmpty) return null;
+    return _properties.cast<Map<String, dynamic>?>().firstWhere(
+          (property) => _normalizeId(property?['id']) == propertyId,
+          orElse: () => null,
+        );
+  }
+
+  List<LatLng> get _selectedPropertyPolygon {
+    final raw = (_selectedProperty?['points'] as List?) ?? const <dynamic>[];
+    return raw.map(_toLatLng).whereType<LatLng>().toList();
   }
 
   Future<void> _loadProperties() async {
     final auth = context.read<AuthService>();
     final uid = auth.user?.uid;
     if (uid == null) return;
-    final props = await context
+
+    final properties = await context
         .read<FirebaseService>()
         .getRuralProperties(uid: uid, isAdmin: auth.isAdmin);
+
     if (!mounted) return;
     setState(() {
-      _properties = props;
-      _selectedPropertyId =
-          props.isNotEmpty ? props.first['id'].toString() : null;
+      _properties = properties;
+      final requestedPropertyId = _selectedPropertyId;
+      final propertyExists = requestedPropertyId != null &&
+          requestedPropertyId.isNotEmpty &&
+          properties.any((property) =>
+              _normalizeId(property['id']) == requestedPropertyId);
+      _selectedPropertyId = propertyExists
+          ? requestedPropertyId
+          : (properties.isNotEmpty
+              ? _normalizeId(properties.first['id'])
+              : null);
       _loadingProperties = false;
-      _fittedToProperty = false;
     });
   }
 
+  void _handlePropertyChanged(String? propertyId) {
+    final normalized = _normalizeId(propertyId);
+    if (_isEditMode ||
+        normalized.isEmpty ||
+        normalized == _selectedPropertyId) {
+      return;
+    }
+    setState(() => _selectedPropertyId = normalized);
+    _draftController.resetSession(const <LatLng>[]);
+  }
+
+  Future<void> _delete() async {
+    final areaId = _editingAreaId;
+    if (areaId == null || areaId.isEmpty || _saving) return;
+
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('Apagar area'),
+            content: const Text('Deseja apagar esta area?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancelar'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.red.shade700,
+                ),
+                child: const Text('Apagar'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!confirmed || !mounted) return;
+
+    setState(() => _saving = true);
+    try {
+      await context.read<FirebaseService>().deleteArea(id: areaId);
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      AppFeedback.error('Erro ao apagar area: $e');
+      setState(() => _saving = false);
+    }
+  }
+
   Future<void> _save() async {
-    if (_selectedPropertyId == null || _selectedPropertyId!.isEmpty) {
+    if (_saving) return;
+
+    final propertyId = _selectedPropertyId?.trim();
+    if (propertyId == null || propertyId.isEmpty) {
       AppFeedback.error('Selecione uma propriedade rural.');
       return;
     }
-    if (_points.length < 3) {
+
+    final points = _draftController.points;
+    if (points.length < 3) {
       AppFeedback.error('Desenhe ao menos 3 pontos no poligono.');
       return;
     }
-    if (_points.length > _maxAreaPoints) {
+    if (points.length > _maxAreaPoints) {
       AppFeedback.error('Permitido apenas $_maxAreaPoints pontos por area.');
       return;
     }
 
     final uid = context.read<AuthService>().user?.uid;
     if (uid == null) return;
-    final perimeter = _points.map((p) => [p.latitude, p.longitude]).toList();
-    await context.read<FirebaseService>().addArea(
+
+    setState(() => _saving = true);
+    final perimeter = points
+        .map((point) => <double>[point.latitude, point.longitude])
+        .toList();
+
+    try {
+      final firebase = context.read<FirebaseService>();
+      if (_isEditMode) {
+        final areaId = _editingAreaId;
+        if (areaId == null || areaId.isEmpty) {
+          throw Exception('id_da_area_invalido');
+        }
+        await firebase.updateAreaPerimeter(id: areaId, perimeter: perimeter);
+      } else {
+        await firebase.addArea(
           ownerUid: uid,
-          ruralPropertyId: _selectedPropertyId!,
+          ruralPropertyId: propertyId,
           perimeter: perimeter,
         );
-    if (!mounted) return;
-    Navigator.pop(context);
+      }
+      if (!mounted) return;
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      AppFeedback.error('Erro ao salvar area: $e');
+      setState(() => _saving = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthService>();
+    final uid = auth.user?.uid;
+    if (uid == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    final selectedProperty = _selectedProperty;
+    final selectedPropertyLabel =
+        selectedProperty == null ? '-' : _propertyLabel(selectedProperty);
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Nova area (poligono)')),
+      appBar: AppBar(
+        title: Text(_isEditMode ? 'Editar area' : 'Nova area (poligono)'),
+        actions: [
+          if (_isEditMode)
+            IconButton(
+              key: const Key('area_delete_button'),
+              onPressed: _saving ? null : _delete,
+              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Apagar area',
+            ),
+        ],
+      ),
       body: Column(
         children: [
           Padding(
             padding: const EdgeInsets.all(12),
             child: _loadingProperties
                 ? const LinearProgressIndicator()
-                : DropdownButtonFormField<String>(
-                    key: const Key('area_property_dropdown'),
-                    initialValue: _selectedPropertyId,
-                    items: _properties
-                        .map(
-                          (p) => DropdownMenuItem<String>(
-                            value: p['id'].toString(),
-                            child: Text((p['name'] ?? p['id']).toString()),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (v) => setState(() {
-                      _selectedPropertyId = v;
-                      _fittedToProperty = false;
-                    }),
-                    decoration: const InputDecoration(
-                      labelText: 'Propriedade rural',
-                    ),
-                  ),
+                : _isEditMode
+                    ? InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: 'Propriedade rural',
+                        ),
+                        child: Text(selectedPropertyLabel),
+                      )
+                    : DropdownButtonFormField<String>(
+                        key: const Key('area_property_dropdown'),
+                        initialValue: _selectedPropertyId,
+                        items: _properties
+                            .map(
+                              (property) => DropdownMenuItem<String>(
+                                value: _normalizeId(property['id']),
+                                child: Text(_propertyLabel(property)),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: _saving ? null : _handlePropertyChanged,
+                        decoration: const InputDecoration(
+                          labelText: 'Propriedade rural',
+                        ),
+                      ),
           ),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            color: Colors.green.withValues(alpha: 0.08),
-            child: Text(
-                'Toque para desenhar o poligono (${_points.length}/$_maxAreaPoints pontos)'),
+          AnimatedBuilder(
+            animation: _draftController,
+            builder: (context, _) {
+              return Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                color: Colors.green.withValues(alpha: 0.08),
+                child: Text(
+                  'Toque no mapa para adicionar os primeiros pontos. Toque em um ponto para mover e no perimetro para inserir novos pontos. '
+                  'Pontos: ${_draftController.points.length}/$_maxAreaPoints',
+                ),
+              );
+            },
           ),
           Expanded(
-            child: Builder(builder: (context) {
-              _fitToSelectedProperty();
-              return FlutterMap(
-                mapController: _mapController,
-                options: MapOptions(
-                  initialCenter: const LatLng(-23.0, -46.0),
-                  initialZoom: 15,
-                  onTap: (_, p) {
-                    if (_points.length >= _maxAreaPoints) {
-                      AppFeedback.error(
-                        'Permitido apenas $_maxAreaPoints pontos por area.',
-                      );
-                      return;
-                    }
-                    final propertyPolygon = _selectedPropertyPolygon;
-                    if (propertyPolygon.length < 3) return;
-                    if (!_isPointInsidePolygon(p, propertyPolygon)) {
-                      AppFeedback.error(
-                        'Ponto fora do perimetro da propriedade selecionada.',
-                      );
-                      return;
-                    }
-                    setState(() => _points.add(p));
-                  },
-                ),
-                children: [
-                  TileLayer(
-                    urlTemplate:
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName:
-                        ManualSettings.mapUserAgentPackageName,
-                  ),
-                  PolygonLayer(
-                    polygons: [
-                      if (_selectedPropertyPolygon.length >= 3)
-                        Polygon(
-                          points: _selectedPropertyPolygon,
-                          color: Colors.orange.withValues(alpha: 0.2),
-                          borderColor: Colors.orange.shade700,
-                          borderStrokeWidth: 3,
-                        ),
-                      if (_points.length >= 3)
-                        Polygon(
-                          points: _points,
-                          color: Colors.teal.withValues(alpha: 0.3),
-                          borderColor: Colors.teal,
-                          borderStrokeWidth: 3,
-                        ),
-                    ],
-                  ),
-                  MarkerLayer(
-                    markers: _points
-                        .map(
-                          (p) => Marker(
-                            point: p,
-                            width: 16,
-                            height: 16,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.teal.shade800,
-                                shape: BoxShape.circle,
-                                border:
-                                    Border.all(color: Colors.white, width: 2),
+            child: _loadingProperties
+                ? const Center(child: CircularProgressIndicator())
+                : StreamBuilder<List<DeviceModel>>(
+                    stream: context
+                        .read<FirebaseService>()
+                        .streamDevices(uid: uid, isAdmin: auth.isAdmin),
+                    builder: (context, deviceSnap) {
+                      if (deviceSnap.hasError) {
+                        return Center(
+                          child: Text(
+                            'Erro ao carregar coleiras: ${deviceSnap.error}',
+                          ),
+                        );
+                      }
+                      final propertyDevices =
+                          (deviceSnap.data ?? const <DeviceModel>[])
+                              .where(
+                                (device) =>
+                                    device.propertyId?.trim() ==
+                                    _selectedPropertyId,
+                              )
+                              .map((device) {
+                                final point = _devicePosition(device);
+                                if (point == null) return null;
+                                return PolygonMapDeviceOverlay(
+                                  id: device.loraDeviceId ?? device.id,
+                                  label: device.name,
+                                  point: point,
+                                );
+                              })
+                              .whereType<PolygonMapDeviceOverlay>()
+                              .toList();
+
+                      return StreamBuilder<List<Map<String, dynamic>>>(
+                        stream: context
+                            .read<FirebaseService>()
+                            .streamGateways(uid: uid, isAdmin: auth.isAdmin),
+                        builder: (context, gatewaySnap) {
+                          if (gatewaySnap.hasError) {
+                            return Center(
+                              child: Text(
+                                'Erro ao carregar gateways: ${gatewaySnap.error}',
+                              ),
+                            );
+                          }
+
+                          final propertyGateways = (gatewaySnap.data ??
+                                  const <Map<String, dynamic>>[])
+                              .where(
+                                (gateway) =>
+                                    _normalizeId(gateway['propertyId']) ==
+                                    _selectedPropertyId,
+                              )
+                              .map((gateway) {
+                                final point = _gatewayPosition(gateway);
+                                if (point == null) return null;
+                                return PolygonMapGatewayOverlay(
+                                  id: _normalizeId(
+                                    gateway['id'] ?? gateway['gatewayId'],
+                                  ),
+                                  label: _gatewayLabel(gateway),
+                                  point: point,
+                                );
+                              })
+                              .whereType<PolygonMapGatewayOverlay>()
+                              .toList();
+
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(24),
+                              child: PolygonEditingMap(
+                                controller: _draftController,
+                                contextData: PolygonMapContext(
+                                  boundaryPolygon: _selectedPropertyPolygon,
+                                  devices: propertyDevices,
+                                  gateways: propertyGateways,
+                                ),
+                                enforceBoundary: true,
+                                maxPoints: _maxAreaPoints,
+                                allowFreeAdd: true,
+                                viewportSignature:
+                                    'area-property:${_selectedPropertyId ?? ''}',
+                                outOfBoundaryMessage:
+                                    'Ponto fora do perimetro da propriedade selecionada.',
+                                idleTapMessage:
+                                    'Toque em um ponto para mover, no perimetro para inserir ou em uma area livre para adicionar.',
                               ),
                             ),
-                          ),
-                        )
-                        .toList(),
+                          );
+                        },
+                      );
+                    },
                   ),
-                  const Scalebar(
-                    alignment: Alignment.bottomRight,
-                    padding: EdgeInsets.only(
-                      right: 12,
-                      bottom: 12,
-                    ),
-                    lineColor: Color(0xFF173120),
-                    textStyle: TextStyle(
-                      color: Color(0xFF173120),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              );
-            }),
           ),
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    key: const Key('area_undo_button'),
-                    onPressed: _points.isEmpty
-                        ? null
-                        : () => setState(() => _points.removeLast()),
-                    child: const Text('Desfazer'),
-                  ),
+          AnimatedBuilder(
+            animation: _draftController,
+            builder: (context, _) {
+              return Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                color: Colors.green.withValues(alpha: 0.08),
+                child: Text(
+                  'Area da edicao: ${PolygonMetrics.areaTextInline(_draftController.points)}'
+                  ' | Pontos: ${_draftController.points.length}/$_maxAreaPoints',
+                  textAlign: TextAlign.center,
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton(
-                    key: const Key('area_clear_button'),
-                    onPressed: _points.isEmpty
-                        ? null
-                        : () => setState(() => _points.clear()),
-                    child: const Text('Limpar'),
-                  ),
+              );
+            },
+          ),
+          AnimatedBuilder(
+            animation: _draftController,
+            builder: (context, _) {
+              return Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        key: const Key('area_undo_button'),
+                        onPressed: _saving || !_draftController.canUndo
+                            ? null
+                            : _draftController.undo,
+                        child: const Text('Desfazer'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton(
+                        key: const Key('area_clear_button'),
+                        onPressed: _saving || _draftController.points.isEmpty
+                            ? null
+                            : _draftController.clear,
+                        child: const Text('Limpar'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ElevatedButton(
+                        key: const Key('area_save_button'),
+                        onPressed: _saving ? null : _save,
+                        child: _saving
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Text('Salvar'),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ElevatedButton(
-                    key: const Key('area_save_button'),
-                    onPressed: _save,
-                    child: const Text('Salvar'),
-                  ),
-                ),
-              ],
-            ),
+              );
+            },
           ),
         ],
       ),

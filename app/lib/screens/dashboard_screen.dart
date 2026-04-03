@@ -25,7 +25,6 @@ import 'area_editor_screen.dart';
 import 'events_screen.dart';
 import 'herding_screen.dart';
 import 'map_point_picker_screen.dart';
-import 'polygon_editor_screen.dart';
 import 'profile_screen.dart';
 import 'rural_property_editor_screen.dart';
 import 'device_details_screen.dart';
@@ -54,10 +53,10 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _ranLegacyBackfill = false;
   String? _lastTelemetryRetentionCleanupDayKey;
   String? _selectedAreaId;
+  String? _selectedAreaPropertyId;
   String? _selectedPropertyId;
   LatLng? _selectedPolygonAnchor;
   List<LatLng> _selectedPolygonPoints = const [];
-  List<LatLng> _selectedPolygonBoundary = const [];
   final Map<String, DeviceMapTelemetrySample> _latestTelemetryByDeviceId = {};
   List<DeviceModel> _latestKnownDevices = const <DeviceModel>[];
 
@@ -576,24 +575,21 @@ class _HomeScreenState extends State<HomeScreen> {
       final ok = await Navigator.push<bool>(
         context,
         MaterialPageRoute(
-          builder: (_) => PolygonEditorScreen(
-            title: 'Editar area',
-            initialPoints: _selectedPolygonPoints,
-            boundary: _selectedPolygonBoundary,
-            maxPoints: GatewayService.maxPolygonPoints,
-            onDelete: () => fb.deleteArea(id: areaId),
-            deleteLabel: 'Apagar area',
-            onSave: (points) =>
-                fb.updateAreaPerimeter(id: areaId, perimeter: points),
+          builder: (_) => AreaEditorScreen(
+            initialArea: <String, dynamic>{
+              'id': areaId,
+              'propertyId': _selectedAreaPropertyId,
+              'perimeter': _selectedPolygonPoints,
+            },
           ),
         ),
       );
       if (ok == true && mounted) {
         setState(() {
           _selectedAreaId = null;
+          _selectedAreaPropertyId = null;
           _selectedPolygonAnchor = null;
           _selectedPolygonPoints = const [];
-          _selectedPolygonBoundary = const [];
         });
       }
       return;
@@ -623,6 +619,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (ok == true && context.mounted) {
         setState(() {
           _selectedPropertyId = null;
+          _selectedAreaPropertyId = null;
           _selectedPolygonAnchor = null;
           _selectedPolygonPoints = const [];
         });
@@ -3352,18 +3349,11 @@ class _HomeScreenState extends State<HomeScreen> {
                           if (_isInsidePolygon(tapPoint, pts)) {
                             final propertyId =
                                 (a['propertyId'] ?? '').toString();
-                            final property = allProperties
-                                .cast<Map<String, dynamic>?>()
-                                .firstWhere(
-                                  (p) => p?['id'].toString() == propertyId,
-                                  orElse: () => null,
-                                );
                             setState(() {
                               _selectedAreaId = a['id'].toString();
+                              _selectedAreaPropertyId = propertyId;
                               _selectedPropertyId = null;
                               _selectedPolygonPoints = pts;
-                              _selectedPolygonBoundary =
-                                  _polygonFromProperty(property);
                               _selectedPolygonAnchor = _centroid(pts);
                             });
                             return;
@@ -3378,8 +3368,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             setState(() {
                               _selectedPropertyId = p['id'].toString();
                               _selectedAreaId = null;
+                              _selectedAreaPropertyId = null;
                               _selectedPolygonPoints = pts;
-                              _selectedPolygonBoundary = const [];
                               _selectedPolygonAnchor = _centroid(pts);
                             });
                             return;
@@ -3388,8 +3378,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         setState(() {
                           _selectedPropertyId = null;
                           _selectedAreaId = null;
+                          _selectedAreaPropertyId = null;
                           _selectedPolygonPoints = const [];
-                          _selectedPolygonBoundary = const [];
                           _selectedPolygonAnchor = null;
                         });
                       }
