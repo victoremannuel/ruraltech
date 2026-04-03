@@ -89,6 +89,9 @@ constexpr uint32_t NORMAL_INTERVAL_MS = 180000;
 constexpr uint32_t ALERT_INTERVAL_MS = 20000;
 constexpr uint32_t HERDING_INTERVAL_MS = 15000;
 constexpr uint32_t RX_WINDOW_MS = 2500;
+constexpr uint32_t LORA_POST_BEGIN_SETTLE_MS = 350;
+constexpr uint32_t LORA_COMMAND_FEEDBACK_DELAY_MS = 180;
+constexpr uint32_t LORA_POST_COMMAND_EVENT_HOLDOFF_MS = 300;
 constexpr uint32_t DAILY_HEALTH_FALLBACK_MS = 86400000UL;
 
 // Segurança animal

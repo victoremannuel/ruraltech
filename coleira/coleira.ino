@@ -98,6 +98,10 @@ static void logEvent(EventType type, int32_t d1, int32_t d2);
 static void copyStringToBuffer(char* dst, size_t dstSize, const char* src);
 static const char* eventTypeLabel(EventType type);
 static const char* commandLabel(MsgType type);
+static void extractCommandMetadataFromPayload(
+    const LoRaFrame& frame,
+    char* commandId,
+    size_t commandIdSize);
 static const char* activeHerdOperationId();
 static void promoteCompletedHerdingFence();
 static bool isValidPolygon(const Polygon& p);
@@ -1547,25 +1551,36 @@ static bool sendDailyHealthReport(const Telemetry& t, uint32_t intervalMs) {
 
 static uint8_t buildTelemetryPayload(const Telemetry& t, uint8_t* out, size_t max) {
   if (!bindingReady_) return 0;
-  StaticJsonDocument<256> doc;
-  doc["fw"] = cfg::FW_VERSION;
-  doc["scope_id"] = bindingPropertyScopeId_;
-  doc["uptime"] = t.uptime;
-  doc["mode"] = (int)t.mode;
-  doc["tmp"] = t.temperatureC;
-  doc["mov"] = t.moving;
-  doc["rssi"] = t.rssi;
-  doc["snr"] = t.snr;
+  // Mantem a telemetria em um envelope compacto para reduzir a chance de
+  // corrupcao/decrypt failure sob o perfil operacional completo da matriz.
+  StaticJsonDocument<160> doc;
+  doc["s"] = bindingPropertyScopeId_;
   doc["lat"] = t.gps.lat;
   doc["lon"] = t.gps.lon;
-  doc["spd"] = t.gps.speedKmph;
-  doc["hdop"] = t.gps.hdop;
-  doc["sat"] = t.gps.sats;
-  doc["gok"] = t.gps.valid;
-  doc["flt"] = t.gps.filtered;
-  doc["lck"] = t.gps.locked;
-  doc["od"] = t.gps.outlierDropped;
+  doc["m"] = (int)t.mode;
+  if (isfinite(t.gps.speedKmph)) doc["sp"] = t.gps.speedKmph;
+  if (isfinite(t.gps.hdop)) doc["hd"] = t.gps.hdop;
+  if (t.gps.sats > 0) doc["sa"] = t.gps.sats;
   return serializeJson(doc, out, max);
+}
+
+static void extractCommandMetadataFromPayload(
+    const LoRaFrame& frame,
+    char* commandId,
+    size_t commandIdSize) {
+  if (commandId && commandIdSize > 0) {
+    commandId[0] = '\0';
+  }
+  if (!commandId || commandIdSize == 0 || frame.payloadLen == 0) return;
+
+  StaticJsonDocument<192> payload;
+  if (deserializeJson(payload, frame.payload, frame.payloadLen) != DeserializationError::Ok) {
+    return;
+  }
+  copyStringToBuffer(
+      commandId,
+      commandIdSize,
+      payload["cmd_id"] | payload["command_id"] | "");
 }
 
 static void sendCommandFeedback(
@@ -1584,17 +1599,29 @@ static void sendCommandFeedback(
   randomNonce(reply.nonce);
 
   StaticJsonDocument<192> payload;
-  payload["cmd"] = commandLabel(cmd.msgType);
-  payload["cmd_code"] = (int)cmd.msgType;
-  payload["cmd_seq"] = cmd.seq;
-  payload["ok"] = ok;
-  if (reply.scopeId != 0) payload["scope_id"] = scopeIdToHex(reply.scopeId);
-  if (commandId && commandId[0]) payload["cmd_id"] = commandId;
-  if (status && status[0]) payload["status"] = status;
-  if (reason && reason[0]) payload["reason"] = reason;
-  if (operationId && operationId[0]) payload["operation_id"] = operationId;
+  if (commandId && commandId[0]) {
+    payload["cmd_id"] = commandId;
+  }
+  if (!ok) {
+    payload["ok"] = false;
+  }
+  if (status && status[0]) {
+    payload["status"] = status;
+  }
+  if (reason && reason[0] && strcmp(reason, "pong") != 0) {
+    payload["reason"] = reason;
+  }
+  if (operationId && operationId[0]) {
+    payload["operation_id"] = operationId;
+  }
+  if (payload.isNull() || payload.size() == 0) {
+    payload["ok"] = ok;
+  }
   reply.payloadLen = serializeJson(payload, reply.payload, sizeof(reply.payload));
 
+  if (cfg::LORA_COMMAND_FEEDBACK_DELAY_MS > 0) {
+    delay(cfg::LORA_COMMAND_FEEDBACK_DELAY_MS);
+  }
   if (!lora.sendFrame(reply)) {
     LOGW("Falha ao enviar %s para cmd=%u seq=%lu",
          ok ? "ACK" : "NACK", (unsigned)cmd.msgType, cmd.seq);
@@ -1605,17 +1632,22 @@ static void applyDownlink(const LoRaFrame& frame) {
   const bool targetMatch = (frame.deviceId == cfg::DEVICE_ID) || (frame.deviceId == 0);
   if (!targetMatch) return;
 
+  char commandId[64]{};
+  extractCommandMetadataFromPayload(frame, commandId, sizeof(commandId));
+
   if (!bindingReady_) {
-    sendCommandFeedback(frame, false, "property_binding_missing");
+    sendCommandFeedback(
+        frame, false, "property_binding_missing", nullptr, nullptr, commandId);
     return;
   }
   if (frame.scopeId == 0 || frame.scopeId != bindingScopeIdValue()) {
-    sendCommandFeedback(frame, false, "property_scope_mismatch");
+    sendCommandFeedback(
+        frame, false, "property_scope_mismatch", nullptr, nullptr, commandId);
     return;
   }
 
   if (frame.msgType == MsgType::PING) {
-    sendCommandFeedback(frame, true, "pong");
+    sendCommandFeedback(frame, true, "pong", nullptr, nullptr, commandId);
     return;
   }
 
@@ -1627,10 +1659,13 @@ static void applyDownlink(const LoRaFrame& frame) {
 
   StaticJsonDocument<512> doc;
   if (deserializeJson(doc, frame.payload, frame.payloadLen) != DeserializationError::Ok) {
-    sendCommandFeedback(frame, false, "invalid_json");
+    sendCommandFeedback(frame, false, "invalid_json", nullptr, nullptr, commandId);
     return;
   }
-  const char* commandId = pickFirstText(doc["cmd_id"], doc["command_id"]);
+  const char* parsedCommandId = pickFirstText(doc["cmd_id"], doc["command_id"]);
+  if (parsedCommandId[0] != '\0') {
+    copyStringToBuffer(commandId, sizeof(commandId), parsedCommandId);
+  }
 
   if (frame.msgType == MsgType::SET_FENCE) {
     const char* err = nullptr;
@@ -1901,6 +1936,9 @@ void setup() {
   recordBootStage("lora_begin");
   loraReady_ = lora.begin();
   if (!loraReady_) LOGE("LoRa indisponivel");
+  if (loraReady_ && cfg::LORA_POST_BEGIN_SETTLE_MS > 0) {
+    delay(cfg::LORA_POST_BEGIN_SETTLE_MS);
+  }
   setWatchdogEnabled(wifiOtaEnabled);
   recordBootStage("checklist");
   printBootChecklist(bleInitOk, storageReady_, loraReady_);
@@ -2069,11 +2107,19 @@ void loop() {
   const uint32_t rxWindowMs = otaSessionLikelyActive
                                   ? cfg::OTA_UPLOAD_RX_WINDOW_MS
                                   : cfg::RX_WINDOW_MS;
-  if (lora.receiveFrame(down, rxWindowMs)) applyDownlink(down);
+  bool handledDownlink = false;
+  if (lora.receiveFrame(down, rxWindowMs)) {
+    applyDownlink(down);
+    handledDownlink = true;
+  }
+
+  if (handledDownlink && cfg::LORA_POST_COMMAND_EVENT_HOLDOFF_MS > 0) {
+    delay(cfg::LORA_POST_COMMAND_EVENT_HOLDOFF_MS);
+  }
 
   EventRecord pending;
   uint8_t eventBudget = otaSessionLikelyActive ? cfg::OTA_UPLOAD_EVENT_BURST : 0xFF;
-  while (bindingReady_ && storage.popEvent(pending)) {
+  while (!handledDownlink && bindingReady_ && storage.popEvent(pending)) {
     LoRaFrame ev;
     ev.deviceId = cfg::DEVICE_ID;
     ev.scopeId = bindingScopeIdValue();

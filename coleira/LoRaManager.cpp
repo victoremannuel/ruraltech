@@ -60,6 +60,12 @@ bool LoRaManager::receiveFrame(LoRaFrame& frame, uint32_t windowMs) {
     size_t len = sizeof(buf);
     int s = radio_.receive(buf, len);
     if (s == RADIOLIB_ERR_NONE) {
+      const size_t packetLen = radio_.getPacketLength();
+      if (packetLen == 0 || packetLen > sizeof(buf)) {
+        LOGW("LoRa RX descartado: packet_len_invalido=%u", (unsigned)packetLen);
+        continue;
+      }
+      len = packetLen;
       if (len < 28) continue;
       lastRssi_ = radio_.getRSSI();
       lastSnr_ = radio_.getSNR();

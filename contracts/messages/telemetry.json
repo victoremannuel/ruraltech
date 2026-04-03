@@ -8,5 +8,5 @@
   "gateway_id": "RT-GW-001",
   "gateway_role": "gateway",
   "gateway_wifi_ota_enabled": true,
-  "payload": "{\"scope_id\":\"DEADBEEF00000001\",\"lat\":-20.1234,\"lon\":-43.9876,\"spd\":1.2,\"sat\":7}"
+  "payload": "{\"s\":\"DEADBEEF00000001\",\"lat\":-20.1234,\"lon\":-43.9876,\"m\":0,\"sp\":1.2,\"sa\":7,\"hd\":0.9}"
 }

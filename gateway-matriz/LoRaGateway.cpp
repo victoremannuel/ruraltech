@@ -1,6 +1,7 @@
 /** @file LoRaGateway.cpp */
 #include "LoRaGateway.h"
 #include "Logger.h"
+#include "config.h"
 #include <cstring>
 #include <SPI.h>
 
@@ -12,6 +13,13 @@ struct ReplayStateBlob {
   uint32_t deviceIds[cfg::LORA_REPLAY_TRACKED_DEVICES]{};
   uint32_t lastSeq[cfg::LORA_REPLAY_TRACKED_DEVICES]{};
 };
+
+inline void prepareSpiBusForLoRa() {
+  pinMode(cfg::PIN_SD_CS, OUTPUT);
+  digitalWrite(cfg::PIN_SD_CS, HIGH);
+  pinMode(cfg::PIN_LORA_CS, OUTPUT);
+  digitalWrite(cfg::PIN_LORA_CS, HIGH);
+}
 }  // namespace
 
 void LoRaGateway::loadReplayState() {
@@ -63,6 +71,7 @@ uint8_t LoRaGateway::idxForDevice(uint32_t id) {
 }
 
 bool LoRaGateway::armContinuousReceive() {
+  prepareSpiBusForLoRa();
   setRadioState("rx_arm");
   const int state = radio_.startReceive();
   lastReceiveCode_ = state;
@@ -78,6 +87,7 @@ bool LoRaGateway::armContinuousReceive() {
 }
 
 bool LoRaGateway::begin() {
+  prepareSpiBusForLoRa();
   SPI.begin(cfg::PIN_SPI_SCK, cfg::PIN_SPI_MISO, cfg::PIN_SPI_MOSI, cfg::PIN_LORA_CS);
   setRadioState("begin");
   const int state = radio_.begin(cfg::LORA_FREQ_MHZ, 125, 9, 7, 0x12);
@@ -104,6 +114,7 @@ bool LoRaGateway::receive(LoRaFrame& frame) {
   if (!ready_) return false;
   if (!rxContinuousActive_ && !armContinuousReceive()) return false;
 
+  prepareSpiBusForLoRa();
   const uint16_t irqFlags = radio_.getIRQFlags();
   lastIrqFlags_ = irqFlags;
   if ((irqFlags & RADIOLIB_SX127X_CLEAR_IRQ_FLAG_RX_DONE) == 0) {
@@ -126,6 +137,7 @@ bool LoRaGateway::receive(LoRaFrame& frame) {
     len = sizeof(buf);
   }
   setRadioState("rx_read");
+  prepareSpiBusForLoRa();
   int s = radio_.readData(buf, len);
   lastReceiveCode_ = s;
   lastReceiveLen_ = packetLen;
@@ -191,6 +203,7 @@ bool LoRaGateway::receive(LoRaFrame& frame) {
 }
 
 bool LoRaGateway::send(LoRaFrame& frame) {
+  prepareSpiBusForLoRa();
   uint8_t plain[256];
   memset(frame.tag, 0, sizeof(frame.tag));
   const size_t packedLen = LoRaProtocol::encodePlain(frame, plain, sizeof(plain));
@@ -203,6 +216,7 @@ bool LoRaGateway::send(LoRaFrame& frame) {
   memcpy(out + 12 + cipherLen, frame.tag, 16);
   rxContinuousActive_ = false;
   setRadioState("tx_start");
+  prepareSpiBusForLoRa();
   const int txState = radio_.transmit(out, 12 + cipherLen + 16);
   armContinuousReceive();
   if (txState == RADIOLIB_ERR_NONE) {

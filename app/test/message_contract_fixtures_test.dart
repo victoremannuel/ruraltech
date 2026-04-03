@@ -58,7 +58,7 @@ void main() {
       expect(telemetry['gateway_wifi_ota_enabled'], isA<bool>());
 
       final payload = _decodePayloadMap(telemetry);
-      expect(payload['scope_id'], isA<String>());
+      expect(payload['scope_id'] ?? payload['s'], isA<String>());
       expect(payload['lat'], isA<num>());
       expect(payload['lon'], isA<num>());
     });

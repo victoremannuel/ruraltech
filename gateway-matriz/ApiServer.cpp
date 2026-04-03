@@ -17,6 +17,16 @@ extern bool supportsScopedLora;
 extern uint64_t lastQueuePollAtUnixMs;
 extern char lastCloudWriteError[96];
 extern LoRaGateway lora;
+extern uint8_t acceptedUplinkQueueCount;
+extern uint32_t acceptedUplinkDropCount;
+extern uint32_t acceptedUplinkLastDrainAtMs;
+extern uint8_t deferredUplinkQueueCount;
+extern bool simpleAckWaitActive;
+extern uint32_t simpleAckWaitDeviceId;
+extern uint32_t simpleAckWaitDeadlineAtMs;
+extern char simpleAckWaitCommandId[48];
+extern char lastSimpleCommandFeedbackOutcome[24];
+extern uint32_t lastSimpleCommandAckMatchedAtMs;
 
 static ApiServer* g_server = nullptr;
 
@@ -121,6 +131,16 @@ void ApiServer::begin() {
       doc["loraTxCount"] = lora.txCount();
       doc["lastLoraIrqFlags"] = lora.lastIrqFlags();
       doc["lastLoraState"] = lora.lastRadioState();
+      doc["acceptedUplinkQueueDepth"] = acceptedUplinkQueueCount;
+      doc["acceptedUplinkDropCount"] = acceptedUplinkDropCount;
+      doc["acceptedUplinkLastDrainAtMs"] = acceptedUplinkLastDrainAtMs;
+      doc["ackWaitActive"] = simpleAckWaitActive;
+      doc["ackWaitDeviceId"] = simpleAckWaitDeviceId;
+      doc["ackWaitDeadlineAtMs"] = simpleAckWaitDeadlineAtMs;
+      doc["deferredUplinkCount"] = deferredUplinkQueueCount;
+      doc["lastFeedbackOutcome"] = lastSimpleCommandFeedbackOutcome;
+      doc["lastAckMatchedAtMs"] = lastSimpleCommandAckMatchedAtMs;
+      if (simpleAckWaitCommandId[0]) doc["ackWaitCommandId"] = simpleAckWaitCommandId;
       if (bindingPropertyId[0]) doc["propertyId"] = bindingPropertyId;
       if (bindingPropertyScopeId[0]) doc["propertyScopeId"] = bindingPropertyScopeId;
       if (bindingMatrixGatewayId[0]) doc["matrixGatewayId"] = bindingMatrixGatewayId;

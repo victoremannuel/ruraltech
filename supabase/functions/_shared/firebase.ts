@@ -492,7 +492,7 @@ export const COMMAND_TTL_MS: Record<string, number> = {
   SET_FENCE: 15 * 60 * 1000,
   SET_HERDING_PLAN: 20 * 60 * 1000,
   SET_PARAMS: 10 * 60 * 1000,
-  PING: 2 * 60 * 1000,
+  PING: 6 * 60 * 1000,
 };
 
 export const ALLOWED_COMMANDS = new Set(Object.keys(COMMAND_TTL_MS));

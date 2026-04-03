@@ -74,6 +74,35 @@ uint32_t bindingVersion = 0;
 bool bindingReady = false;
 bool supportsScopedLora = true;
 char lastCloudWriteError[96]{};
+constexpr uint8_t kAcceptedUplinkQueueSize = 8;
+constexpr uint32_t kAcceptedUplinkQuietMs = 1500;
+constexpr uint32_t kBackhaulStartupDelayMs = 8000;
+
+struct AcceptedUplinkEntry {
+  bool used = false;
+  uint32_t enqueuedAtMs = 0;
+  LoRaFrame frame{};
+};
+
+AcceptedUplinkEntry acceptedUplinkQueue[kAcceptedUplinkQueueSize]{};
+uint8_t acceptedUplinkQueueHead = 0;
+uint8_t acceptedUplinkQueueTail = 0;
+uint8_t acceptedUplinkQueueCount = 0;
+uint32_t acceptedUplinkLastEnqueueAtMs = 0;
+uint32_t acceptedUplinkLastDrainAtMs = 0;
+uint32_t acceptedUplinkDropCount = 0;
+AcceptedUplinkEntry deferredUplinkQueue[kAcceptedUplinkQueueSize]{};
+uint8_t deferredUplinkQueueHead = 0;
+uint8_t deferredUplinkQueueTail = 0;
+uint8_t deferredUplinkQueueCount = 0;
+uint32_t deferredUplinkFlushAtMs = 0;
+uint32_t lastSimpleCommandAckMatchedAtMs = 0;
+char lastSimpleCommandFeedbackOutcome[24]{};
+bool simpleAckWaitActive = false;
+uint32_t simpleAckWaitDeviceId = 0;
+uint32_t simpleAckWaitDeadlineAtMs = 0;
+char simpleAckWaitCommandId[48]{};
+uint32_t bootStartedAtMs = 0;
 
 struct HerdPoint {
   double lat = 0.0;
@@ -129,17 +158,32 @@ struct ActiveSimpleCommandTargetState {
 
 struct ActiveSimpleCommandState {
   bool active = false;
+  bool targetedRetryPending = false;
+  bool targetDeviceCommand = false;
+  bool sawTargetUplinkSinceDispatch = false;
+  bool awaitingFeedback = false;
   uint32_t dispatchAtMs = 0;
+  uint32_t lastAttemptAtMs = 0;
+  uint32_t targetedRetryAtMs = 0;
+  uint32_t targetedRetryDeviceId = 0;
+  uint32_t feedbackDeviceId = 0;
+  uint32_t feedbackWindowOpenedAtMs = 0;
+  uint32_t feedbackDeadlineAtMs = 0;
+  uint32_t deferredUplinkCount = 0;
   uint64_t createdAtMs = 0;
   uint64_t expiresAtMs = 0;
   uint8_t targetCount = 0;
+  uint16_t retryCount = 0;
   char commandId[48]{};
   char command[24]{};
+  char feedbackCommandId[48]{};
+  char lastFeedbackOutcome[24]{};
   char propertyId[48]{};
   char propertyScopeId[17]{};
   char matrixGatewayId[32]{};
   char requestedByUid[48]{};
   char requestedByRole[16]{};
+  char payloadJson[4096]{};
   ActiveSimpleCommandTargetState targets[cfg::MAX_HERD_OPERATION_DEVICES]{};
 } activeSimpleCommand;
 
@@ -172,12 +216,43 @@ static void dispatchActiveHerdingOperation();
 static void handleHerdingOperationFeedback(const LoRaFrame& rx);
 static void handleHerdingOperationEvent(const LoRaFrame& rx);
 static void handleSimpleCommandFeedback(const LoRaFrame& rx);
+static bool sendLoRaJsonFrame(
+    uint32_t deviceId,
+    MsgType msgType,
+    const JsonVariantConst payload,
+    const char** reason = nullptr);
+static bool sendFenceCommandChunked(
+    uint32_t deviceId,
+    const JsonVariantConst payload,
+    const char** reason = nullptr);
+static bool resendActiveSimpleCommand(
+    const LoRaFrame* triggerRx = nullptr,
+    const char** reason = nullptr);
+static bool isHealthDailyEvent(const LoRaFrame& rx);
+static void scheduleActiveSimpleCommandRetryForRx(const LoRaFrame& rx);
+static void processScheduledActiveSimpleCommandRetry();
 static void processNextQueuedCommand();
 static void publishHerdingOperationSnapshot(
     bool force = false,
     const char* statusOverride = nullptr);
 static bool ensureCloudBackhaulConnected();
 static bool publishMatrixRuntimeMirrors(bool force = false);
+static bool enqueueAcceptedUplink(const LoRaFrame& frame);
+static bool popAcceptedUplink(LoRaFrame& frame);
+static bool enqueueDeferredUplink(const LoRaFrame& frame);
+static bool popDeferredUplink(LoRaFrame& frame);
+static void processAcceptedUplink(const LoRaFrame& rx);
+static void processQueuedAcceptedUplinks();
+static void flushDeferredAcceptedUplinksIfReady();
+static void openActiveSimpleCommandFeedbackWindow(uint32_t deviceId);
+static void closeActiveSimpleCommandFeedbackWindow(const char* outcome);
+static bool isAwaitedSimpleCommandFeedback(const LoRaFrame& rx);
+static void handleUplinkDuringAckWait(const LoRaFrame& rx);
+static void pollActiveSimpleCommandFeedbackSlice();
+static bool processPrioritySimpleCommandFeedbackWindow();
+static String payloadBytesToString(const uint8_t* data, size_t len);
+static void primeSpiChipSelectLines();
+static bool backhaulWindowOpen();
 
 static const char* otaErrorText(ota_error_t error) {
   switch (error) {
@@ -328,6 +403,36 @@ static String scopeIdToHex(uint64_t scopeId) {
   char out[17];
   snprintf(out, sizeof(out), "%016llX", (unsigned long long)scopeId);
   return String(out);
+}
+
+static String payloadBytesToString(const uint8_t* data, size_t len) {
+  String out;
+  if (!data || len == 0) return out;
+  if (len > 128) len = 128;
+  out.reserve(len);
+  for (size_t i = 0; i < len; ++i) {
+    out += (char)data[i];
+  }
+  return out;
+}
+
+static void primeSpiChipSelectLines() {
+  pinMode(cfg::PIN_LORA_CS, OUTPUT);
+  digitalWrite(cfg::PIN_LORA_CS, HIGH);
+  pinMode(cfg::PIN_SD_CS, OUTPUT);
+  digitalWrite(cfg::PIN_SD_CS, HIGH);
+}
+
+static bool backhaulWindowOpen() {
+  if (!cfg::FEATURE_BACKHAUL) return false;
+  const uint32_t now = millis();
+  if ((uint32_t)(now - bootStartedAtMs) < kBackhaulStartupDelayMs) return false;
+  const uint32_t lastRawRxAtMs = lora.lastRawRxAtMs();
+  if (lastRawRxAtMs != 0 &&
+      (uint32_t)(now - lastRawRxAtMs) < kAcceptedUplinkQuietMs) {
+    return false;
+  }
+  return true;
 }
 
 static const char* pickFirstText(
@@ -685,11 +790,13 @@ static bool appendPropertyCommandEvent(
 }
 
 static bool cloudPublishReady() {
-  return cloudTelemetryConfigured() && ensureCloudBackhaulConnected();
+  return cloudTelemetryConfigured() && backhaulWindowOpen() &&
+         ensureCloudBackhaulConnected();
 }
 
 static bool publishMatrixRuntimeMirrors(bool force) {
   if (!cloudTelemetryConfigured()) return false;
+  if (!force && !backhaulWindowOpen()) return false;
   if (!ensureCloudBackhaulConnected()) return false;
 
   const uint32_t nowTick = millis();
@@ -872,8 +979,12 @@ static void publishTelemetryToCloud(const LoRaFrame& rx) {
     return;
   }
 
-  const float lat = telemetry["lat"] | NAN;
-  const float lon = telemetry["lon"] | NAN;
+  const JsonVariantConst latField =
+      telemetry["lat"].isNull() ? telemetry["la"] : telemetry["lat"];
+  const JsonVariantConst lonField =
+      telemetry["lon"].isNull() ? telemetry["lo"] : telemetry["lon"];
+  const float lat = latField | NAN;
+  const float lon = lonField | NAN;
   if (!isfinite(lat) || !isfinite(lon) ||
       lat < -90.0f || lat > 90.0f || lon < -180.0f || lon > 180.0f) {
     return;
@@ -886,10 +997,14 @@ static void publishTelemetryToCloud(const LoRaFrame& rx) {
   payload["deviceId"] = ctx.deviceId;
   payload["lat"] = lat;
   payload["lon"] = lon;
-  payload["mode"] = telemetry["mode"] | 0;
-  payload["spd"] = telemetry["spd"] | 0.0f;
-  payload["hdop"] = telemetry["hdop"] | 99.9f;
-  payload["sat"] = telemetry["sat"] | 0;
+  payload["mode"] =
+      telemetry["mode"].isNull() ? (telemetry["m"] | 0) : (telemetry["mode"] | 0);
+  payload["spd"] =
+      telemetry["spd"].isNull() ? (telemetry["sp"] | 0.0f) : (telemetry["spd"] | 0.0f);
+  payload["hdop"] =
+      telemetry["hdop"].isNull() ? (telemetry["hd"] | 99.9f) : (telemetry["hdop"] | 99.9f);
+  payload["sat"] =
+      telemetry["sat"].isNull() ? (telemetry["sa"] | 0) : (telemetry["sat"] | 0);
   payload["rssi"] = telemetry["rssi"] | 0;
   payload["snr"] = telemetry["snr"] | 0.0f;
   populateCommonCloudFields(payload.as<JsonObject>(), ctx, rx);
@@ -987,7 +1102,58 @@ static void publishEventToCloud(const LoRaFrame& rx) {
 }
 
 static void clearActiveSimpleCommand() {
+  if (deferredUplinkQueueCount > 0 && deferredUplinkFlushAtMs == 0) {
+    deferredUplinkFlushAtMs = millis() + cfg::SIMPLE_COMMAND_ACK_POST_FLUSH_DELAY_MS;
+  }
   activeSimpleCommand = ActiveSimpleCommandState{};
+  simpleAckWaitActive = false;
+  simpleAckWaitDeviceId = 0;
+  simpleAckWaitDeadlineAtMs = 0;
+  simpleAckWaitCommandId[0] = '\0';
+}
+
+static bool targetStateMatchesDeviceId(
+    const ActiveSimpleCommandTargetState& target,
+    uint32_t deviceId) {
+  if (!target.targetId[0] || deviceId == 0) return false;
+  char expected[32]{};
+  snprintf(expected, sizeof(expected), "%lu", (unsigned long)deviceId);
+  return strcmp(target.targetId, expected) == 0;
+}
+
+static bool isHealthDailyEvent(const LoRaFrame& rx) {
+  if (rx.msgType != MsgType::EVENT || rx.payloadLen == 0) return false;
+  StaticJsonDocument<256> payload;
+  if (deserializeJson(payload, rx.payload, rx.payloadLen) != DeserializationError::Ok) {
+    return false;
+  }
+  const char* eventType = pickFirstText(payload["event_type"], payload["type"]);
+  return strcmp(eventType, "health_daily") == 0;
+}
+
+static void scheduleActiveSimpleCommandRetryForRx(const LoRaFrame& rx) {
+  if (!activeSimpleCommand.active || activeSimpleCommand.targetCount == 0) return;
+  bool matchesTarget = false;
+  for (uint8_t i = 0; i < activeSimpleCommand.targetCount; ++i) {
+    if (targetStateMatchesDeviceId(activeSimpleCommand.targets[i], rx.deviceId)) {
+      matchesTarget = true;
+      break;
+    }
+  }
+  if (!matchesTarget) return;
+
+  activeSimpleCommand.sawTargetUplinkSinceDispatch = true;
+
+  const bool telemetryTrigger = rx.msgType == MsgType::TELEMETRY;
+  const bool healthTrigger = isHealthDailyEvent(rx);
+  if (!telemetryTrigger && !healthTrigger) return;
+
+  uint32_t delayMs = telemetryTrigger
+      ? cfg::SIMPLE_COMMAND_TELEMETRY_TRIGGER_DELAY_MS
+      : cfg::SIMPLE_COMMAND_HEALTH_TRIGGER_DELAY_MS;
+  activeSimpleCommand.targetedRetryPending = true;
+  activeSimpleCommand.targetedRetryAtMs = millis() + delayMs;
+  activeSimpleCommand.targetedRetryDeviceId = rx.deviceId;
 }
 
 static int findActiveSimpleCommandTarget(const char* targetId) {
@@ -1082,6 +1248,103 @@ static void markActiveSimpleCommandTarget(
   target.ok = ok;
   copyStringToBuffer(target.status, sizeof(target.status), status ? status : (ok ? "completed" : "failed"));
   copyStringToBuffer(target.reason, sizeof(target.reason), reason ? reason : "");
+}
+
+static bool cacheActiveSimpleCommandPayload(
+    const JsonVariantConst payload,
+    const char** reason) {
+  const size_t bytes = measureJson(payload);
+  if (bytes == 0 || bytes >= sizeof(activeSimpleCommand.payloadJson)) {
+    if (reason) *reason = "payload_cache_too_large";
+    return false;
+  }
+  const size_t written =
+      serializeJson(payload, activeSimpleCommand.payloadJson, sizeof(activeSimpleCommand.payloadJson));
+  if (written != bytes) {
+    activeSimpleCommand.payloadJson[0] = '\0';
+    if (reason) *reason = "payload_cache_failed";
+    return false;
+  }
+  return true;
+}
+
+static bool resendActiveSimpleCommand(
+    const LoRaFrame* triggerRx,
+    const char** reason) {
+  if (!activeSimpleCommand.active || !activeSimpleCommand.commandId[0]) return false;
+  if (!activeSimpleCommand.payloadJson[0]) {
+    if (reason) *reason = "missing_cached_payload";
+    return false;
+  }
+
+  const uint32_t nowTick = millis();
+  const uint32_t minGap =
+      triggerRx ? cfg::SIMPLE_COMMAND_RX_TRIGGER_MIN_GAP_MS : cfg::SIMPLE_COMMAND_RETRY_MS;
+  if (activeSimpleCommand.lastAttemptAtMs != 0 &&
+      (uint32_t)(nowTick - activeSimpleCommand.lastAttemptAtMs) < minGap) {
+    return false;
+  }
+
+  DynamicJsonDocument payloadDoc(8192);
+  if (deserializeJson(payloadDoc, activeSimpleCommand.payloadJson) != DeserializationError::Ok) {
+    if (reason) *reason = "cached_payload_invalid_json";
+    return false;
+  }
+
+  bool sentAny = false;
+  const bool targetedRetry = triggerRx != nullptr && triggerRx->deviceId != 0;
+  for (uint8_t i = 0; i < activeSimpleCommand.targetCount; ++i) {
+    ActiveSimpleCommandTargetState& target = activeSimpleCommand.targets[i];
+    if (target.terminal) continue;
+    if (targetedRetry && !targetStateMatchesDeviceId(target, triggerRx->deviceId)) continue;
+
+    const uint32_t deviceId = (uint32_t)strtoul(target.targetId, nullptr, 10);
+    bool ok = false;
+    const char* sendReason = nullptr;
+    if (strcmp(activeSimpleCommand.command, "SET_FENCE") == 0) {
+      ok = sendFenceCommandChunked(deviceId, payloadDoc.as<JsonVariantConst>(), &sendReason);
+    } else {
+      const MsgType msgType =
+          strcmp(activeSimpleCommand.command, "SET_PARAMS") == 0
+              ? MsgType::SET_PARAMS
+              : MsgType::PING;
+      ok = sendLoRaJsonFrame(deviceId, msgType, payloadDoc.as<JsonVariantConst>(), &sendReason);
+    }
+    if (ok) {
+      copyStringToBuffer(target.status, sizeof(target.status), "dispatching");
+      target.reason[0] = '\0';
+      sentAny = true;
+    } else if (sendReason && sendReason[0]) {
+      copyStringToBuffer(target.reason, sizeof(target.reason), sendReason);
+    }
+  }
+
+  if (!sentAny) {
+    if (reason && !*reason) *reason = targetedRetry ? "target_not_ready" : "lora_send_failed";
+    return false;
+  }
+
+  activeSimpleCommand.lastAttemptAtMs = nowTick;
+  activeSimpleCommand.targetedRetryPending = false;
+  activeSimpleCommand.targetedRetryAtMs = 0;
+  activeSimpleCommand.targetedRetryDeviceId = 0;
+  if (activeSimpleCommand.retryCount < 0xFFFF) activeSimpleCommand.retryCount++;
+  publishSimpleCommandResult("dispatching", nullptr);
+  return true;
+}
+
+static void processScheduledActiveSimpleCommandRetry() {
+  if (!activeSimpleCommand.active || !activeSimpleCommand.targetedRetryPending) return;
+  const uint32_t nowTick = millis();
+  if ((int32_t)(nowTick - activeSimpleCommand.targetedRetryAtMs) < 0) return;
+  if (lora.lastRawRxAtMs() != 0 &&
+      (uint32_t)(nowTick - lora.lastRawRxAtMs()) < cfg::SIMPLE_COMMAND_RAW_RX_HOLDOFF_MS) {
+    return;
+  }
+
+  LoRaFrame trigger;
+  trigger.deviceId = activeSimpleCommand.targetedRetryDeviceId;
+  resendActiveSimpleCommand(&trigger, nullptr);
 }
 
 static bool publishImmediateMatrixCommandResult(
@@ -1423,6 +1686,294 @@ static const char* uplinkTypeLabel(MsgType t) {
   return "lora";
 }
 
+static bool enqueueAcceptedUplink(const LoRaFrame& frame) {
+  if (acceptedUplinkQueueCount >= kAcceptedUplinkQueueSize) {
+    acceptedUplinkDropCount++;
+    LOGW(
+        "Fila uplink cheia; descartando device=%lu type=%u seq=%lu",
+        (unsigned long)frame.deviceId,
+        (unsigned)frame.msgType,
+        (unsigned long)frame.seq);
+    return false;
+  }
+  AcceptedUplinkEntry& slot = acceptedUplinkQueue[acceptedUplinkQueueHead];
+  slot.used = true;
+  slot.enqueuedAtMs = millis();
+  slot.frame = frame;
+  acceptedUplinkQueueHead =
+      (uint8_t)((acceptedUplinkQueueHead + 1U) % kAcceptedUplinkQueueSize);
+  acceptedUplinkQueueCount++;
+  acceptedUplinkLastEnqueueAtMs = slot.enqueuedAtMs;
+  return true;
+}
+
+static bool popAcceptedUplink(LoRaFrame& frame) {
+  if (acceptedUplinkQueueCount == 0) return false;
+  AcceptedUplinkEntry& slot = acceptedUplinkQueue[acceptedUplinkQueueTail];
+  if (!slot.used) {
+    acceptedUplinkQueueTail =
+        (uint8_t)((acceptedUplinkQueueTail + 1U) % kAcceptedUplinkQueueSize);
+    acceptedUplinkQueueCount--;
+    return false;
+  }
+  frame = slot.frame;
+  slot = AcceptedUplinkEntry{};
+  acceptedUplinkQueueTail =
+      (uint8_t)((acceptedUplinkQueueTail + 1U) % kAcceptedUplinkQueueSize);
+  acceptedUplinkQueueCount--;
+  return true;
+}
+
+static bool enqueueDeferredUplink(const LoRaFrame& frame) {
+  if (deferredUplinkQueueCount >= kAcceptedUplinkQueueSize) {
+    acceptedUplinkDropCount++;
+    LOGW(
+        "ACK_WAIT_DEFER_UPLINK drop device=%lu type=%u seq=%lu",
+        (unsigned long)frame.deviceId,
+        (unsigned)frame.msgType,
+        (unsigned long)frame.seq);
+    return false;
+  }
+  AcceptedUplinkEntry& slot = deferredUplinkQueue[deferredUplinkQueueHead];
+  slot.used = true;
+  slot.enqueuedAtMs = millis();
+  slot.frame = frame;
+  deferredUplinkQueueHead =
+      (uint8_t)((deferredUplinkQueueHead + 1U) % kAcceptedUplinkQueueSize);
+  deferredUplinkQueueCount++;
+  activeSimpleCommand.deferredUplinkCount = deferredUplinkQueueCount;
+  LOGI(
+      "ACK_WAIT_DEFER_UPLINK device=%lu type=%u seq=%lu depth=%u",
+      (unsigned long)frame.deviceId,
+      (unsigned)frame.msgType,
+      (unsigned long)frame.seq,
+      (unsigned)deferredUplinkQueueCount);
+  return true;
+}
+
+static bool popDeferredUplink(LoRaFrame& frame) {
+  if (deferredUplinkQueueCount == 0) return false;
+  AcceptedUplinkEntry& slot = deferredUplinkQueue[deferredUplinkQueueTail];
+  if (!slot.used) {
+    deferredUplinkQueueTail =
+        (uint8_t)((deferredUplinkQueueTail + 1U) % kAcceptedUplinkQueueSize);
+    deferredUplinkQueueCount--;
+    activeSimpleCommand.deferredUplinkCount = deferredUplinkQueueCount;
+    return false;
+  }
+  frame = slot.frame;
+  slot = AcceptedUplinkEntry{};
+  deferredUplinkQueueTail =
+      (uint8_t)((deferredUplinkQueueTail + 1U) % kAcceptedUplinkQueueSize);
+  deferredUplinkQueueCount--;
+  activeSimpleCommand.deferredUplinkCount = deferredUplinkQueueCount;
+  return true;
+}
+
+static void flushDeferredAcceptedUplinksIfReady() {
+  if (deferredUplinkQueueCount == 0) return;
+  if (deferredUplinkFlushAtMs == 0) return;
+  const uint32_t now = millis();
+  if ((int32_t)(now - deferredUplinkFlushAtMs) < 0) return;
+
+  const uint8_t flushCount = deferredUplinkQueueCount;
+  LOGI("ACK_WAIT_FLUSH_DEFERRED count=%u", (unsigned)flushCount);
+  LoRaFrame frame;
+  while (popDeferredUplink(frame)) {
+    if (!enqueueAcceptedUplink(frame)) {
+      processAcceptedUplink(frame);
+    }
+  }
+  deferredUplinkFlushAtMs = 0;
+}
+
+static void openActiveSimpleCommandFeedbackWindow(uint32_t deviceId) {
+  if (!activeSimpleCommand.active || deviceId == 0) return;
+  activeSimpleCommand.awaitingFeedback = true;
+  activeSimpleCommand.feedbackDeviceId = deviceId;
+  activeSimpleCommand.feedbackWindowOpenedAtMs = millis();
+  activeSimpleCommand.feedbackDeadlineAtMs =
+      activeSimpleCommand.feedbackWindowOpenedAtMs +
+      cfg::SIMPLE_COMMAND_ACK_PRIORITY_WINDOW_MS;
+  activeSimpleCommand.sawTargetUplinkSinceDispatch = false;
+  copyStringToBuffer(
+      activeSimpleCommand.feedbackCommandId,
+      sizeof(activeSimpleCommand.feedbackCommandId),
+      activeSimpleCommand.commandId);
+  copyStringToBuffer(
+      activeSimpleCommand.lastFeedbackOutcome,
+      sizeof(activeSimpleCommand.lastFeedbackOutcome),
+      "waiting");
+  simpleAckWaitActive = true;
+  simpleAckWaitDeviceId = deviceId;
+  simpleAckWaitDeadlineAtMs = activeSimpleCommand.feedbackDeadlineAtMs;
+  copyStringToBuffer(
+      simpleAckWaitCommandId, sizeof(simpleAckWaitCommandId), activeSimpleCommand.commandId);
+  copyStringToBuffer(
+      lastSimpleCommandFeedbackOutcome,
+      sizeof(lastSimpleCommandFeedbackOutcome),
+      "waiting");
+  LOGI(
+      "ACK_WAIT_OPEN cmd=%s device=%lu deadline=%lu",
+      activeSimpleCommand.commandId,
+      (unsigned long)deviceId,
+      (unsigned long)activeSimpleCommand.feedbackDeadlineAtMs);
+}
+
+static void closeActiveSimpleCommandFeedbackWindow(const char* outcome) {
+  if (!outcome || !outcome[0]) outcome = "closed";
+  copyStringToBuffer(
+      lastSimpleCommandFeedbackOutcome,
+      sizeof(lastSimpleCommandFeedbackOutcome),
+      outcome);
+  copyStringToBuffer(
+      activeSimpleCommand.lastFeedbackOutcome,
+      sizeof(activeSimpleCommand.lastFeedbackOutcome),
+      outcome);
+  activeSimpleCommand.awaitingFeedback = false;
+  activeSimpleCommand.feedbackDeviceId = 0;
+  activeSimpleCommand.feedbackWindowOpenedAtMs = 0;
+  activeSimpleCommand.feedbackDeadlineAtMs = 0;
+  activeSimpleCommand.feedbackCommandId[0] = '\0';
+  simpleAckWaitActive = false;
+  simpleAckWaitDeviceId = 0;
+  simpleAckWaitDeadlineAtMs = 0;
+  simpleAckWaitCommandId[0] = '\0';
+  if (deferredUplinkQueueCount > 0) {
+    deferredUplinkFlushAtMs = millis() + cfg::SIMPLE_COMMAND_ACK_POST_FLUSH_DELAY_MS;
+  }
+}
+
+static bool isAwaitedSimpleCommandFeedback(const LoRaFrame& rx) {
+  if (!activeSimpleCommand.active || !activeSimpleCommand.awaitingFeedback) return false;
+  if (rx.deviceId != activeSimpleCommand.feedbackDeviceId) return false;
+  if (rx.msgType != MsgType::ACK && rx.msgType != MsgType::NACK) return false;
+
+  StaticJsonDocument<256> payload;
+  if (deserializeJson(payload, rx.payload, rx.payloadLen) != DeserializationError::Ok) {
+    return false;
+  }
+  const char* commandId = pickFirstText(payload["cmd_id"], payload["command_id"]);
+  return commandId[0] != '\0' &&
+      strcmp(commandId, activeSimpleCommand.commandId) == 0;
+}
+
+static void handleUplinkDuringAckWait(const LoRaFrame& rx) {
+  if (!scopeMatchesBinding(rx.scopeId)) {
+    LOGW(
+        "scope_reject device=%lu msg=%u seq=%lu scope=%s ready=%d",
+        (unsigned long)rx.deviceId,
+        (unsigned)rx.msgType,
+        (unsigned long)rx.seq,
+        scopeIdToHex(rx.scopeId).c_str(),
+        bindingReady ? 1 : 0);
+    return;
+  }
+  if (isAwaitedSimpleCommandFeedback(rx)) {
+    lastSimpleCommandAckMatchedAtMs = millis();
+    LOGI(
+        "ACK_WAIT_MATCH cmd=%s device=%lu seq=%lu",
+        activeSimpleCommand.commandId,
+        (unsigned long)rx.deviceId,
+        (unsigned long)rx.seq);
+    closeActiveSimpleCommandFeedbackWindow("matched");
+    handleSimpleCommandFeedback(rx);
+    return;
+  }
+
+  if (activeSimpleCommand.active &&
+      rx.deviceId == activeSimpleCommand.feedbackDeviceId) {
+    scheduleActiveSimpleCommandRetryForRx(rx);
+    enqueueDeferredUplink(rx);
+    return;
+  }
+  enqueueAcceptedUplink(rx);
+}
+
+static void pollActiveSimpleCommandFeedbackSlice() {
+  if (!activeSimpleCommand.active || !activeSimpleCommand.awaitingFeedback) return;
+  const uint32_t sliceStartedAtMs = millis();
+  while (activeSimpleCommand.awaitingFeedback &&
+         (uint32_t)(millis() - sliceStartedAtMs) <
+             cfg::SIMPLE_COMMAND_ACK_POLL_SLICE_MS) {
+    LoRaFrame rx;
+    if (!lora.receive(rx)) break;
+    handleUplinkDuringAckWait(rx);
+  }
+  if (activeSimpleCommand.awaitingFeedback &&
+      (int32_t)(millis() - activeSimpleCommand.feedbackDeadlineAtMs) >= 0) {
+    LOGW(
+        "ACK_WAIT_TIMEOUT cmd=%s device=%lu",
+        activeSimpleCommand.commandId,
+        (unsigned long)activeSimpleCommand.feedbackDeviceId);
+    closeActiveSimpleCommandFeedbackWindow("timeout");
+  }
+}
+
+static bool processPrioritySimpleCommandFeedbackWindow() {
+  if (!activeSimpleCommand.active || !activeSimpleCommand.awaitingFeedback) return false;
+  pollActiveSimpleCommandFeedbackSlice();
+  return true;
+}
+
+static void processAcceptedUplink(const LoRaFrame& rx) {
+  handleSimpleCommandFeedback(rx);
+  handleHerdingOperationFeedback(rx);
+  handleHerdingOperationEvent(rx);
+  bool suppressRelay = false;
+  if (activeSimpleCommand.active) {
+    for (uint8_t i = 0; i < activeSimpleCommand.targetCount; ++i) {
+      if (targetStateMatchesDeviceId(activeSimpleCommand.targets[i], rx.deviceId)) {
+        suppressRelay = true;
+        break;
+      }
+    }
+  }
+  if (!suppressRelay) {
+    relayFrameToPeerGateways(rx);
+  }
+
+  StaticJsonDocument<576> packet;
+  packet["type"] = uplinkTypeLabel(rx.msgType);
+  packet["device_id"] = rx.deviceId;
+  packet["msg_type"] = (int)rx.msgType;
+  packet["seq"] = rx.seq;
+  packet["timestamp"] = rx.timestamp;
+  packet["scope_id"] = scopeIdToHex(rx.scopeId);
+  packet["gateway_id"] = gatewayNodeId();
+  packet["gateway_role"] = "matrix";
+  packet["gateway_wifi_ota_enabled"] = wifiOtaEnabled;
+  packet["payload"] = payloadBytesToString(rx.payload, rx.payloadLen);
+  String out;
+  serializeJson(packet, out);
+  if (cfg::FEATURE_HTTP || cfg::FEATURE_WS) {
+    api.broadcastTelemetry(out);
+  }
+  if (cfg::FEATURE_SD) sdlog.log(String("UL|") + out);
+  drawStatus("RX LoRa", out.substring(0, 16).c_str());
+
+  if (cfg::FEATURE_CLOUD) {
+    publishTelemetryToCloud(rx);
+    publishDailyHealthToCloud(rx);
+    publishEventToCloud(rx);
+  }
+}
+
+static void processQueuedAcceptedUplinks() {
+  if (acceptedUplinkQueueCount == 0) return;
+  const uint32_t now = millis();
+  if (acceptedUplinkQueueCount < kAcceptedUplinkQueueSize &&
+      (uint32_t)(now - acceptedUplinkLastEnqueueAtMs) < kAcceptedUplinkQuietMs) {
+    return;
+  }
+  if (cfg::FEATURE_CLOUD && !backhaulWindowOpen()) return;
+
+  LoRaFrame frame;
+  if (!popAcceptedUplink(frame)) return;
+  acceptedUplinkLastDrainAtMs = now;
+  processAcceptedUplink(frame);
+}
+
 static bool readPointPair(const JsonArrayConst& pair, double& lat, double& lon) {
   if (pair.isNull() || pair.size() < 2 || pair[0].isNull() || pair[1].isNull()) return false;
   lat = pair[0].as<double>();
@@ -1430,7 +1981,7 @@ static bool readPointPair(const JsonArrayConst& pair, double& lat, double& lon) 
   return rtcmd::isValidCoordinate(lat, lon);
 }
 
-static bool sendLoRaJsonFrame(uint32_t deviceId, MsgType msgType, const JsonVariantConst payload, const char** reason = nullptr) {
+static bool sendLoRaJsonFrame(uint32_t deviceId, MsgType msgType, const JsonVariantConst payload, const char** reason) {
   const size_t bytes = measureJson(payload);
   if (bytes > cfg::LORA_MAX_PAYLOAD_BYTES) {
     if (reason) *reason = "payload_too_large";
@@ -1452,6 +2003,25 @@ static bool sendLoRaJsonFrame(uint32_t deviceId, MsgType msgType, const JsonVari
   }
 
   const bool ok = lora.send(tx);
+  const bool chunked = payload["chunked"].is<bool>() && payload["chunked"].as<bool>();
+  const int part = payload["part"] | 0;
+  const int total = payload["total"] | 1;
+  const bool finalFenceChunk =
+      msgType == MsgType::SET_FENCE &&
+      (!chunked || (total > 0 && part >= (total - 1)));
+  const bool shouldOpenFeedbackWindow =
+      ok &&
+      activeSimpleCommand.active &&
+      activeSimpleCommand.targetDeviceCommand &&
+      activeSimpleCommand.targetCount == 1 &&
+      deviceId != 0 &&
+      (msgType == MsgType::PING ||
+       msgType == MsgType::SET_PARAMS ||
+       finalFenceChunk);
+  if (shouldOpenFeedbackWindow) {
+    openActiveSimpleCommandFeedbackWindow(deviceId);
+    pollActiveSimpleCommandFeedbackSlice();
+  }
   if (!ok && reason && !*reason) *reason = "lora_send_failed";
   return ok;
 }
@@ -1536,7 +2106,7 @@ static bool splitPointArrayForPayload(
   return true;
 }
 
-static bool sendFenceCommandChunked(uint32_t deviceId, const JsonVariantConst payload, const char** reason = nullptr) {
+static bool sendFenceCommandChunked(uint32_t deviceId, const JsonVariantConst payload, const char** reason) {
   const JsonArrayConst points = payload["points"].as<JsonArrayConst>();
   if (points.isNull()) {
     if (reason) *reason = "missing_points";
@@ -1705,6 +2275,7 @@ static bool dispatchQueuedSimpleCommand(
   clearActiveSimpleCommand();
   activeSimpleCommand.active = true;
   activeSimpleCommand.dispatchAtMs = millis();
+  activeSimpleCommand.lastAttemptAtMs = 0;
   activeSimpleCommand.createdAtMs = commandDoc["createdAtMs"] | 0ULL;
   activeSimpleCommand.expiresAtMs = commandDoc["expiresAtMs"] | 0ULL;
   copyStringToBuffer(activeSimpleCommand.commandId, sizeof(activeSimpleCommand.commandId), commandId.c_str());
@@ -1726,9 +2297,14 @@ static bool dispatchQueuedSimpleCommand(
       activeSimpleCommand.requestedByRole,
       sizeof(activeSimpleCommand.requestedByRole),
       commandDoc["requestedByRole"] | "user");
+  if (!cacheActiveSimpleCommandPayload(payloadDoc.as<JsonVariantConst>(), reason)) {
+    clearActiveSimpleCommand();
+    return false;
+  }
 
   bool sentAny = false;
   if (!targetDeviceIds.isNull() && targetDeviceIds.size() > 0) {
+    activeSimpleCommand.targetDeviceCommand = true;
     for (JsonVariantConst rawId : targetDeviceIds) {
       const char* textId = rawId | "";
       uint32_t deviceId = rawId.is<uint32_t>() ? rawId.as<uint32_t>() : (uint32_t)strtoul(textId, nullptr, 10);
@@ -1763,6 +2339,7 @@ static bool dispatchQueuedSimpleCommand(
       sentAny = true;
     }
   } else if (!targetGatewayIds.isNull() && targetGatewayIds.size() > 0) {
+    activeSimpleCommand.targetDeviceCommand = false;
     JsonArray gatewayTargetIds = payloadDoc["target_gateway_ids"].to<JsonArray>();
     for (JsonVariantConst rawId : targetGatewayIds) {
       const char* textId = rawId | "";
@@ -1793,12 +2370,15 @@ static bool dispatchQueuedSimpleCommand(
     if (reason) *reason = "no_targets";
     return false;
   }
+  activeSimpleCommand.lastAttemptAtMs = millis();
+  activeSimpleCommand.retryCount = 1;
   publishSimpleCommandResult("dispatching", nullptr);
   return true;
 }
 
 static void processNextQueuedCommand() {
   if (!queuePollingConfigured() || !bindingReady) return;
+  if (!backhaulWindowOpen()) return;
   if (herdOp.active || activeSimpleCommand.active) return;
   const uint32_t nowMsTick = millis();
   if (queuePollAtMs != 0 &&
@@ -2570,6 +3150,7 @@ static void printBootChecklist(
 }
 
 void setup() {
+  bootStartedAtMs = millis();
   Serial.begin(cfg::SERIAL_BAUD);
   LOGI("Boot reset_reason=%d", (int)esp_reset_reason());
 #if defined(ESP_IDF_VERSION_MAJOR) && ESP_IDF_VERSION_MAJOR >= 5
@@ -2590,6 +3171,7 @@ void setup() {
   WiFi.onEvent(onWifiEvent);
   restoreDownlinkSeq();
   loadBindingConfig();
+  primeSpiChipSelectLines();
 
   Wire.begin(cfg::PIN_I2C_SDA, cfg::PIN_I2C_SCL);
   bool displayOk = true;
@@ -2640,7 +3222,6 @@ void setup() {
       sdOk,
       loraOk,
       cloudConfigured);
-  if (bindingReady) publishMatrixRuntimeMirrors(true);
 
   LOGI("Gateway matriz pronto fw=%s", cfg::FW_VERSION);
 }
@@ -2649,10 +3230,16 @@ void loop() {
   feedWatchdogIfEnabled();
   ensureWifiOtaServices();
   feedWatchdogIfEnabled();
-  if (cfg::FEATURE_BACKHAUL) {
+  if (processPrioritySimpleCommandFeedbackWindow()) {
+    feedWatchdogIfEnabled();
+    delay(1);
+    return;
+  }
+  flushDeferredAcceptedUplinksIfReady();
+  if (cfg::FEATURE_BACKHAUL && backhaulWindowOpen()) {
     ensureCloudBackhaulConnected();
   }
-  if (cfg::FEATURE_CLOUD) {
+  if (cfg::FEATURE_CLOUD && backhaulWindowOpen()) {
     publishMatrixRuntimeMirrors(false);
   }
   feedWatchdogIfEnabled();
@@ -2717,33 +3304,9 @@ void loop() {
           }
         }
       }
-
-      handleSimpleCommandFeedback(rx);
-      handleHerdingOperationFeedback(rx);
-      handleHerdingOperationEvent(rx);
-      relayFrameToPeerGateways(rx);
-
-      StaticJsonDocument<576> packet;
-      packet["type"] = uplinkTypeLabel(rx.msgType);
-      packet["device_id"] = rx.deviceId;
-      packet["msg_type"] = (int)rx.msgType;
-      packet["seq"] = rx.seq;
-      packet["timestamp"] = rx.timestamp;
-      packet["scope_id"] = scopeIdToHex(rx.scopeId);
-      packet["gateway_id"] = gatewayNodeId();
-      packet["gateway_role"] = "matrix";
-      packet["gateway_wifi_ota_enabled"] = wifiOtaEnabled;
-      packet["payload"] = String((char*)rx.payload).substring(0, rx.payloadLen);
-      String out;
-      serializeJson(packet, out);
-      api.broadcastTelemetry(out);
-      if (cfg::FEATURE_SD) sdlog.log(String("UL|") + out);
-      drawStatus("RX LoRa", out.substring(0, 16).c_str());
-
-      if (cfg::FEATURE_CLOUD) {
-        publishTelemetryToCloud(rx);
-        publishDailyHealthToCloud(rx);
-        publishEventToCloud(rx);
+      enqueueAcceptedUplink(rx);
+      if (activeSimpleCommand.active) {
+        scheduleActiveSimpleCommandRetryForRx(rx);
       }
     }
   }
@@ -2881,15 +3444,27 @@ void loop() {
     }
   }
 
+  if (cfg::FEATURE_CLOUD) processNextQueuedCommand();
+  flushDeferredAcceptedUplinksIfReady();
+  processQueuedAcceptedUplinks();
   if (activeSimpleCommand.active) {
+    processScheduledActiveSimpleCommandRetry();
+    const uint32_t nowTick = millis();
+    const bool recentRawRx =
+        lora.lastRawRxAtMs() != 0 &&
+        (uint32_t)(nowTick - lora.lastRawRxAtMs()) < cfg::SIMPLE_COMMAND_RAW_RX_HOLDOFF_MS;
+    const bool allowBlindPeriodicRetry = !activeSimpleCommand.targetDeviceCommand;
+    if (allowBlindPeriodicRetry &&
+        !activeSimpleCommand.targetedRetryPending &&
+        !recentRawRx) {
+      resendActiveSimpleCommand(nullptr, nullptr);
+    }
     const uint64_t nowMs = unixNowMs(unixNowSec());
     if (activeSimpleCommand.expiresAtMs != 0 && nowMs >= activeSimpleCommand.expiresAtMs) {
       publishSimpleCommandResult("failed", "command_timeout");
       clearActiveSimpleCommand();
     }
   }
-
-  if (cfg::FEATURE_CLOUD) processNextQueuedCommand();
   dispatchActiveHerdingOperation();
   feedWatchdogIfEnabled();
 
