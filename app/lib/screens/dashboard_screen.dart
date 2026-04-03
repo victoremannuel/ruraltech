@@ -17,6 +17,7 @@ import '../services/bluetooth_discovery_service.dart';
 import '../services/firebase_service.dart';
 import '../services/gateway_service.dart';
 import '../services/map_filter_service.dart';
+import '../utils/device_map_telemetry.dart';
 import '../utils/onboarding_gateway_utils.dart';
 import '../utils/polygon_metrics.dart';
 import '../utils/top_feedback.dart';
@@ -57,7 +58,8 @@ class _HomeScreenState extends State<HomeScreen> {
   LatLng? _selectedPolygonAnchor;
   List<LatLng> _selectedPolygonPoints = const [];
   List<LatLng> _selectedPolygonBoundary = const [];
-  final Map<String, LatLng> _latestTelemetryPositionsByDeviceId = {};
+  final Map<String, DeviceMapTelemetrySample> _latestTelemetryByDeviceId = {};
+  List<DeviceModel> _latestKnownDevices = const <DeviceModel>[];
 
   @override
   void initState() {
@@ -88,17 +90,26 @@ class _HomeScreenState extends State<HomeScreen> {
     _gatewayTelemetrySub?.cancel();
     _gatewayMessageSub?.cancel();
     _gatewayTelemetrySub = gateway.telemetryStream.listen((sample) {
-      final normalizedTelemetryDeviceId =
-          _normalizeNumericDeviceId(sample.deviceId);
-      if (normalizedTelemetryDeviceId.isNotEmpty &&
-          sample.lat.isFinite &&
-          sample.lon.isFinite &&
-          sample.lat >= -90 &&
-          sample.lat <= 90 &&
-          sample.lon >= -180 &&
-          sample.lon <= 180) {
-        _latestTelemetryPositionsByDeviceId[normalizedTelemetryDeviceId] =
-            LatLng(sample.lat, sample.lon);
+      final telemetrySample = _telemetrySampleFromGateway(sample);
+      if (telemetrySample == null) return;
+
+      final matchedDevice = _matchedDeviceForTelemetrySample(telemetrySample);
+      final before = matchedDevice == null
+          ? null
+          : _resolvedMarkerTelemetryForDevice(
+              matchedDevice,
+              devices: _latestKnownDevices,
+            );
+      final updated = _cacheTelemetrySample(telemetrySample);
+      if (!updated) return;
+
+      if (matchedDevice == null || !mounted) return;
+      final after = _resolvedMarkerTelemetryForDevice(
+        matchedDevice,
+        devices: _latestKnownDevices,
+      );
+      if (didDeviceMapPointChange(before, after)) {
+        setState(() {});
       }
     });
     _gatewayMessageSub = gateway.messageStream.listen(_persistCriticalEvent);
@@ -310,33 +321,79 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   String _normalizeNumericDeviceId(String? raw) {
-    if (raw == null) return '';
-    final trimmed = raw.trim();
-    if (trimmed.isEmpty) return '';
-    final parsed = int.tryParse(trimmed);
-    if (parsed == null || parsed <= 0) return '';
-    return parsed.toString();
+    return normalizeMapNumericDeviceId(raw);
+  }
+
+  DeviceMapTelemetrySample? _telemetrySampleFromGateway(
+    GatewayTelemetrySample sample,
+  ) {
+    final normalizedTelemetryDeviceId =
+        _normalizeNumericDeviceId(sample.deviceId);
+    if (normalizedTelemetryDeviceId.isEmpty) return null;
+    if (!isValidMapCoordinatePair(sample.lat, sample.lon)) return null;
+    return DeviceMapTelemetrySample(
+      deviceId: normalizedTelemetryDeviceId,
+      lat: sample.lat,
+      lon: sample.lon,
+      receivedAtMs: sample.receivedAtMs,
+      gatewayId: _normalizeRefId(sample.gatewayId),
+      source: sample.sourceType ?? 'gateway',
+    );
+  }
+
+  bool _cacheTelemetrySample(DeviceMapTelemetrySample sample) {
+    final current = _latestTelemetryByDeviceId[sample.deviceId];
+    if (!shouldReplaceDeviceMapTelemetrySample(current, sample)) {
+      return false;
+    }
+    _latestTelemetryByDeviceId[sample.deviceId] = sample;
+    return true;
+  }
+
+  DeviceModel? _matchedDeviceForTelemetrySample(
+    DeviceMapTelemetrySample sample,
+  ) {
+    final candidates = _latestKnownDevices.where((device) {
+      final deviceId = _normalizeNumericDeviceId(
+        device.loraDeviceId ?? device.deviceId ?? device.id,
+      );
+      return deviceId == sample.deviceId;
+    }).toList(growable: false);
+    if (candidates.isEmpty) return null;
+    if (candidates.length == 1) return candidates.single;
+
+    final gatewayId = _normalizeRefId(sample.gatewayId);
+    if (gatewayId.isEmpty) return null;
+    final gatewayMatches = candidates.where((device) {
+      return _normalizeRefId(device.gatewayId) == gatewayId;
+    }).toList(growable: false);
+    if (gatewayMatches.length != 1) return null;
+    return gatewayMatches.single;
   }
 
   LatLng? _telemetryPositionForDeviceId(String? rawDeviceId) {
     final normalized = _normalizeNumericDeviceId(rawDeviceId);
     if (normalized.isEmpty) return null;
-    return _latestTelemetryPositionsByDeviceId[normalized];
+    return _latestTelemetryByDeviceId[normalized]?.point;
   }
 
   void _mergeTelemetryCacheFromDevices(List<DeviceModel> devices) {
     for (final device in devices) {
-      final normalized = _normalizeNumericDeviceId(
-        device.loraDeviceId ?? device.deviceId ?? device.id,
-      );
-      if (normalized.isEmpty) continue;
-      final lat = device.lat;
-      final lon = device.lon;
-      if (lat == null || lon == null) continue;
-      if (!lat.isFinite || !lon.isFinite) continue;
-      if (lat < -90 || lat > 90 || lon < -180 || lon > 180) continue;
-      _latestTelemetryPositionsByDeviceId[normalized] = LatLng(lat, lon);
+      final sample = deviceMapTelemetrySampleFromDevice(device);
+      if (sample == null) continue;
+      _cacheTelemetrySample(sample);
     }
+  }
+
+  DeviceMapTelemetrySample? _resolvedMarkerTelemetryForDevice(
+    DeviceModel device, {
+    required List<DeviceModel> devices,
+  }) {
+    return resolvePreferredMapTelemetryForDevice(
+      device: device,
+      devices: devices,
+      localSamplesByDeviceId: _latestTelemetryByDeviceId,
+    );
   }
 
   int _viewPointsSignature(List<LatLng> points) {
@@ -1539,7 +1596,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
       final out = LatLng(lat, lon);
       dialogTelemetryPositionsByDeviceId[normalized] = out;
-      _latestTelemetryPositionsByDeviceId[normalized] = out;
+      _cacheTelemetrySample(
+        DeviceMapTelemetrySample(
+          deviceId: normalized,
+          lat: lat,
+          lon: lon,
+          receivedAtMs: 0,
+          source: 'cloud_lookup',
+        ),
+      );
       return out;
     }
 
@@ -1607,7 +1672,7 @@ class _HomeScreenState extends State<HomeScreen> {
         byId[id] = current;
       }
 
-      for (final entry in _latestTelemetryPositionsByDeviceId.entries) {
+      for (final entry in _latestTelemetryByDeviceId.entries) {
         final id = entry.key.trim();
         if (id.isEmpty) continue;
         final current = byId[id];
@@ -1618,16 +1683,16 @@ class _HomeScreenState extends State<HomeScreen> {
           byId[id] = {
             'device_id': int.tryParse(id),
             'device_id_str': id,
-            'lat': entry.value.latitude,
-            'lon': entry.value.longitude,
+            'lat': entry.value.lat,
+            'lon': entry.value.lon,
             'source_type': 'telemetry',
           };
           continue;
         }
         current['source_type'] =
             mergeSource(current['source_type']?.toString(), 'telemetry');
-        current['lat'] ??= entry.value.latitude;
-        current['lon'] ??= entry.value.longitude;
+        current['lat'] ??= entry.value.lat;
+        current['lon'] ??= entry.value.lon;
         byId[id] = current;
       }
 
@@ -3029,6 +3094,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       final allDevices =
                           devicesSnap.data ?? const <DeviceModel>[];
                       final allGateways = gatewaySnap.data ?? const [];
+                      _latestKnownDevices = allDevices;
                       _mergeTelemetryCacheFromDevices(allDevices);
                       _scheduleTelemetryRetentionCleanup(allDevices);
 
@@ -3131,24 +3197,28 @@ class _HomeScreenState extends State<HomeScreen> {
                             }).toList();
 
                       final markers = <Marker>[
-                        ...devices
-                            .where((d) => d.lat != null && d.lon != null)
-                            .map(
-                              (d) => Marker(
-                                point: LatLng(d.lat!, d.lon!),
-                                width: 40,
-                                height: 40,
-                                child: GestureDetector(
-                                  onTap: () =>
-                                      _openDeviceMarkerActions(context, d),
-                                  child: const Icon(
-                                    Icons.pets,
-                                    color: Colors.red,
-                                    size: 30,
-                                  ),
-                                ),
+                        ...devices.map((d) {
+                          final position = _resolvedMarkerTelemetryForDevice(
+                            d,
+                            devices: allDevices,
+                          );
+                          if (position == null) {
+                            return null;
+                          }
+                          return Marker(
+                            point: position.point,
+                            width: 40,
+                            height: 40,
+                            child: GestureDetector(
+                              onTap: () => _openDeviceMarkerActions(context, d),
+                              child: const Icon(
+                                Icons.pets,
+                                color: Colors.red,
+                                size: 30,
                               ),
                             ),
+                          );
+                        }).whereType<Marker>(),
                         ...gateways
                             .where((g) => g['lat'] != null && g['lon'] != null)
                             .map(
