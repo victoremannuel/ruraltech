@@ -12,6 +12,10 @@ int main() {
   assert(rtcmd::isAdminRole("adm"));
   assert(rtcmd::isAdminRole(" ADMIN "));
   assert(!rtcmd::isAdminRole("user"));
+  assert(rtcmd::isValidScopeId("DEADBEEF00000001"));
+  assert(!rtcmd::isValidScopeId("DEADBEEF"));
+  assert(rtcmd::isTraceableCommandId("cmd-9001"));
+  assert(!rtcmd::isTraceableCommandId("bad id"));
   assert(rtcmd::targetIncludesGateway(nullptr));
   assert(rtcmd::targetIncludesGateway("gateway"));
   assert(!rtcmd::targetIncludesGateway("collars"));

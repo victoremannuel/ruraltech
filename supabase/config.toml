@@ -1,0 +1,7 @@
+project_id = "nhoewnfuyjbtpklrotbf"
+
+[functions.queue-lora-command]
+verify_jwt = false
+
+[functions.repair-firebase-mirrors]
+verify_jwt = false

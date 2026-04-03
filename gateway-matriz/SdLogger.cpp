@@ -1,8 +1,33 @@
 /** @file SdLogger.cpp */
 #include "SdLogger.h"
+#include "config.h"
 #include <mbedtls/sha256.h>
 
-bool SdLogger::begin(int csPin) { return SD.begin(csPin); }
+namespace {
+inline void prepareSpiBusForSd(int csPin) {
+  if (csPin >= 0) {
+    pinMode(csPin, OUTPUT);
+    digitalWrite(csPin, HIGH);
+  }
+  pinMode(cfg::PIN_LORA_CS, OUTPUT);
+  digitalWrite(cfg::PIN_LORA_CS, HIGH);
+}
+}  // namespace
+
+void SdLogger::releaseChipSelect() {
+  if (csPin_ < 0) return;
+  pinMode(csPin_, OUTPUT);
+  digitalWrite(csPin_, HIGH);
+}
+
+bool SdLogger::begin(int csPin) {
+  csPin_ = csPin;
+  prepareSpiBusForSd(csPin_);
+  releaseChipSelect();
+  ready_ = SD.begin(csPin_);
+  releaseChipSelect();
+  return ready_;
+}
 
 String SdLogger::hashLine(const String& line) {
   uint8_t out[32];
@@ -21,6 +46,9 @@ String SdLogger::hashLine(const String& line) {
 }
 
 void SdLogger::log(const String& line) {
+  if (!ready_) return;
+  prepareSpiBusForSd(csPin_);
+  releaseChipSelect();
   struct tm tmNow;
   getLocalTime(&tmNow);
   char fn[24];
@@ -30,4 +58,5 @@ void SdLogger::log(const String& line) {
   String h = hashLine(line);
   f.printf("%lu|%s|%s\n", millis(), h.c_str(), line.c_str());
   f.close();
+  releaseChipSelect();
 }

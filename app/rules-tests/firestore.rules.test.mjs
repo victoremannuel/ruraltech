@@ -54,7 +54,26 @@ beforeEach(async () => {
 
     await setDoc(doc(db, "ruralProperties/farm-1"), {
       name: "Farm 1",
+      propertyScopeId: "DEADBEEF00000001",
       createdByUid: doc(db, "users/owner-user"),
+      userUids: [
+        doc(db, "users/owner-user"),
+        doc(db, "users/adm-user"),
+        doc(db, "users/linked-user"),
+      ],
+    });
+
+    await setDoc(doc(db, "gateways/matrix-1"), {
+      propertyId: "farm-1",
+      propertyScopeId: "DEADBEEF00000001",
+      is_matrix: true,
+      supportsScopedLora: true,
+      bindingReady: true,
+      runtimeStatus: {
+        propertyScopeId: "DEADBEEF00000001",
+        supportsScopedLora: true,
+        bindingReady: true,
+      },
       userUids: [
         doc(db, "users/owner-user"),
         doc(db, "users/adm-user"),
@@ -65,8 +84,17 @@ beforeEach(async () => {
     await setDoc(doc(db, "collars/101"), {
       ownerUid: doc(db, "users/owner-user"),
       deviceId: "101",
+      propertyId: "farm-1",
+      propertyScopeId: "DEADBEEF00000001",
       name: "Coleira 101",
       status: "active",
+      supportsScopedLora: true,
+      bindingReady: true,
+      runtimeStatus: {
+        propertyScopeId: "DEADBEEF00000001",
+        supportsScopedLora: true,
+        bindingReady: true,
+      },
     });
   });
 });
@@ -182,11 +210,11 @@ describe("Firestore rules", () => {
     );
   });
 
-  it("allows owner to create herding operation when property id is unavailable but collar access is valid", async () => {
+  it("blocks herding operation create when property access is invalid even if the collar is owned", async () => {
     const ownerCtx = testEnv.authenticatedContext("owner-user");
     const ownerDb = ownerCtx.firestore();
 
-    await assertSucceeds(
+    await assertFails(
       setDoc(doc(ownerDb, "herdingOperations/op-fallback"), {
         ownerUid: doc(ownerDb, "users/owner-user"),
         requestedByUid: doc(ownerDb, "users/owner-user"),
@@ -201,6 +229,61 @@ describe("Firestore rules", () => {
           { lat: -20.2, lon: -43.9 },
           { lat: -20.3, lon: -43.7 },
         ],
+      }),
+    );
+  });
+
+  it("allows owner to create loraCommands with matching property scope and linked user to read them", async () => {
+    const ownerCtx = testEnv.authenticatedContext("owner-user");
+    const linkedCtx = testEnv.authenticatedContext("linked-user");
+    const ownerDb = ownerCtx.firestore();
+    const linkedDb = linkedCtx.firestore();
+
+    await assertSucceeds(
+      setDoc(doc(ownerDb, "loraCommands/cmd-1"), {
+        commandId: "cmd-1",
+        command: "SET_FENCE",
+        propertyId: "farm-1",
+        propertyScopeId: "DEADBEEF00000001",
+        matrixGatewayId: "matrix-1",
+        targetDeviceIds: ["101"],
+        targetGatewayIds: [],
+        payload: {
+          points: [
+            { lat: -20.1, lon: -43.8 },
+            { lat: -20.2, lon: -43.9 },
+            { lat: -20.3, lon: -43.7 },
+          ],
+        },
+        requestedByUid: doc(ownerDb, "users/owner-user"),
+        requestedByRole: "user",
+      }),
+    );
+    await assertSucceeds(getDoc(doc(linkedDb, "loraCommands/cmd-1")));
+  });
+
+  it("blocks loraCommands when the property scope id does not match", async () => {
+    const ownerCtx = testEnv.authenticatedContext("owner-user");
+    const ownerDb = ownerCtx.firestore();
+
+    await assertFails(
+      setDoc(doc(ownerDb, "loraCommands/cmd-bad-scope"), {
+        commandId: "cmd-bad-scope",
+        command: "SET_FENCE",
+        propertyId: "farm-1",
+        propertyScopeId: "BADSCOPE00000000",
+        matrixGatewayId: "matrix-1",
+        targetDeviceIds: ["101"],
+        targetGatewayIds: [],
+        payload: {
+          points: [
+            { lat: -20.1, lon: -43.8 },
+            { lat: -20.2, lon: -43.9 },
+            { lat: -20.3, lon: -43.7 },
+          ],
+        },
+        requestedByUid: doc(ownerDb, "users/owner-user"),
+        requestedByRole: "user",
       }),
     );
   });

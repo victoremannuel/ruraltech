@@ -2,56 +2,138 @@
   "rules": {
     ".read": false,
     ".write": false,
-    "matrixWriterKeys": {
-      ".read": "auth != null",
+    "propertyAccess": {
+      "$propertyId": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": false
+        }
+      }
+    },
+    "matrixBindings": {
       "$matrixId": {
-        ".write": "auth != null",
-        ".validate": "newData.isString() && newData.val().length >= 8"
+        ".read": false,
+        ".write": "(auth == null && newData.child('writer').val() === 'gateway_matrix' && newData.child('matrixRuntimeId').isString() && newData.child('writerKey').isString() && root.child('matrixWriterKeys').child(newData.child('matrixRuntimeId').val()).val() === newData.child('writerKey').val()) || auth.uid === 'backend'",
+        ".validate": "newData.hasChildren(['propertyId','propertyScopeId','matrixGatewayId','matrixRuntimeId','enabled','updatedAtMs','writer','writerKey']) && newData.child('propertyId').isString() && newData.child('propertyScopeId').isString() && newData.child('matrixGatewayId').isString() && newData.child('matrixRuntimeId').isString() && newData.child('enabled').isBoolean() && newData.child('updatedAtMs').isNumber()"
       }
     },
-    "telemetryLatest": {
-      "$deviceId": {
-        ".read": "auth != null",
-        ".write": "auth != null || (auth == null && newData.child('writer').val() === 'gateway_matrix' && newData.child('matrixId').isString() && newData.child('writerKey').isString() && root.child('matrixWriterKeys').child(newData.child('matrixId').val()).val() === newData.child('writerKey').val())",
-        ".validate": "newData.hasChildren(['deviceId','lat','lon','receivedAt','writer']) && newData.child('lat').isNumber() && newData.child('lat').val() >= -90 && newData.child('lat').val() <= 90 && newData.child('lon').isNumber() && newData.child('lon').val() >= -180 && newData.child('lon').val() <= 180 && newData.child('receivedAt').isNumber()"
+    "matrixWriterKeys": {
+      "$matrixId": {
+        ".read": false,
+        ".write": false
       }
     },
-    "telemetryHistory": {
-      "$deviceId": {
-        "$dayKey": {
-          ".indexOn": ["receivedAt"],
-          "$entryId": {
-            ".read": "auth != null",
-            ".write": "auth != null || (auth == null && newData.child('writer').val() === 'gateway_matrix' && newData.child('matrixId').isString() && newData.child('writerKey').isString() && root.child('matrixWriterKeys').child(newData.child('matrixId').val()).val() === newData.child('writerKey').val())",
-            ".validate": "newData.hasChildren(['deviceId','lat','lon','receivedAt','writer']) && newData.child('lat').isNumber() && newData.child('lat').val() >= -90 && newData.child('lat').val() <= 90 && newData.child('lon').isNumber() && newData.child('lon').val() >= -180 && newData.child('lon').val() <= 180 && newData.child('receivedAt').isNumber()"
+    "matrixQueueKeys": {
+      "$matrixId": {
+        ".read": false,
+        ".write": "(auth == null && newData.child('writer').val() === 'gateway_matrix' && newData.child('matrixRuntimeId').val() === $matrixId && newData.child('writerKey').isString() && root.child('matrixWriterKeys').child($matrixId).val() === newData.child('writerKey').val()) || auth.uid === 'backend'",
+        ".validate": "newData.hasChildren(['queueKey','matrixRuntimeId','updatedAtMs','writer','writerKey']) && newData.child('queueKey').isString() && newData.child('matrixRuntimeId').isString() && newData.child('updatedAtMs').isNumber()"
+      }
+    },
+    "propertyCommands": {
+      "$propertyId": {
+        ".read": "auth != null && root.child('propertyAccess').child($propertyId).child(auth.uid).val() === true",
+        "$commandId": {
+          ".read": "auth != null && root.child('propertyAccess').child($propertyId).child(auth.uid).val() === true",
+          ".write": "(auth == null && newData.child('writer').val() === 'gateway_matrix' && newData.child('matrixRuntimeId').isString() && newData.child('writerKey').isString() && root.child('matrixWriterKeys').child(newData.child('matrixRuntimeId').val()).val() === newData.child('writerKey').val() && root.child('matrixBindings').child(newData.child('matrixRuntimeId').val()).child('enabled').val() === true && root.child('matrixBindings').child(newData.child('matrixRuntimeId').val()).child('propertyId').val() === newData.child('propertyId').val() && newData.child('propertyId').val() === $propertyId) || auth.uid === 'backend'",
+          ".validate": "newData.hasChildren(['commandId','command','propertyId','propertyScopeId','matrixGatewayId','matrixRuntimeId','requestedByUid','requestedByRole','status','updatedAtMs','expiresAtMs']) && newData.child('commandId').val() === $commandId && newData.child('command').isString() && newData.child('propertyId').val() === $propertyId && newData.child('status').isString() && newData.child('updatedAtMs').isNumber()"
+        }
+      }
+    },
+    "propertyCommandEvents": {
+      "$propertyId": {
+        ".read": "auth != null && root.child('propertyAccess').child($propertyId).child(auth.uid).val() === true",
+        "$commandId": {
+          ".read": "auth != null && root.child('propertyAccess').child($propertyId).child(auth.uid).val() === true",
+          "$eventId": {
+            ".read": "auth != null && root.child('propertyAccess').child($propertyId).child(auth.uid).val() === true",
+            ".write": "(auth == null && newData.child('writer').val() === 'gateway_matrix' && newData.child('matrixId').isString() && newData.child('writerKey').isString() && root.child('matrixWriterKeys').child(newData.child('matrixId').val()).val() === newData.child('writerKey').val() && root.child('matrixBindings').child(newData.child('matrixId').val()).child('enabled').val() === true && root.child('matrixBindings').child(newData.child('matrixId').val()).child('propertyId').val() === $propertyId) || auth.uid === 'backend'",
+            ".validate": "newData.hasChildren(['type','status','matrixId','createdAtMs']) && newData.child('type').isString() && newData.child('status').isString() && newData.child('matrixId').isString() && newData.child('createdAtMs').isNumber()"
           }
         }
       }
     },
-    "healthLatest": {
-      "$deviceId": {
-        ".read": "auth != null",
-        ".write": "auth != null || (auth == null && newData.child('writer').val() === 'gateway_matrix' && newData.child('matrixId').isString() && newData.child('writerKey').isString() && root.child('matrixWriterKeys').child(newData.child('matrixId').val()).val() === newData.child('writerKey').val())",
-        ".validate": "newData.hasChildren(['deviceId','kind','receivedAt','writer']) && newData.child('kind').val() === 'health_daily' && newData.child('receivedAt').isNumber()"
+    "propertyTelemetryLatest": {
+      "$propertyId": {
+        ".read": "auth != null && root.child('propertyAccess').child($propertyId).child(auth.uid).val() === true",
+        "$deviceId": {
+          ".read": "auth != null && root.child('propertyAccess').child($propertyId).child(auth.uid).val() === true",
+          ".write": "(auth == null && newData.child('writer').val() === 'gateway_matrix' && newData.child('matrixId').isString() && newData.child('writerKey').isString() && root.child('matrixWriterKeys').child(newData.child('matrixId').val()).val() === newData.child('writerKey').val() && root.child('matrixBindings').child(newData.child('matrixId').val()).child('enabled').val() === true && root.child('matrixBindings').child(newData.child('matrixId').val()).child('propertyId').val() === newData.child('propertyId').val() && newData.child('propertyId').val() === $propertyId) || auth.uid === 'backend'",
+          ".validate": "newData.hasChildren(['deviceId','propertyId','propertyScopeId','lat','lon','receivedAt','writer','matrixId','writerKey']) && newData.child('lat').isNumber() && newData.child('lat').val() >= -90 && newData.child('lat').val() <= 90 && newData.child('lon').isNumber() && newData.child('lon').val() >= -180 && newData.child('lon').val() <= 180 && newData.child('receivedAt').isNumber()"
+        }
       }
     },
-    "healthHistory": {
-      "$deviceId": {
-        "$dayKey": {
-          ".indexOn": ["receivedAt"],
-          "$entryId": {
-            ".read": "auth != null",
-            ".write": "auth != null || (auth == null && newData.child('writer').val() === 'gateway_matrix' && newData.child('matrixId').isString() && newData.child('writerKey').isString() && root.child('matrixWriterKeys').child(newData.child('matrixId').val()).val() === newData.child('writerKey').val())",
-            ".validate": "newData.hasChildren(['deviceId','kind','receivedAt','writer']) && newData.child('kind').val() === 'health_daily' && newData.child('receivedAt').isNumber()"
+    "propertyTelemetryHistory": {
+      "$propertyId": {
+        ".read": "auth != null && root.child('propertyAccess').child($propertyId).child(auth.uid).val() === true",
+        "$deviceId": {
+          "$dayKey": {
+            ".indexOn": ["receivedAt"],
+            "$entryId": {
+              ".read": "auth != null && root.child('propertyAccess').child($propertyId).child(auth.uid).val() === true",
+              ".write": "(auth == null && newData.child('writer').val() === 'gateway_matrix' && newData.child('matrixId').isString() && newData.child('writerKey').isString() && root.child('matrixWriterKeys').child(newData.child('matrixId').val()).val() === newData.child('writerKey').val() && root.child('matrixBindings').child(newData.child('matrixId').val()).child('enabled').val() === true && root.child('matrixBindings').child(newData.child('matrixId').val()).child('propertyId').val() === newData.child('propertyId').val() && newData.child('propertyId').val() === $propertyId) || auth.uid === 'backend'",
+              ".validate": "newData.hasChildren(['deviceId','propertyId','propertyScopeId','lat','lon','receivedAt','writer','matrixId','writerKey']) && newData.child('lat').isNumber() && newData.child('lat').val() >= -90 && newData.child('lat').val() <= 90 && newData.child('lon').isNumber() && newData.child('lon').val() >= -180 && newData.child('lon').val() <= 180 && newData.child('receivedAt').isNumber()"
+            }
           }
         }
       }
     },
-    "herdingOperations": {
-      "$operationId": {
-        ".read": "auth != null",
-        ".write": "auth != null || (auth == null && newData.child('writer').val() === 'gateway_matrix' && newData.child('matrixId').isString() && newData.child('writerKey').isString() && root.child('matrixWriterKeys').child(newData.child('matrixId').val()).val() === newData.child('writerKey').val())",
-        ".validate": "newData.hasChildren(['operationId','status','updatedAt','writer']) && newData.child('operationId').isString() && newData.child('status').isString() && newData.child('updatedAt').isNumber()"
+    "propertyHealthLatest": {
+      "$propertyId": {
+        ".read": "auth != null && root.child('propertyAccess').child($propertyId).child(auth.uid).val() === true",
+        "$deviceId": {
+          ".read": "auth != null && root.child('propertyAccess').child($propertyId).child(auth.uid).val() === true",
+          ".write": "(auth == null && newData.child('writer').val() === 'gateway_matrix' && newData.child('matrixId').isString() && newData.child('writerKey').isString() && root.child('matrixWriterKeys').child(newData.child('matrixId').val()).val() === newData.child('writerKey').val() && root.child('matrixBindings').child(newData.child('matrixId').val()).child('enabled').val() === true && root.child('matrixBindings').child(newData.child('matrixId').val()).child('propertyId').val() === newData.child('propertyId').val() && newData.child('propertyId').val() === $propertyId) || auth.uid === 'backend'",
+          ".validate": "newData.hasChildren(['deviceId','propertyId','propertyScopeId','kind','receivedAt','writer','matrixId','writerKey']) && newData.child('kind').val() === 'health_daily' && newData.child('receivedAt').isNumber()"
+        }
+      }
+    },
+    "propertyHealthHistory": {
+      "$propertyId": {
+        ".read": "auth != null && root.child('propertyAccess').child($propertyId).child(auth.uid).val() === true",
+        "$deviceId": {
+          "$dayKey": {
+            ".indexOn": ["receivedAt"],
+            "$entryId": {
+              ".read": "auth != null && root.child('propertyAccess').child($propertyId).child(auth.uid).val() === true",
+              ".write": "(auth == null && newData.child('writer').val() === 'gateway_matrix' && newData.child('matrixId').isString() && newData.child('writerKey').isString() && root.child('matrixWriterKeys').child(newData.child('matrixId').val()).val() === newData.child('writerKey').val() && root.child('matrixBindings').child(newData.child('matrixId').val()).child('enabled').val() === true && root.child('matrixBindings').child(newData.child('matrixId').val()).child('propertyId').val() === newData.child('propertyId').val() && newData.child('propertyId').val() === $propertyId) || auth.uid === 'backend'",
+              ".validate": "newData.hasChildren(['deviceId','propertyId','propertyScopeId','kind','receivedAt','writer','matrixId','writerKey']) && newData.child('kind').val() === 'health_daily' && newData.child('receivedAt').isNumber()"
+            }
+          }
+        }
+      }
+    },
+    "propertyEvents": {
+      "$propertyId": {
+        ".read": "auth != null && root.child('propertyAccess').child($propertyId).child(auth.uid).val() === true",
+        "$dayKey": {
+          "$eventId": {
+            ".read": "auth != null && root.child('propertyAccess').child($propertyId).child(auth.uid).val() === true",
+            ".write": "(auth == null && newData.child('writer').val() === 'gateway_matrix' && newData.child('matrixId').isString() && newData.child('writerKey').isString() && root.child('matrixWriterKeys').child(newData.child('matrixId').val()).val() === newData.child('writerKey').val() && root.child('matrixBindings').child(newData.child('matrixId').val()).child('enabled').val() === true && root.child('matrixBindings').child(newData.child('matrixId').val()).child('propertyId').val() === newData.child('propertyId').val() && newData.child('propertyId').val() === $propertyId) || auth.uid === 'backend'",
+            ".validate": "newData.hasChildren(['propertyId','propertyScopeId','receivedAt','writer','matrixId','writerKey']) && newData.child('receivedAt').isNumber()"
+          }
+        }
+      }
+    },
+    "matrixCommandQueues": {
+      "$matrixId": {
+        "$queueKey": {
+          ".read": "auth == null && (root.child('matrixQueueKeys').child($matrixId).val() === $queueKey || root.child('matrixQueueKeys').child($matrixId).child('queueKey').val() === $queueKey) && root.child('matrixBindings').child($matrixId).child('enabled').val() === true",
+          ".write": false,
+          "$commandId": {
+            ".write": "auth == null && newData.val() === null && (root.child('matrixQueueKeys').child($matrixId).val() === $queueKey || root.child('matrixQueueKeys').child($matrixId).child('queueKey').val() === $queueKey) && root.child('matrixBindings').child($matrixId).child('enabled').val() === true",
+            ".validate": "newData.hasChildren(['commandId','command','propertyId','propertyScopeId','matrixGatewayId','matrixRuntimeId','requestedByUid','requestedByRole','createdAtMs','expiresAtMs'])"
+          }
+        }
+      }
+    },
+    "matrixCommandResults": {
+      "$matrixId": {
+        "$commandId": {
+          ".read": "auth != null && root.child('propertyAccess').child(data.child('propertyId').val()).child(auth.uid).val() === true",
+          ".write": "(auth == null && newData.child('writer').val() === 'gateway_matrix' && newData.child('matrixId').val() === $matrixId && newData.child('writerKey').isString() && root.child('matrixWriterKeys').child($matrixId).val() === newData.child('writerKey').val() && root.child('matrixBindings').child($matrixId).child('enabled').val() === true) || auth.uid === 'backend'",
+          ".validate": "newData.hasChildren(['commandId','status','updatedAtMs','propertyId','propertyScopeId','matrixId','writer','writerKey']) && newData.child('commandId').val() === $commandId && newData.child('status').isString() && newData.child('updatedAtMs').isNumber()"
+        }
       }
     }
   }

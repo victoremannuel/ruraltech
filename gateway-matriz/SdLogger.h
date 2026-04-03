@@ -12,6 +12,9 @@ class SdLogger {
   void log(const String& line);
 
  private:
+  int csPin_ = -1;
+  bool ready_ = false;
   String lastHash_ = "GENESIS";
   String hashLine(const String& line);
+  void releaseChipSelect();
 };

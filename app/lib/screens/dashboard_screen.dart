@@ -100,31 +100,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _latestTelemetryPositionsByDeviceId[normalizedTelemetryDeviceId] =
             LatLng(sample.lat, sample.lon);
       }
-      if (!mounted) return;
-      final gatewayRole = sample.gatewayRole?.trim().toLowerCase();
-      if (gatewayRole == 'matrix') {
-        // Gateway matriz ja publica cada uplink no RTDB.
-        return;
-      }
-      if (sample.gatewayWifiOtaEnabled == false) {
-        // Em LoRa-only o escritor principal deve ser o gateway matriz.
-        return;
-      }
-      unawaited(
-        context.read<FirebaseService>().registerLiveTelemetry(
-              deviceId: sample.deviceId,
-              lat: sample.lat,
-              lon: sample.lon,
-              sourceTimestampSec: sample.sourceTimestampSec,
-              seq: sample.seq,
-              gatewayId: sample.gatewayId,
-              gatewayRole: sample.gatewayRole,
-              gatewayWifiOtaEnabled: sample.gatewayWifiOtaEnabled,
-              sourceType: sample.sourceType ?? 'telemetry',
-              writer: 'app',
-              receivedAtMs: sample.receivedAtMs,
-            ),
-      );
     });
     _gatewayMessageSub = gateway.messageStream.listen(_persistCriticalEvent);
   }
@@ -151,9 +126,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final type = (message['type'] ?? '').toString().trim().toLowerCase();
     if (type != 'event') return;
 
-    final uid = context.read<AuthService>().user?.uid;
-    if (uid == null || uid.trim().isEmpty) return;
-
     final deviceId = _asInt(
       message['device_id'] ??
           message['deviceId'] ??
@@ -167,50 +139,14 @@ class _HomeScreenState extends State<HomeScreen> {
         (message['gateway_id'] ?? message['gatewayId'])?.toString().trim();
     final gatewayRole =
         (message['gateway_role'] ?? message['gatewayRole'])?.toString().trim();
-    final gatewayWifiOtaEnabled = message['gateway_wifi_ota_enabled'] is bool
-        ? message['gateway_wifi_ota_enabled'] as bool
-        : null;
     final eventType = (payload == null
             ? null
             : (payload['type'] ?? payload['event_type'] ?? payload['reason']))
         ?.toString()
         .trim();
-    final receivedAtMs = DateTime.now().millisecondsSinceEpoch;
-
-    final event = <String, dynamic>{
-      'ownerUid': FirebaseFirestore.instance.collection('users').doc(uid),
-      'deviceId': deviceId.toString(),
-      'type': type,
-      'seq': _asInt(message['seq']),
-      'sourceTimestampSec': _asInt(message['timestamp']),
-      'receivedAtMs': receivedAtMs,
-      if (gatewayId != null && gatewayId.isNotEmpty) 'gatewayId': gatewayId,
-      if (gatewayRole != null && gatewayRole.isNotEmpty)
-        'gatewayRole': gatewayRole,
-      if (gatewayWifiOtaEnabled != null)
-        'gatewayWifiOtaEnabled': gatewayWifiOtaEnabled,
-      if (payload != null) 'payload': payload,
-      if (eventType != null && eventType.isNotEmpty) 'eventType': eventType,
-      'raw': message,
-    };
-
-    if (payload != null && eventType?.toLowerCase() == 'health_daily') {
-      unawaited(
-        context.read<FirebaseService>().registerDailyHealthReport(
-              deviceId: deviceId.toString(),
-              payload: payload,
-              sourceTimestampSec: _asInt(message['timestamp']),
-              seq: _asInt(message['seq']),
-              gatewayId: gatewayId,
-              gatewayRole: gatewayRole,
-              gatewayWifiOtaEnabled: gatewayWifiOtaEnabled,
-              writer: 'app',
-              receivedAtMs: receivedAtMs,
-            ),
-      );
+    if (payload == null && (gatewayId ?? gatewayRole ?? eventType) == null) {
+      return;
     }
-
-    unawaited(context.read<FirebaseService>().saveCriticalEvent(event));
   }
 
   double _normalizeHeading(double heading) {
@@ -570,20 +506,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return name.contains('matriz');
   }
 
-  String? _normalizeWsHost(String? raw) {
-    final value = (raw ?? '').trim();
-    if (value.isEmpty) return null;
-    if (value.startsWith('ws://') || value.startsWith('wss://')) return value;
-    if (value.startsWith('http://') || value.startsWith('https://')) {
-      final uri = Uri.tryParse(value);
-      if (uri == null || uri.host.isEmpty) return null;
-      return 'ws://${uri.host}:81';
-    }
-    if (value.contains('://')) return null;
-    if (value.contains(':')) return 'ws://$value';
-    return 'ws://$value:81';
-  }
-
   Future<void> _openSelectedPolygonEditor(BuildContext context) async {
     final auth = context.read<AuthService>();
     final fb = context.read<FirebaseService>();
@@ -655,7 +577,6 @@ class _HomeScreenState extends State<HomeScreen> {
       BuildContext context, DeviceModel device) async {
     final auth = context.read<AuthService>();
     final fb = context.read<FirebaseService>();
-    final gatewayService = context.read<GatewayService>();
     final uid = auth.user?.uid;
     if (uid == null) return;
 
@@ -978,25 +899,43 @@ class _HomeScreenState extends State<HomeScreen> {
                   wifiOtaEnabled: wifiOtaEnabled,
                 );
                 if (auth.isAdmin && modeChanged) {
-                  final loraTarget = normalizedLoraId;
-                  final gatewayWsHost = await fb.resolveGatewayWsHostForDevice(
-                    deviceId: loraTarget,
-                    fallbackGatewayId: selectedGatewayId ?? device.gatewayId,
-                  );
-                  final ok = await gatewayService.sendCommandEnsuringConnection(
-                    deviceId: loraTarget,
-                    command: 'SET_PARAMS',
-                    hostOverride: gatewayWsHost,
-                    payload: {
-                      'target': 'collars',
-                      'wifi_ota_enabled': wifiOtaEnabled,
-                      'requested_by_role': 'adm',
-                      'requested_by_admin': true,
-                    },
-                  );
-                  if (!ok && context.mounted) {
-                    AppFeedback.warning(
-                      'Nao foi possivel enviar comando de modo para a coleira via gateway: ${gatewayService.lastError ?? 'erro desconhecido'}',
+                  var queuedToMatrix = false;
+                  final targetPropertyId =
+                      (propertyId ?? device.propertyId)?.trim();
+                  if (targetPropertyId == null || targetPropertyId.isEmpty) {
+                    if (context.mounted) {
+                      AppFeedback.warning(
+                        'A coleira precisa estar vinculada a uma propriedade para receber SET_PARAMS via matriz.',
+                      );
+                    }
+                  } else {
+                    try {
+                      await fb.enqueueScopedCommand(
+                        command: 'SET_PARAMS',
+                        propertyId: targetPropertyId,
+                        requestedByUid: uid,
+                        requestedByRole: auth.role,
+                        targetDeviceIds: <String>[normalizedLoraId],
+                        payload: {
+                          'target': 'collars',
+                          'wifi_ota_enabled': wifiOtaEnabled,
+                          'requested_by_role': 'adm',
+                          'requested_by_admin': true,
+                        },
+                        ttl: const Duration(minutes: 10),
+                      );
+                      queuedToMatrix = true;
+                    } catch (e) {
+                      if (context.mounted) {
+                        AppFeedback.warning(
+                          'Nao foi possivel enfileirar SET_PARAMS para a coleira: $e',
+                        );
+                      }
+                    }
+                  }
+                  if (queuedToMatrix && context.mounted && mounted) {
+                    AppFeedback.success(
+                      'Modo salvo e comando enfileirado para envio via matriz.',
                     );
                   }
                 }
@@ -1014,7 +953,6 @@ class _HomeScreenState extends State<HomeScreen> {
       BuildContext context, Map<String, dynamic> gateway) async {
     final auth = context.read<AuthService>();
     final fb = context.read<FirebaseService>();
-    final gatewayService = context.read<GatewayService>();
     final uid = auth.user?.uid;
     if (uid == null) return;
 
@@ -1210,27 +1148,41 @@ class _HomeScreenState extends State<HomeScreen> {
                   isMatrix: isMatrix,
                 );
                 if (auth.isAdmin && modeChanged) {
-                  final persistedHost = (gateway['host'] ?? '').toString();
-                  final wsHost = _normalizeWsHost(
-                    hostCtrl.text.trim().isEmpty
-                        ? persistedHost
-                        : hostCtrl.text,
-                  );
-                  final ok = await gatewayService.sendCommandEnsuringConnection(
-                    deviceId: '0',
-                    command: 'SET_PARAMS',
-                    hostOverride: wsHost,
-                    payload: {
-                      'target': 'gateway',
-                      'wifi_ota_enabled': wifiOtaEnabled,
-                      'requested_by_role': 'adm',
-                      'requested_by_admin': true,
-                    },
-                  );
-                  if (!ok && context.mounted) {
-                    AppFeedback.warning(
-                      'Nao foi possivel enviar comando de modo para o gateway: ${gatewayService.lastError ?? 'erro desconhecido'}',
-                    );
+                  final targetPropertyId = propertyId?.trim();
+                  if (targetPropertyId == null || targetPropertyId.isEmpty) {
+                    if (context.mounted) {
+                      AppFeedback.warning(
+                        'O gateway precisa estar vinculado a uma propriedade para receber SET_PARAMS via matriz.',
+                      );
+                    }
+                  } else {
+                    try {
+                      await fb.enqueueScopedCommand(
+                        command: 'SET_PARAMS',
+                        propertyId: targetPropertyId,
+                        requestedByUid: uid,
+                        requestedByRole: auth.role,
+                        targetGatewayIds: <String>[gateway['id'].toString()],
+                        payload: {
+                          'target': 'gateway',
+                          'wifi_ota_enabled': wifiOtaEnabled,
+                          'requested_by_role': 'adm',
+                          'requested_by_admin': true,
+                        },
+                        ttl: const Duration(minutes: 10),
+                      );
+                      if (context.mounted) {
+                        AppFeedback.success(
+                          'Modo salvo e comando enfileirado para o gateway via matriz.',
+                        );
+                      }
+                    } catch (e) {
+                      if (context.mounted) {
+                        AppFeedback.warning(
+                          'Nao foi possivel enfileirar SET_PARAMS para o gateway: $e',
+                        );
+                      }
+                    }
                   }
                 }
                 if (context.mounted) Navigator.pop(context);
@@ -2909,6 +2861,29 @@ class _HomeScreenState extends State<HomeScreen> {
                 onTap: () async {
                   Navigator.pop(context);
                   await _showAddGatewayDialog(context);
+                },
+              ),
+            if (auth.isAdmin)
+              ListTile(
+                key: const Key('home_action_repair_firebase_mirrors'),
+                leading: const Icon(Icons.sync_problem),
+                title: const Text('Reparar espelhos Firebase'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  try {
+                    final result = await context
+                        .read<FirebaseService>()
+                        .repairFirebaseMirrors(apply: true);
+                    if (!context.mounted) return;
+                    AppFeedback.success(
+                      'Espelhos reparados: propriedades=${result['propertyCount'] ?? 0}, gateways=${result['gatewayCount'] ?? 0}.',
+                    );
+                  } catch (e) {
+                    if (!context.mounted) return;
+                    AppFeedback.error(
+                      'Falha ao reparar espelhos Firebase: $e',
+                    );
+                  }
                 },
               ),
             if (auth.isAdmin)

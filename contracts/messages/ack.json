@@ -1,11 +1,12 @@
 {
   "type": "ack",
   "device_id": 101,
+  "scope_id": "DEADBEEF00000001",
   "msg_type": 16,
   "seq": 41824,
   "timestamp": 1760000120,
   "gateway_id": "RT-GW-001",
   "gateway_role": "gateway",
   "gateway_wifi_ota_enabled": true,
-  "payload": "{\"cmd\":\"SET_FENCE\",\"cmd_seq\":41798,\"reason\":\"applied\"}"
+  "payload": "{\"cmd\":\"SET_FENCE\",\"cmd_id\":\"cmd-41824\",\"cmd_seq\":41798,\"scope_id\":\"DEADBEEF00000001\",\"reason\":\"applied\"}"
 }

@@ -44,6 +44,30 @@ bool isAdminRole(const char* role) {
          equalsTokenIgnoreCase(role, "admin");
 }
 
+bool isValidScopeId(const char* scopeId) {
+  const char* text = skipSpaces(scopeId);
+  size_t count = 0;
+  while (*text != '\0') {
+    const unsigned char ch = static_cast<unsigned char>(*text);
+    if (!isxdigit(ch)) return false;
+    ++count;
+    ++text;
+  }
+  return count == 16;
+}
+
+bool isTraceableCommandId(const char* commandId) {
+  const char* text = skipSpaces(commandId);
+  size_t count = 0;
+  while (*text != '\0') {
+    const unsigned char ch = static_cast<unsigned char>(*text);
+    if (!(isalnum(ch) || ch == '-' || ch == '_')) return false;
+    ++count;
+    ++text;
+  }
+  return count >= 6;
+}
+
 bool hasAdminModePermission(
     bool requestedByAdmin,
     const char* requestedByRole,

@@ -1,20 +1,24 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:crypto/crypto.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart' as rtdb;
+import 'package:http/http.dart' as http;
 import '../config/manual_settings.dart';
 import '../models/device_model.dart';
 import '../models/herding_operation_model.dart';
 
 class FirebaseService {
   static const String _defaultRtdbUrl = ManualSettings.firebaseRtdbUrl;
-  static const int _telemetryRetentionDays = 365;
+  static const String _supabaseUrl = ManualSettings.supabaseUrl;
+  static const String _supabasePublishableKey =
+      ManualSettings.supabasePublishableKey;
 
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   late final rtdb.FirebaseDatabase _rtdb;
-  final Map<String, int> _telemetryDedupUntilMs = <String, int>{};
-  final Map<String, int> _healthDedupUntilMs = <String, int>{};
 
   FirebaseService() {
     final configuredUrl = Firebase.app().options.databaseURL?.trim() ?? '';
@@ -201,22 +205,8 @@ class FirebaseService {
   }) async {
     final normalizedPropertyId = _idFromRefOrPath(propertyId);
     if (normalizedPropertyId.isEmpty) return null;
-
-    final byProperty = await _db
-        .collection('gateways')
-        .where('propertyId', isEqualTo: _propertyRefOrNull(normalizedPropertyId))
-        .where('is_matrix', isEqualTo: true)
-        .limit(1)
-        .get();
-    if (byProperty.docs.isNotEmpty) return byProperty.docs.first.id;
-
-    final fallback = await _db
-        .collection('gateways')
-        .where('is_matrix', isEqualTo: true)
-        .limit(1)
-        .get();
-    if (fallback.docs.isNotEmpty) return fallback.docs.first.id;
-    return null;
+    final doc = await _findMatrixGatewayDocForProperty(normalizedPropertyId);
+    return doc?.id;
   }
 
   Future<String?> resolveMatrixGatewayWsHost({
@@ -226,6 +216,259 @@ class FirebaseService {
         await resolveMatrixGatewayIdForProperty(propertyId: propertyId);
     if (matrixGatewayId == null || matrixGatewayId.isEmpty) return null;
     return _resolveGatewayWsHostByGatewayId(matrixGatewayId);
+  }
+
+  Future<Map<String, dynamic>> getScopedCommandReadiness({
+    required String propertyId,
+    required List<String> targetDeviceIds,
+    List<String> targetGatewayIds = const [],
+    String? matrixGatewayId,
+  }) async {
+    final normalizedPropertyId = _idFromRefOrPath(propertyId);
+    if (normalizedPropertyId.isEmpty) {
+      return {
+        'ok': false,
+        'reason': 'invalid_property_id',
+      };
+    }
+
+    final propertySnap = await _getPropertyDoc(normalizedPropertyId);
+    if (!propertySnap.exists) {
+      return {
+        'ok': false,
+        'reason': 'property_not_found',
+      };
+    }
+    final propertyData = propertySnap.data() ?? const <String, dynamic>{};
+    final propertyScopeId =
+        (propertyData['propertyScopeId'] ?? '').toString().trim().toUpperCase();
+    if (propertyScopeId.isEmpty) {
+      return {
+        'ok': false,
+        'reason': 'property_scope_not_ready',
+      };
+    }
+
+    final resolvedMatrixGatewayId = _idFromRefOrPath(matrixGatewayId).isNotEmpty
+        ? _idFromRefOrPath(matrixGatewayId)
+        : await resolveMatrixGatewayIdForProperty(
+            propertyId: normalizedPropertyId);
+    if (resolvedMatrixGatewayId == null || resolvedMatrixGatewayId.isEmpty) {
+      return {
+        'ok': false,
+        'reason': 'no_matrix_for_property',
+      };
+    }
+
+    final matrixSnap =
+        await _db.collection('gateways').doc(resolvedMatrixGatewayId).get();
+    if (!matrixSnap.exists) {
+      return {
+        'ok': false,
+        'reason': 'matrix_not_found',
+      };
+    }
+    final matrixData = matrixSnap.data() ?? const <String, dynamic>{};
+    if (matrixData['is_matrix'] != true ||
+        !_matchesPropertyForData(
+          matrixData,
+          expectedPropertyId: normalizedPropertyId,
+          expectedScopeId: propertyScopeId,
+        )) {
+      return {
+        'ok': false,
+        'reason': 'matrix_property_mismatch',
+      };
+    }
+    if (!_bindingReadyForData(matrixData, expectedScopeId: propertyScopeId)) {
+      return {
+        'ok': false,
+        'reason': 'matrix_not_ready',
+        'matrixGatewayId': resolvedMatrixGatewayId,
+      };
+    }
+
+    final normalizedDeviceIds = targetDeviceIds
+        .map(_normalizeLoraDeviceId)
+        .whereType<String>()
+        .toSet()
+        .toList()
+      ..sort();
+    final normalizedGatewayIds = targetGatewayIds
+        .map(_idFromRefOrPath)
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+
+    if (normalizedDeviceIds.isEmpty && normalizedGatewayIds.isEmpty) {
+      return {
+        'ok': false,
+        'reason': 'no_targets',
+      };
+    }
+
+    for (final deviceId in normalizedDeviceIds) {
+      final snap = await _db.collection('collars').doc(deviceId).get();
+      if (!snap.exists) {
+        return {
+          'ok': false,
+          'reason': 'unknown_target_device:$deviceId',
+        };
+      }
+      final data = snap.data() ?? const <String, dynamic>{};
+      if (!_matchesPropertyForData(
+        data,
+        expectedPropertyId: normalizedPropertyId,
+        expectedScopeId: propertyScopeId,
+      )) {
+        return {
+          'ok': false,
+          'reason': 'target_device_property_mismatch:$deviceId',
+        };
+      }
+      if (!_bindingReadyForData(data, expectedScopeId: propertyScopeId)) {
+        return {
+          'ok': false,
+          'reason': 'target_device_not_ready:$deviceId',
+        };
+      }
+    }
+
+    for (final gatewayId in normalizedGatewayIds) {
+      final snap = await _db.collection('gateways').doc(gatewayId).get();
+      if (!snap.exists) {
+        return {
+          'ok': false,
+          'reason': 'unknown_target_gateway:$gatewayId',
+        };
+      }
+      final data = snap.data() ?? const <String, dynamic>{};
+      if (!_matchesPropertyForData(
+        data,
+        expectedPropertyId: normalizedPropertyId,
+        expectedScopeId: propertyScopeId,
+      )) {
+        return {
+          'ok': false,
+          'reason': 'target_gateway_property_mismatch:$gatewayId',
+        };
+      }
+      if (!_bindingReadyForData(data, expectedScopeId: propertyScopeId)) {
+        return {
+          'ok': false,
+          'reason': 'target_gateway_not_ready:$gatewayId',
+        };
+      }
+    }
+
+    return {
+      'ok': true,
+      'reason': null,
+      'propertyId': normalizedPropertyId,
+      'propertyScopeId': propertyScopeId,
+      'matrixGatewayId': resolvedMatrixGatewayId,
+      'matrixRuntimeId':
+          _matrixRuntimeIdFromGatewayData(resolvedMatrixGatewayId, matrixData),
+      'targetDeviceIds': normalizedDeviceIds,
+      'targetGatewayIds': normalizedGatewayIds,
+    };
+  }
+
+  Future<String> enqueueScopedCommand({
+    required String command,
+    required String propertyId,
+    required String requestedByUid,
+    required String requestedByRole,
+    required Map<String, dynamic> payload,
+    List<String> targetDeviceIds = const [],
+    List<String> targetGatewayIds = const [],
+    String? matrixGatewayId,
+    Map<String, dynamic>? businessRef,
+    Duration? ttl,
+  }) async {
+    final normalizedCommand = command.trim().toUpperCase();
+    final readiness = await getScopedCommandReadiness(
+      propertyId: propertyId,
+      targetDeviceIds: targetDeviceIds,
+      targetGatewayIds: targetGatewayIds,
+      matrixGatewayId: matrixGatewayId,
+    );
+    if (readiness['ok'] != true) {
+      throw Exception(readiness['reason'] ?? 'command_not_ready');
+    }
+
+    final normalizedPropertyId = readiness['propertyId'] as String;
+    final normalizedRequestedByUid = _idFromRefOrPath(requestedByUid);
+    if (normalizedRequestedByUid.isEmpty) {
+      throw Exception('invalid_requested_by_uid');
+    }
+
+    final idToken = await FirebaseAuth.instance.currentUser?.getIdToken();
+    if (idToken == null || idToken.trim().isEmpty) {
+      throw Exception('missing_firebase_id_token');
+    }
+
+    final expiresAtMs = DateTime.now()
+        .add(ttl ?? const Duration(minutes: 15))
+        .millisecondsSinceEpoch;
+    final response = await _postSupabaseFunction(
+      'queue-lora-command',
+      idToken: idToken,
+      body: <String, dynamic>{
+        'command': normalizedCommand,
+        'propertyId': normalizedPropertyId,
+        'propertyScopeId': readiness['propertyScopeId'],
+        'matrixGatewayId': readiness['matrixGatewayId'],
+        'targetDeviceIds': readiness['targetDeviceIds'],
+        'targetGatewayIds': readiness['targetGatewayIds'],
+        'payload': payload,
+        'requestedByRole': _normalizeRoleValue(requestedByRole),
+        'requestedByUid': normalizedRequestedByUid,
+        'ttlMs': expiresAtMs - DateTime.now().millisecondsSinceEpoch,
+        if (businessRef != null) 'businessRef': businessRef,
+      },
+    );
+    final commandId = _idFromRefOrPath(response['commandId']);
+    if (commandId.isEmpty) {
+      throw Exception(response['reason'] ?? 'supabase_queue_failed');
+    }
+    return commandId;
+  }
+
+  Future<void> attachLoraCommandToHerdingOperation({
+    required String operationId,
+    required String loraCommandId,
+  }) async {
+    final normalizedOperationId = _idFromRefOrPath(operationId);
+    final normalizedCommandId = _idFromRefOrPath(loraCommandId);
+    if (normalizedOperationId.isEmpty || normalizedCommandId.isEmpty) return;
+    await _db.collection('herdingOperations').doc(normalizedOperationId).set({
+      'loraCommandId': normalizedCommandId,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  Stream<Map<String, dynamic>?> streamCommandStatus({
+    required String propertyId,
+    required String commandId,
+  }) {
+    final propertyKey = _sanitizeRtdbKey(propertyId);
+    final normalizedCommandId = _idFromRefOrPath(commandId);
+    if (propertyKey.isEmpty || normalizedCommandId.isEmpty) {
+      return Stream.value(null);
+    }
+    return _rtdb
+        .ref('propertyCommands/$propertyKey/$normalizedCommandId')
+        .onValue
+        .map((event) {
+      final value = event.snapshot.value;
+      if (value is! Map) return null;
+      return {
+        'id': normalizedCommandId,
+        ...Map<String, dynamic>.from(value.cast<String, dynamic>()),
+      };
+    });
   }
 
   Future<void> registerPushToken({
@@ -251,6 +494,198 @@ class FirebaseService {
     final id = _idFromRefOrPath(value);
     if (id.isEmpty) return null;
     return _db.collection('ruralProperties').doc(id);
+  }
+
+  String _propertyPath(String propertyId) => '/ruralProperties/$propertyId';
+
+  Uri _supabaseFunctionUri(String functionName) {
+    final normalizedName = functionName.trim();
+    final base = _supabaseUrl.trim().replaceAll(RegExp(r'/+$'), '');
+    return Uri.parse('$base/functions/v1/$normalizedName');
+  }
+
+  String _computePropertyScopeId(String propertyId) {
+    final normalized = _idFromRefOrPath(propertyId).trim().toLowerCase();
+    if (normalized.isEmpty) return '';
+    return sha256
+        .convert(utf8.encode(normalized))
+        .toString()
+        .substring(0, 16)
+        .toUpperCase();
+  }
+
+  Future<Map<String, dynamic>> _postSupabaseFunction(
+    String functionName, {
+    required String idToken,
+    Map<String, dynamic>? body,
+  }) async {
+    final response = await http.post(
+      _supabaseFunctionUri(functionName),
+      headers: <String, String>{
+        'content-type': 'application/json',
+        'apikey': _supabasePublishableKey,
+        'authorization': 'Bearer $idToken',
+      },
+      body: jsonEncode(body ?? const <String, dynamic>{}),
+    );
+    final decoded = response.body.trim().isEmpty
+        ? const <String, dynamic>{}
+        : jsonDecode(response.body) as Map<String, dynamic>;
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return decoded;
+    }
+    throw Exception(decoded['reason'] ?? 'supabase_${response.statusCode}');
+  }
+
+  Future<Map<String, dynamic>> repairFirebaseMirrors({
+    bool apply = true,
+    String? propertyId,
+    String? gatewayId,
+  }) async {
+    final idToken = await FirebaseAuth.instance.currentUser?.getIdToken();
+    if (idToken == null || idToken.trim().isEmpty) {
+      throw Exception('missing_firebase_id_token');
+    }
+    return _postSupabaseFunction(
+      'repair-firebase-mirrors',
+      idToken: idToken,
+      body: <String, dynamic>{
+        'apply': apply,
+        if (propertyId != null && propertyId.trim().isNotEmpty)
+          'propertyId': _idFromRefOrPath(propertyId),
+        if (gatewayId != null && gatewayId.trim().isNotEmpty)
+          'gatewayId': _idFromRefOrPath(gatewayId),
+      },
+    );
+  }
+
+  Future<DocumentSnapshot<Map<String, dynamic>>> _getPropertyDoc(
+    String propertyId,
+  ) {
+    final normalizedPropertyId = _idFromRefOrPath(propertyId);
+    return _db.collection('ruralProperties').doc(normalizedPropertyId).get();
+  }
+
+  Future<DocumentSnapshot<Map<String, dynamic>>?>
+      _findMatrixGatewayDocForProperty(
+    String propertyId,
+  ) async {
+    final normalizedPropertyId = _idFromRefOrPath(propertyId);
+    if (normalizedPropertyId.isEmpty) return null;
+    final propertySnap = await _getPropertyDoc(normalizedPropertyId);
+    final propertyData = propertySnap.data() ?? const <String, dynamic>{};
+    final expectedScopeId =
+        (propertyData['propertyScopeId'] ?? '').toString().trim().toUpperCase();
+
+    final propertyRef = _propertyRefOrNull(normalizedPropertyId);
+    final candidates = <dynamic>[
+      propertyRef,
+      normalizedPropertyId,
+      _propertyPath(normalizedPropertyId),
+    ];
+
+    final byId = <String, DocumentSnapshot<Map<String, dynamic>>>{};
+    for (final candidate in candidates) {
+      final snap = await _db
+          .collection('gateways')
+          .where('propertyId', isEqualTo: candidate)
+          .where('is_matrix', isEqualTo: true)
+          .limit(5)
+          .get();
+      for (final doc in snap.docs) {
+        byId[doc.id] = doc;
+      }
+    }
+
+    if (byId.isEmpty && expectedScopeId.isNotEmpty) {
+      final snap = await _db
+          .collection('gateways')
+          .where('is_matrix', isEqualTo: true)
+          .limit(25)
+          .get();
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        if (_matchesPropertyForData(
+          data,
+          expectedPropertyId: normalizedPropertyId,
+          expectedScopeId: expectedScopeId,
+        )) {
+          byId[doc.id] = doc;
+        }
+      }
+    }
+
+    if (byId.isEmpty) return null;
+    final docs = byId.values.toList()..sort((a, b) => a.id.compareTo(b.id));
+    return docs.first;
+  }
+
+  String? _matrixRuntimeIdFromGatewayData(
+    String gatewayId,
+    Map<String, dynamic> data,
+  ) {
+    final runtimeStatus = data['runtimeStatus'];
+    final runtimeMatrixId = runtimeStatus is Map
+        ? _idFromRefOrPath(
+            runtimeStatus['matrixId'] ?? runtimeStatus['rtdbMatrixId'])
+        : '';
+    final explicit = _idFromRefOrPath(
+      data['rtdbMatrixId'] ?? data['matrixId'] ?? runtimeMatrixId,
+    );
+    final candidate = explicit.isNotEmpty ? explicit : gatewayId;
+    final sanitized = _sanitizeRtdbKey(candidate);
+    return sanitized.isEmpty ? null : sanitized;
+  }
+
+  String _resolvedScopeIdForData(Map<String, dynamic> data) {
+    final runtimeStatus = data['runtimeStatus'];
+    final runtimeMap = runtimeStatus is Map<String, dynamic>
+        ? runtimeStatus
+        : const <String, dynamic>{};
+    return (runtimeMap['propertyScopeId'] ?? data['propertyScopeId'] ?? '')
+        .toString()
+        .trim()
+        .toUpperCase();
+  }
+
+  bool _matchesPropertyForData(
+    Map<String, dynamic> data, {
+    required String expectedPropertyId,
+    required String expectedScopeId,
+  }) {
+    final runtimeStatus = data['runtimeStatus'];
+    final runtimeMap = runtimeStatus is Map<String, dynamic>
+        ? runtimeStatus
+        : const <String, dynamic>{};
+    final directPropertyId =
+        _idFromRefOrPath(data['propertyId'] ?? runtimeMap['propertyId']);
+    if (directPropertyId.isNotEmpty) {
+      return directPropertyId == expectedPropertyId;
+    }
+    final runtimeScopeId = _resolvedScopeIdForData(data);
+    return runtimeScopeId.isNotEmpty && runtimeScopeId == expectedScopeId;
+  }
+
+  bool _bindingReadyForData(
+    Map<String, dynamic> data, {
+    required String expectedScopeId,
+  }) {
+    final runtimeStatus = data['runtimeStatus'];
+    final runtimeMap = runtimeStatus is Map<String, dynamic>
+        ? runtimeStatus
+        : const <String, dynamic>{};
+    final supportsScopedLora = data['supportsScopedLora'] == true ||
+        runtimeMap['supportsScopedLora'] == true;
+    final runtimeScopeId = _resolvedScopeIdForData(data);
+    final bindingReady = data['bindingReady'] == true ||
+        runtimeMap['bindingReady'] == true ||
+        (supportsScopedLora &&
+            runtimeScopeId.isNotEmpty &&
+            runtimeScopeId == expectedScopeId);
+    return supportsScopedLora &&
+        bindingReady &&
+        runtimeScopeId.isNotEmpty &&
+        runtimeScopeId == expectedScopeId;
   }
 
   Future<List<DocumentReference<Map<String, dynamic>>>> _linkedUsersForProperty(
@@ -309,9 +744,11 @@ class FirebaseService {
     return null;
   }
 
-  Map<String, Map<String, double>> _decodeTelemetryLatestSnapshot(dynamic raw) {
-    if (raw is! Map) return const <String, Map<String, double>>{};
-    final out = <String, Map<String, double>>{};
+  Map<String, Map<String, dynamic>> _decodeTelemetryLatestDetailsSnapshot(
+    dynamic raw,
+  ) {
+    if (raw is! Map) return const <String, Map<String, dynamic>>{};
+    final out = <String, Map<String, dynamic>>{};
     for (final entry in raw.entries) {
       final key = entry.key?.toString().trim() ?? '';
       if (key.isEmpty) continue;
@@ -324,12 +761,31 @@ class FirebaseService {
       final lonD = lon.toDouble();
       if (!latD.isFinite || !lonD.isFinite) continue;
       if (latD < -90 || latD > 90 || lonD < -180 || lonD > 180) continue;
-      out[key] = <String, double>{
+      final telemetry = <String, dynamic>{
         'lat': latD,
         'lon': lonD,
       };
+      final receivedAtMs =
+          _coerceTimestampMs(value['receivedAtMs'] ?? value['receivedAt']);
+      if (receivedAtMs > 0) {
+        telemetry['telemetryReceivedAtMs'] = receivedAtMs;
+      }
+      out[key] = telemetry;
     }
     return out;
+  }
+
+  Map<String, Map<String, double>> _decodeTelemetryLatestSnapshot(dynamic raw) {
+    final detailed = _decodeTelemetryLatestDetailsSnapshot(raw);
+    return detailed.map(
+      (key, value) => MapEntry(
+        key,
+        <String, double>{
+          'lat': (value['lat'] as num).toDouble(),
+          'lon': (value['lon'] as num).toDouble(),
+        },
+      ),
+    );
   }
 
   Map<String, Map<String, dynamic>> _decodeHealthLatestSnapshot(dynamic raw) {
@@ -366,7 +822,7 @@ class FirebaseService {
 
   List<DeviceModel> _mergeDevicesWithLiveTelemetry(
     List<DeviceModel> devices,
-    Map<String, Map<String, double>> liveBySanitizedDeviceId,
+    Map<String, Map<String, dynamic>> liveBySanitizedDeviceId,
     Map<String, Map<String, dynamic>> healthBySanitizedDeviceId,
   ) {
     return devices.map((device) {
@@ -388,6 +844,8 @@ class FirebaseService {
         propertyId: device.propertyId,
         gatewayId: device.gatewayId,
         wifiOtaEnabled: device.wifiOtaEnabled,
+        telemetryReceivedAtMs: live?['telemetryReceivedAtMs'] as int? ??
+            device.telemetryReceivedAtMs,
         healthReceivedAtMs:
             health?['healthReceivedAtMs'] as int? ?? device.healthReceivedAtMs,
         healthGpsDayKey:
@@ -423,6 +881,224 @@ class FirebaseService {
         event['sourceTimestampSec'] ?? event['timestamp'];
     if (sourceTimestampSec is num) return sourceTimestampSec.toInt() * 1000;
     return 0;
+  }
+
+  List<Map<String, dynamic>> _decodeTelemetryHistorySnapshot(
+    dynamic raw, {
+    required String propertyId,
+    required String normalizedDeviceId,
+  }) {
+    if (raw is! Map) return const <Map<String, dynamic>>[];
+    final items = <Map<String, dynamic>>[];
+    for (final dayEntry in raw.entries) {
+      final dayKey = dayEntry.key?.toString().trim() ?? '';
+      final dayMap = dayEntry.value;
+      if (dayKey.isEmpty || dayMap is! Map) continue;
+      for (final entry in dayMap.entries) {
+        final entryId = entry.key?.toString().trim() ?? '';
+        final value = entry.value;
+        if (entryId.isEmpty || value is! Map) continue;
+        final lat = _toFiniteCoord(value['lat']);
+        final lon = _toFiniteCoord(value['lon']);
+        if (lat == null || lon == null) continue;
+        final rawMap = _normalizeJsonLike(value);
+        if (rawMap is! Map<String, dynamic>) continue;
+        items.add({
+          'id': 'telemetry:$dayKey:$entryId',
+          'entryId': entryId,
+          'dayKey': dayKey,
+          'deviceId': normalizedDeviceId,
+          'propertyId': propertyId,
+          'kind': 'telemetry',
+          'type': 'telemetry',
+          'receivedAtMs': _coerceTimestampMs(
+            value['receivedAtMs'] ?? value['receivedAt'],
+            fallbackId: entryId,
+          ),
+          'gatewayId': value['gatewayId'],
+          'gatewayRole': value['gatewayRole'],
+          'lat': lat,
+          'lon': lon,
+          'raw': rawMap,
+        });
+      }
+    }
+    return items;
+  }
+
+  Map<String, dynamic>? _decodeLatestTelemetryLogEntry(
+    dynamic raw, {
+    required String propertyId,
+    required String normalizedDeviceId,
+  }) {
+    if (raw is! Map) return null;
+    final lat = _toFiniteCoord(raw['lat']);
+    final lon = _toFiniteCoord(raw['lon']);
+    if (lat == null || lon == null) return null;
+    final rawMap = _normalizeJsonLike(raw);
+    if (rawMap is! Map<String, dynamic>) return null;
+    final receivedAtMs = _coerceTimestampMs(
+      raw['receivedAtMs'] ?? raw['receivedAt'],
+    );
+    return {
+      'id': 'telemetry:latest:$normalizedDeviceId',
+      'entryId': 'latest',
+      'dayKey': '',
+      'deviceId': normalizedDeviceId,
+      'propertyId': propertyId,
+      'kind': 'telemetry',
+      'type': 'telemetry',
+      'receivedAtMs': receivedAtMs > 0 ? receivedAtMs : null,
+      'gatewayId': raw['gatewayId'],
+      'gatewayRole': raw['gatewayRole'],
+      'lat': lat,
+      'lon': lon,
+      'raw': rawMap,
+    };
+  }
+
+  List<Map<String, dynamic>> _decodeHealthHistorySnapshot(
+    dynamic raw, {
+    required String propertyId,
+    required String normalizedDeviceId,
+  }) {
+    if (raw is! Map) return const <Map<String, dynamic>>[];
+    final items = <Map<String, dynamic>>[];
+    for (final dayEntry in raw.entries) {
+      final dayKey = dayEntry.key?.toString().trim() ?? '';
+      final dayMap = dayEntry.value;
+      if (dayKey.isEmpty || dayMap is! Map) continue;
+      for (final entry in dayMap.entries) {
+        final entryId = entry.key?.toString().trim() ?? '';
+        final value = entry.value;
+        if (entryId.isEmpty || value is! Map) continue;
+        final rawMap = _normalizeJsonLike(value);
+        if (rawMap is! Map<String, dynamic>) continue;
+        items.add({
+          'id': 'health:$dayKey:$entryId',
+          'entryId': entryId,
+          'dayKey': dayKey,
+          'deviceId': normalizedDeviceId,
+          'propertyId': propertyId,
+          'kind': 'health_daily',
+          'type': 'health_daily',
+          'receivedAtMs': _coerceTimestampMs(
+            value['receivedAtMs'] ?? value['receivedAt'],
+            fallbackId: entryId,
+          ),
+          'gatewayId': value['gatewayId'],
+          'gatewayRole': value['gatewayRole'],
+          'healthFlags': _toIntValue(value['healthFlags']),
+          'sat': _toIntValue(value['sat']),
+          'temperatureDeciC': _toIntValue(value['temperatureDeciC']),
+          'raw': rawMap,
+        });
+      }
+    }
+    return items;
+  }
+
+  List<Map<String, dynamic>> _decodePropertyEventsForDevice(
+    dynamic raw, {
+    required String propertyId,
+    required String normalizedDeviceId,
+  }) {
+    if (raw is! Map) return const <Map<String, dynamic>>[];
+    final items = <Map<String, dynamic>>[];
+    for (final dayEntry in raw.entries) {
+      final dayKey = dayEntry.key?.toString().trim() ?? '';
+      final dayMap = dayEntry.value;
+      if (dayKey.isEmpty || dayMap is! Map) continue;
+      for (final entry in dayMap.entries) {
+        final entryId = entry.key?.toString().trim() ?? '';
+        final value = entry.value;
+        if (entryId.isEmpty || value is! Map) continue;
+        final candidateDeviceId = _normalizeLoraDeviceId(
+              value['deviceId'] ?? value['device_id'],
+            ) ??
+            _normalizeLoraDeviceId(
+              value['payload'] is Map
+                  ? (value['payload'] as Map)['deviceId']
+                  : null,
+            );
+        if (candidateDeviceId != normalizedDeviceId) continue;
+
+        final eventType = (value['eventType'] ?? value['type'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
+        if (eventType == 'health_daily') continue;
+
+        final rawMap = _normalizeJsonLike(value);
+        if (rawMap is! Map<String, dynamic>) continue;
+        items.add({
+          'id': 'event:$dayKey:$entryId',
+          'entryId': entryId,
+          'dayKey': dayKey,
+          'deviceId': normalizedDeviceId,
+          'propertyId': propertyId,
+          'kind': eventType.isEmpty ? 'event' : eventType,
+          'type': 'event',
+          'eventType': eventType,
+          'receivedAtMs': _coerceTimestampMs(
+            value['receivedAtMs'] ??
+                value['receivedAt'] ??
+                value['sourceTimestampSec'],
+            fallbackId: entryId,
+          ),
+          'gatewayId': value['gatewayId'],
+          'gatewayRole': value['gatewayRole'],
+          'raw': rawMap,
+        });
+      }
+    }
+    return items;
+  }
+
+  List<Map<String, dynamic>> _mergeCollarFirebaseLogItems({
+    required String propertyId,
+    required String normalizedDeviceId,
+    dynamic latestTelemetryRaw,
+    dynamic telemetryHistoryRaw,
+    dynamic healthHistoryRaw,
+    dynamic eventsRaw,
+  }) {
+    final items = <Map<String, dynamic>>[
+      ..._decodeTelemetryHistorySnapshot(
+        telemetryHistoryRaw,
+        propertyId: propertyId,
+        normalizedDeviceId: normalizedDeviceId,
+      ),
+      ..._decodeHealthHistorySnapshot(
+        healthHistoryRaw,
+        propertyId: propertyId,
+        normalizedDeviceId: normalizedDeviceId,
+      ),
+      ..._decodePropertyEventsForDevice(
+        eventsRaw,
+        propertyId: propertyId,
+        normalizedDeviceId: normalizedDeviceId,
+      ),
+    ];
+    final latestTelemetry = _decodeLatestTelemetryLogEntry(
+      latestTelemetryRaw,
+      propertyId: propertyId,
+      normalizedDeviceId: normalizedDeviceId,
+    );
+    if (latestTelemetry != null) {
+      final alreadyPresent = items.any(
+        (item) =>
+            item['type'] == 'telemetry' &&
+            item['receivedAtMs'] == latestTelemetry['receivedAtMs'] &&
+            item['lat'] == latestTelemetry['lat'] &&
+            item['lon'] == latestTelemetry['lon'],
+      );
+      if (!alreadyPresent) {
+        items.add(latestTelemetry);
+      }
+    }
+    items.sort((a, b) => _eventSortKeyMs(b).compareTo(_eventSortKeyMs(a)));
+    return items;
   }
 
   Map<String, dynamic> _eventFromDoc(
@@ -470,6 +1146,39 @@ class FirebaseService {
     return null;
   }
 
+  dynamic _normalizeJsonLike(dynamic value) {
+    if (value is Map) {
+      final out = <String, dynamic>{};
+      for (final entry in value.entries) {
+        final key = entry.key?.toString().trim() ?? '';
+        if (key.isEmpty) continue;
+        out[key] = _normalizeJsonLike(entry.value);
+      }
+      return out;
+    }
+    if (value is List) {
+      return value.map(_normalizeJsonLike).toList(growable: false);
+    }
+    return value;
+  }
+
+  int _coerceTimestampMs(dynamic raw, {dynamic fallbackId}) {
+    final direct = _toIntValue(raw);
+    if (direct != null && direct > 0) {
+      return direct > 1000000000000 ? direct : direct * 1000;
+    }
+    final fallback = _toIntValue(fallbackId);
+    if (fallback != null && fallback > 0) {
+      return fallback > 1000000000000 ? fallback : fallback * 1000;
+    }
+    return 0;
+  }
+
+  String _normalizeRoleValue(String value) {
+    final raw = value.trim().toLowerCase();
+    return raw.isEmpty ? 'user' : raw;
+  }
+
   Future<Map<String, double>?> getLatestTelemetryPositionForDevice(
       String rawDeviceId) async {
     final normalizedDeviceId = _normalizeLoraDeviceId(rawDeviceId);
@@ -478,7 +1187,16 @@ class FirebaseService {
     if (sanitizedDeviceId.isEmpty) return null;
 
     try {
-      final snap = await _rtdb.ref('telemetryLatest/$sanitizedDeviceId').get();
+      final collarDoc =
+          await _db.collection('collars').doc(normalizedDeviceId).get();
+      final propertyId = _idFromRefOrPath(
+        (collarDoc.data() ?? const <String, dynamic>{})['propertyId'],
+      );
+      if (propertyId.isEmpty) return null;
+      final propertyKey = _sanitizeRtdbKey(propertyId);
+      final snap = await _rtdb
+          .ref('propertyTelemetryLatest/$propertyKey/$sanitizedDeviceId')
+          .get();
       final value = snap.value;
       if (value is! Map) return null;
       final lat = _toFiniteCoord(value['lat']);
@@ -500,26 +1218,44 @@ class FirebaseService {
     }
   }
 
-  String _dayKeyFromMs(int msEpochUtc) {
-    final dt = DateTime.fromMillisecondsSinceEpoch(msEpochUtc, isUtc: true);
-    final y = dt.year.toString().padLeft(4, '0');
-    final m = dt.month.toString().padLeft(2, '0');
-    final d = dt.day.toString().padLeft(2, '0');
-    return '$y$m$d';
+  Map<String, dynamic>? _decodeLatestTelemetryEntry(dynamic raw) {
+    if (raw is! Map) return null;
+    final lat = _toFiniteCoord(raw['lat']);
+    final lon = _toFiniteCoord(raw['lon']);
+    if (lat == null ||
+        lon == null ||
+        lat < -90 ||
+        lat > 90 ||
+        lon < -180 ||
+        lon > 180) {
+      return null;
+    }
+    final out = <String, dynamic>{
+      'lat': lat,
+      'lon': lon,
+    };
+    final receivedAtMs =
+        _coerceTimestampMs(raw['receivedAtMs'] ?? raw['receivedAt']);
+    if (receivedAtMs > 0) out['telemetryReceivedAtMs'] = receivedAtMs;
+    return out;
   }
 
-  bool _registerTelemetryDedupKey(String key, int nowMs) {
-    _telemetryDedupUntilMs.removeWhere((_, until) => until <= nowMs);
-    if (_telemetryDedupUntilMs.containsKey(key)) return false;
-    _telemetryDedupUntilMs[key] = nowMs + 90 * 1000;
-    return true;
-  }
+  Stream<Map<String, dynamic>?> streamLatestTelemetryEntryForDevice({
+    required String propertyId,
+    required String deviceId,
+  }) {
+    final propertyKey = _sanitizeRtdbKey(propertyId);
+    final normalizedDeviceId = _normalizeLoraDeviceId(deviceId);
+    if (propertyKey.isEmpty || normalizedDeviceId == null) {
+      return Stream.value(null);
+    }
+    final deviceKey = _sanitizeRtdbKey(normalizedDeviceId);
+    if (deviceKey.isEmpty) return Stream.value(null);
 
-  bool _registerHealthDedupKey(String key, int nowMs) {
-    _healthDedupUntilMs.removeWhere((_, until) => until <= nowMs);
-    if (_healthDedupUntilMs.containsKey(key)) return false;
-    _healthDedupUntilMs[key] = nowMs + 10 * 60 * 1000;
-    return true;
+    return _rtdb
+        .ref('propertyTelemetryLatest/$propertyKey/$deviceKey')
+        .onValue
+        .map((event) => _decodeLatestTelemetryEntry(event.snapshot.value));
   }
 
   Future<void> registerLiveTelemetry({
@@ -535,58 +1271,8 @@ class FirebaseService {
     String writer = 'app',
     int? receivedAtMs,
   }) async {
-    final sanitizedDeviceId = _sanitizeRtdbKey(deviceId);
-    if (sanitizedDeviceId.isEmpty) return;
-
-    final nowMs = receivedAtMs != null && receivedAtMs > 0
-        ? receivedAtMs
-        : DateTime.now().millisecondsSinceEpoch;
-    final dedupKey = [
-      sanitizedDeviceId,
-      seq?.toString() ?? '-',
-      sourceTimestampSec?.toString() ?? '-',
-      lat.toStringAsFixed(6),
-      lon.toStringAsFixed(6),
-      gatewayId ?? '-',
-    ].join('|');
-    if (!_registerTelemetryDedupKey(dedupKey, nowMs)) return;
-
-    final nowSec = nowMs ~/ 1000;
-    final dayKey = _dayKeyFromMs(nowMs);
-    final oldDayMs =
-        nowMs - (_telemetryRetentionDays + 1) * 24 * 60 * 60 * 1000;
-    final oldDayKey = _dayKeyFromMs(oldDayMs);
-
-    final payload = <String, dynamic>{
-      'deviceId': sanitizedDeviceId,
-      'lat': lat,
-      'lon': lon,
-      'receivedAt': nowSec,
-      'receivedAtMs': nowMs,
-      'sourceType': sourceType,
-      'writer': writer,
-      'retentionDays': _telemetryRetentionDays,
-      if (seq != null) 'seq': seq,
-      if (sourceTimestampSec != null) 'sourceTimestampSec': sourceTimestampSec,
-      if (gatewayId != null && gatewayId.trim().isNotEmpty)
-        'gatewayId': gatewayId.trim(),
-      if (gatewayRole != null && gatewayRole.trim().isNotEmpty)
-        'gatewayRole': gatewayRole.trim(),
-      if (gatewayWifiOtaEnabled != null)
-        'gatewayWifiOtaEnabled': gatewayWifiOtaEnabled,
-    };
-
-    try {
-      await _rtdb.ref('telemetryLatest/$sanitizedDeviceId').set(payload);
-      await _rtdb
-          .ref('telemetryHistory/$sanitizedDeviceId/$dayKey/$nowMs')
-          .set(payload);
-      unawaited(
-        _rtdb.ref('telemetryHistory/$sanitizedDeviceId/$oldDayKey').remove(),
-      );
-    } catch (_) {
-      // A falha de telemetria nao deve interromper o fluxo principal do app.
-    }
+    // Fluxo legado desativado: uplink LoRa autoritativo e persistido apenas pela matriz.
+    return;
   }
 
   Future<void> registerDailyHealthReport({
@@ -600,90 +1286,16 @@ class FirebaseService {
     String writer = 'app',
     int? receivedAtMs,
   }) async {
-    final sanitizedDeviceId = _sanitizeRtdbKey(deviceId);
-    if (sanitizedDeviceId.isEmpty) return;
-
-    final healthFlags = _toIntValue(payload['hf'] ?? payload['healthFlags']);
-    if (healthFlags == null) return;
-
-    final nowMs = receivedAtMs != null && receivedAtMs > 0
-        ? receivedAtMs
-        : DateTime.now().millisecondsSinceEpoch;
-    final gpsDayKey = _toIntValue(payload['dk'] ?? payload['gpsDayKey']);
-    final dedupKey = [
-      sanitizedDeviceId,
-      seq?.toString() ?? '-',
-      sourceTimestampSec?.toString() ?? '-',
-      gpsDayKey?.toString() ?? '-',
-      healthFlags.toString(),
-    ].join('|');
-    if (!_registerHealthDedupKey(dedupKey, nowMs)) return;
-
-    final nowSec = nowMs ~/ 1000;
-    final dayKey =
-        gpsDayKey != null && gpsDayKey > 0 ? gpsDayKey.toString() : _dayKeyFromMs(nowMs);
-    final oldDayMs =
-        nowMs - (_telemetryRetentionDays + 1) * 24 * 60 * 60 * 1000;
-    final oldDayKey = _dayKeyFromMs(oldDayMs);
-
-    final body = <String, dynamic>{
-      'deviceId': sanitizedDeviceId,
-      'kind': 'health_daily',
-      'receivedAt': nowSec,
-      'receivedAtMs': nowMs,
-      'healthFlags': healthFlags,
-      'retentionDays': _telemetryRetentionDays,
-      if (gpsDayKey != null) 'gpsDayKey': gpsDayKey,
-      if (_toIntValue(payload['up'] ?? payload['uptimeSec']) != null)
-        'uptimeSec': _toIntValue(payload['up'] ?? payload['uptimeSec']),
-      if (_toIntValue(payload['tp'] ?? payload['temperatureDeciC']) != null)
-        'temperatureDeciC':
-            _toIntValue(payload['tp'] ?? payload['temperatureDeciC']),
-      if (_toIntValue(payload['sa'] ?? payload['sat']) != null)
-        'sat': _toIntValue(payload['sa'] ?? payload['sat']),
-      if (_toIntValue(payload['hd'] ?? payload['hdopCenti']) != null)
-        'hdopCenti': _toIntValue(payload['hd'] ?? payload['hdopCenti']),
-      if (_toIntValue(payload['i2'] ?? payload['i2cDevices']) != null)
-        'i2cDevices': _toIntValue(payload['i2'] ?? payload['i2cDevices']),
-      if (seq != null) 'seq': seq,
-      if (sourceTimestampSec != null) 'sourceTimestampSec': sourceTimestampSec,
-      if (gatewayId != null && gatewayId.trim().isNotEmpty)
-        'gatewayId': gatewayId.trim(),
-      if (gatewayRole != null && gatewayRole.trim().isNotEmpty)
-        'gatewayRole': gatewayRole.trim(),
-      if (gatewayWifiOtaEnabled != null)
-        'gatewayWifiOtaEnabled': gatewayWifiOtaEnabled,
-      'writer': writer,
-    };
-
-    try {
-      await _rtdb.ref('healthLatest/$sanitizedDeviceId').set(body);
-      await _rtdb
-          .ref('healthHistory/$sanitizedDeviceId/$dayKey/$nowMs')
-          .set(body);
-      unawaited(_rtdb.ref('healthHistory/$sanitizedDeviceId/$oldDayKey').remove());
-    } catch (_) {
-      // Best effort: saude diaria nao deve quebrar o fluxo principal.
-    }
+    // Fluxo legado desativado: health uplink autoritativo e persistido apenas pela matriz.
+    return;
   }
 
   Future<void> cleanupTelemetryRetentionForDevices(
     Iterable<String> rawDeviceIds, {
     int? nowMs,
   }) async {
-    final baseNowMs = nowMs ?? DateTime.now().millisecondsSinceEpoch;
-    final oldDayMs =
-        baseNowMs - (_telemetryRetentionDays + 1) * 24 * 60 * 60 * 1000;
-    final oldDayKey = _dayKeyFromMs(oldDayMs);
-    final ids =
-        rawDeviceIds.map(_sanitizeRtdbKey).where((id) => id.isNotEmpty).toSet();
-    for (final id in ids) {
-      try {
-        await _rtdb.ref('telemetryHistory/$id/$oldDayKey').remove();
-      } catch (_) {
-        // cleanup best effort.
-      }
-    }
+    // O retention do RTDB property-scoped e feito pela matriz/backend.
+    return;
   }
 
   Stream<List<DeviceModel>> _streamFirestoreDevices(
@@ -737,21 +1349,101 @@ class FirebaseService {
   Stream<List<DeviceModel>> streamDevices(
       {required String uid, required bool isAdmin}) {
     final firestoreStream = _streamFirestoreDevices(uid: uid, isAdmin: isAdmin);
+    final propertiesStream = streamRuralProperties(uid: uid, isAdmin: isAdmin);
     return Stream.multi((controller) {
       List<DeviceModel> devices = const <DeviceModel>[];
-      Map<String, Map<String, double>> liveBySanitizedDeviceId =
-          const <String, Map<String, double>>{};
-      Map<String, Map<String, dynamic>> healthBySanitizedDeviceId =
-          const <String, Map<String, dynamic>>{};
+      Map<String, Map<String, Map<String, dynamic>>> liveByPropertyId =
+          const <String, Map<String, Map<String, dynamic>>>{};
+      Map<String, Map<String, Map<String, dynamic>>> healthByPropertyId =
+          const <String, Map<String, Map<String, dynamic>>>{};
+      final telemetrySubs = <StreamSubscription<rtdb.DatabaseEvent>>[];
+      final healthSubs = <StreamSubscription<rtdb.DatabaseEvent>>[];
+
+      Map<String, Map<String, dynamic>> aggregateTelemetry() {
+        final merged = <String, Map<String, dynamic>>{};
+        for (final entry in liveByPropertyId.values) {
+          merged.addAll(entry);
+        }
+        return merged;
+      }
+
+      Map<String, Map<String, dynamic>> aggregateHealth() {
+        final merged = <String, Map<String, dynamic>>{};
+        for (final entry in healthByPropertyId.values) {
+          merged.addAll(entry);
+        }
+        return merged;
+      }
 
       void emit() {
         controller.add(
           _mergeDevicesWithLiveTelemetry(
             devices,
-            liveBySanitizedDeviceId,
-            healthBySanitizedDeviceId,
+            aggregateTelemetry(),
+            aggregateHealth(),
           ),
         );
+      }
+
+      Future<void> resetPropertyFeeds(List<String> propertyIds) async {
+        for (final sub in telemetrySubs) {
+          await sub.cancel();
+        }
+        for (final sub in healthSubs) {
+          await sub.cancel();
+        }
+        telemetrySubs.clear();
+        healthSubs.clear();
+        liveByPropertyId = <String, Map<String, Map<String, dynamic>>>{};
+        healthByPropertyId = <String, Map<String, Map<String, dynamic>>>{};
+
+        for (final propertyId in propertyIds.toSet()) {
+          final propertyKey = _sanitizeRtdbKey(propertyId);
+          if (propertyKey.isEmpty) continue;
+
+          telemetrySubs.add(
+            _rtdb.ref('propertyTelemetryLatest/$propertyKey').onValue.listen(
+              (event) {
+                liveByPropertyId = {
+                  ...liveByPropertyId,
+                  propertyKey: _decodeTelemetryLatestDetailsSnapshot(
+                    event.snapshot.value,
+                  ),
+                };
+                emit();
+              },
+              onError: (_) {
+                liveByPropertyId = {
+                  ...liveByPropertyId,
+                  propertyKey: const <String, Map<String, dynamic>>{},
+                };
+                emit();
+              },
+            ),
+          );
+
+          healthSubs.add(
+            _rtdb.ref('propertyHealthLatest/$propertyKey').onValue.listen(
+              (event) {
+                healthByPropertyId = {
+                  ...healthByPropertyId,
+                  propertyKey: _decodeHealthLatestSnapshot(
+                    event.snapshot.value,
+                  ),
+                };
+                emit();
+              },
+              onError: (_) {
+                healthByPropertyId = {
+                  ...healthByPropertyId,
+                  propertyKey: const <String, Map<String, dynamic>>{},
+                };
+                emit();
+              },
+            ),
+          );
+        }
+        emit();
       }
 
       final firestoreSub = firestoreStream.listen(
@@ -761,36 +1453,27 @@ class FirebaseService {
         },
         onError: controller.addError,
       );
-
-      final telemetrySub = _rtdb.ref('telemetryLatest').onValue.listen(
-        (event) {
-          liveBySanitizedDeviceId =
-              _decodeTelemetryLatestSnapshot(event.snapshot.value);
-          emit();
+      final propertySub = propertiesStream.listen(
+        (properties) {
+          final propertyIds = properties
+              .map((property) => _idFromRefOrPath(property['id']))
+              .where((id) => id.isNotEmpty)
+              .toList()
+            ..sort();
+          unawaited(resetPropertyFeeds(propertyIds));
         },
-        onError: (_) {
-          // Fallback para posicao do Firestore quando o feed ao vivo falhar.
-          liveBySanitizedDeviceId = const <String, Map<String, double>>{};
-          emit();
-        },
-      );
-
-      final healthSub = _rtdb.ref('healthLatest').onValue.listen(
-        (event) {
-          healthBySanitizedDeviceId =
-              _decodeHealthLatestSnapshot(event.snapshot.value);
-          emit();
-        },
-        onError: (_) {
-          healthBySanitizedDeviceId = const <String, Map<String, dynamic>>{};
-          emit();
-        },
+        onError: controller.addError,
       );
 
       controller.onCancel = () async {
         await firestoreSub.cancel();
-        await telemetrySub.cancel();
-        await healthSub.cancel();
+        await propertySub.cancel();
+        for (final sub in telemetrySubs) {
+          await sub.cancel();
+        }
+        for (final sub in healthSubs) {
+          await sub.cancel();
+        }
       };
     });
   }
@@ -872,6 +1555,174 @@ class FirebaseService {
         await s1.cancel();
         await s2.cancel();
         await s3.cancel();
+      };
+    });
+  }
+
+  Stream<Map<String, Map<String, double>>> streamPropertyTelemetry(
+    String propertyId,
+  ) {
+    final propertyKey = _sanitizeRtdbKey(propertyId);
+    if (propertyKey.isEmpty) {
+      return Stream.value(const <String, Map<String, double>>{});
+    }
+    return _rtdb.ref('propertyTelemetryLatest/$propertyKey').onValue.map(
+          (event) => _decodeTelemetryLatestSnapshot(event.snapshot.value),
+        );
+  }
+
+  Stream<Map<String, Map<String, dynamic>>> streamPropertyHealth(
+    String propertyId,
+  ) {
+    final propertyKey = _sanitizeRtdbKey(propertyId);
+    if (propertyKey.isEmpty) {
+      return Stream.value(const <String, Map<String, dynamic>>{});
+    }
+    return _rtdb.ref('propertyHealthLatest/$propertyKey').onValue.map(
+          (event) => _decodeHealthLatestSnapshot(event.snapshot.value),
+        );
+  }
+
+  Stream<List<Map<String, dynamic>>> streamPropertyEvents(
+    String propertyId, {
+    int limit = 200,
+  }) {
+    final propertyKey = _sanitizeRtdbKey(propertyId);
+    if (propertyKey.isEmpty) {
+      return Stream.value(const <Map<String, dynamic>>[]);
+    }
+
+    return _rtdb.ref('propertyEvents/$propertyKey').onValue.map((event) {
+      final root = event.snapshot.value;
+      if (root is! Map) return const <Map<String, dynamic>>[];
+      final items = <Map<String, dynamic>>[];
+      for (final dayEntry in root.entries) {
+        final dayKey = dayEntry.key?.toString().trim() ?? '';
+        final dayMap = dayEntry.value;
+        if (dayKey.isEmpty || dayMap is! Map) continue;
+        for (final eventEntry in dayMap.entries) {
+          final eventId = eventEntry.key?.toString().trim() ?? '';
+          final value = eventEntry.value;
+          if (eventId.isEmpty || value is! Map) continue;
+          items.add({
+            'id': eventId,
+            'dayKey': dayKey,
+            ...Map<String, dynamic>.from(value),
+          });
+        }
+      }
+      items.sort((a, b) => _eventSortKeyMs(b).compareTo(_eventSortKeyMs(a)));
+      if (items.length <= limit) return items;
+      return items.take(limit).toList();
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getCollarFirebaseLog({
+    required String propertyId,
+    required String deviceId,
+  }) async {
+    final propertyKey = _sanitizeRtdbKey(propertyId);
+    final normalizedDeviceId = _normalizeLoraDeviceId(deviceId);
+    if (propertyKey.isEmpty || normalizedDeviceId == null) {
+      return const <Map<String, dynamic>>[];
+    }
+    final deviceKey = _sanitizeRtdbKey(normalizedDeviceId);
+    if (deviceKey.isEmpty) return const <Map<String, dynamic>>[];
+
+    final latestTelemetrySnap = await _rtdb
+        .ref('propertyTelemetryLatest/$propertyKey/$deviceKey')
+        .get();
+    final telemetrySnap = await _rtdb
+        .ref('propertyTelemetryHistory/$propertyKey/$deviceKey')
+        .get();
+    final healthSnap =
+        await _rtdb.ref('propertyHealthHistory/$propertyKey/$deviceKey').get();
+    final eventsSnap = await _rtdb.ref('propertyEvents/$propertyKey').get();
+
+    return _mergeCollarFirebaseLogItems(
+      propertyId: propertyId,
+      normalizedDeviceId: normalizedDeviceId,
+      latestTelemetryRaw: latestTelemetrySnap.value,
+      telemetryHistoryRaw: telemetrySnap.value,
+      healthHistoryRaw: healthSnap.value,
+      eventsRaw: eventsSnap.value,
+    );
+  }
+
+  Stream<List<Map<String, dynamic>>> streamCollarFirebaseLog({
+    required String propertyId,
+    required String deviceId,
+  }) {
+    final propertyKey = _sanitizeRtdbKey(propertyId);
+    final normalizedDeviceId = _normalizeLoraDeviceId(deviceId);
+    if (propertyKey.isEmpty || normalizedDeviceId == null) {
+      return Stream.value(const <Map<String, dynamic>>[]);
+    }
+    final deviceKey = _sanitizeRtdbKey(normalizedDeviceId);
+    if (deviceKey.isEmpty) return Stream.value(const <Map<String, dynamic>>[]);
+
+    return Stream.multi((controller) {
+      dynamic latestTelemetryRaw;
+      dynamic telemetryHistoryRaw;
+      dynamic healthHistoryRaw;
+      dynamic eventsRaw;
+
+      void emit() {
+        controller.add(
+          _mergeCollarFirebaseLogItems(
+            propertyId: propertyId,
+            normalizedDeviceId: normalizedDeviceId,
+            latestTelemetryRaw: latestTelemetryRaw,
+            telemetryHistoryRaw: telemetryHistoryRaw,
+            healthHistoryRaw: healthHistoryRaw,
+            eventsRaw: eventsRaw,
+          ),
+        );
+      }
+
+      final latestTelemetrySub = _rtdb
+          .ref('propertyTelemetryLatest/$propertyKey/$deviceKey')
+          .onValue
+          .listen(
+        (event) {
+          latestTelemetryRaw = event.snapshot.value;
+          emit();
+        },
+        onError: controller.addError,
+      );
+      final telemetrySub = _rtdb
+          .ref('propertyTelemetryHistory/$propertyKey/$deviceKey')
+          .onValue
+          .listen(
+        (event) {
+          telemetryHistoryRaw = event.snapshot.value;
+          emit();
+        },
+        onError: controller.addError,
+      );
+      final healthSub = _rtdb
+          .ref('propertyHealthHistory/$propertyKey/$deviceKey')
+          .onValue
+          .listen(
+        (event) {
+          healthHistoryRaw = event.snapshot.value;
+          emit();
+        },
+        onError: controller.addError,
+      );
+      final eventsSub = _rtdb.ref('propertyEvents/$propertyKey').onValue.listen(
+        (event) {
+          eventsRaw = event.snapshot.value;
+          emit();
+        },
+        onError: controller.addError,
+      );
+
+      controller.onCancel = () async {
+        await latestTelemetrySub.cancel();
+        await telemetrySub.cancel();
+        await healthSub.cancel();
+        await eventsSub.cancel();
       };
     });
   }
@@ -1168,13 +2019,12 @@ class FirebaseService {
     }
 
     return query.snapshots().map((snapshot) {
-      final operations = snapshot.docs
-          .map(HerdingOperationModel.fromDoc)
-          .toList()
-        ..sort(
-          (a, b) => _herdingOperationSortKeyMs(b)
-              .compareTo(_herdingOperationSortKeyMs(a)),
-        );
+      final operations =
+          snapshot.docs.map(HerdingOperationModel.fromDoc).toList()
+            ..sort(
+              (a, b) => _herdingOperationSortKeyMs(b)
+                  .compareTo(_herdingOperationSortKeyMs(a)),
+            );
       return operations;
     });
   }
@@ -1182,7 +2032,11 @@ class FirebaseService {
   Stream<HerdingOperationModel?> streamHerdingOperation(String operationId) {
     final normalizedId = _idFromRefOrPath(operationId);
     if (normalizedId.isEmpty) return Stream.value(null);
-    return _db.collection('herdingOperations').doc(normalizedId).snapshots().map(
+    return _db
+        .collection('herdingOperations')
+        .doc(normalizedId)
+        .snapshots()
+        .map(
       (snapshot) {
         if (!snapshot.exists) return null;
         return HerdingOperationModel.fromDoc(snapshot);
@@ -1349,14 +2203,22 @@ class FirebaseService {
       throw Exception('Informe ao menos um email de usuario valido.');
     }
 
-    await _db.collection('ruralProperties').add({
+    final docRef = _db.collection('ruralProperties').doc();
+    final propertyScopeId = _computePropertyScopeId(docRef.id);
+    await docRef.set({
       'name': name,
       'points': _encodeLatLonPoints(points),
       'userUids': linkedUsers.toList(),
       'ownerUid': _userRef(normalizedOwnerUid),
       'createdByUid': _userRef(normalizedOwnerUid),
+      'propertyScopeId': propertyScopeId,
       'updatedAt': FieldValue.serverTimestamp(),
     });
+    try {
+      await repairFirebaseMirrors(apply: true, propertyId: docRef.id);
+    } catch (_) {
+      // Cadastro da propriedade nao pode falhar se o backend de mirror estiver indisponivel.
+    }
   }
 
   Future<void> updateRuralProperty({
@@ -1377,6 +2239,7 @@ class FirebaseService {
       'points': _encodeLatLonPoints(points),
       'ownerUid': _userRef(normalizedOwnerUid),
       'createdByUid': _userRef(normalizedOwnerUid),
+      'propertyScopeId': _computePropertyScopeId(id),
       'updatedAt': FieldValue.serverTimestamp(),
     };
 
@@ -1417,6 +2280,11 @@ class FirebaseService {
         .collection('ruralProperties')
         .doc(id)
         .set(update, SetOptions(merge: true));
+    try {
+      await repairFirebaseMirrors(apply: true, propertyId: id);
+    } catch (_) {
+      // Mantem o update do cadastro mesmo quando o backend de mirror estiver fora.
+    }
   }
 
   Future<void> addArea({
@@ -1466,7 +2334,8 @@ class FirebaseService {
         normalizedRequestedByUid.isEmpty ||
         normalizedPropertyId.isEmpty ||
         normalizedMatrixGatewayId.isEmpty) {
-      throw Exception('Dados obrigatorios do arrebanhamento estao incompletos.');
+      throw Exception(
+          'Dados obrigatorios do arrebanhamento estao incompletos.');
     }
     if (normalizedDeviceIds.isEmpty) {
       throw Exception('Selecione ao menos uma coleira para o arrebanhamento.');

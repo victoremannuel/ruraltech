@@ -1,11 +1,12 @@
 {
   "type": "nack",
   "device_id": 101,
+  "scope_id": "DEADBEEF00000001",
   "msg_type": 17,
   "seq": 41825,
   "timestamp": 1760000124,
   "gateway_id": "RT-GW-001",
   "gateway_role": "gateway",
   "gateway_wifi_ota_enabled": true,
-  "payload": "{\"cmd\":\"SET_PARAMS\",\"cmd_seq\":41800,\"reason\":\"admin_required_for_lora_only\"}"
+  "payload": "{\"cmd\":\"SET_PARAMS\",\"cmd_id\":\"cmd-41825\",\"cmd_seq\":41800,\"scope_id\":\"DEADBEEF00000001\",\"reason\":\"admin_required_for_lora_only\"}"
 }

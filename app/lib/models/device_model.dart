@@ -23,6 +23,7 @@ class DeviceModel {
   final String? propertyId;
   final String? gatewayId;
   final bool wifiOtaEnabled;
+  final int? telemetryReceivedAtMs;
   final int? healthReceivedAtMs;
   final int? healthGpsDayKey;
   final int? healthFlags;
@@ -43,6 +44,7 @@ class DeviceModel {
     this.propertyId,
     this.gatewayId,
     this.wifiOtaEnabled = true,
+    this.telemetryReceivedAtMs,
     this.healthReceivedAtMs,
     this.healthGpsDayKey,
     this.healthFlags,
@@ -92,6 +94,12 @@ class DeviceModel {
 
   DateTime? get healthReceivedAt {
     final ms = healthReceivedAtMs;
+    if (ms == null || ms <= 0) return null;
+    return DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  DateTime? get telemetryReceivedAt {
+    final ms = telemetryReceivedAtMs;
     if (ms == null || ms <= 0) return null;
     return DateTime.fromMillisecondsSinceEpoch(ms);
   }
@@ -199,6 +207,13 @@ class DeviceModel {
           if (raw is bool) return raw;
           return true;
         })(),
+        telemetryReceivedAtMs: (() {
+          final raw = m['telemetryReceivedAtMs'];
+          if (raw is int) return raw;
+          if (raw is num) return raw.toInt();
+          if (raw is String) return int.tryParse(raw.trim());
+          return null;
+        })(),
         healthReceivedAtMs: (() {
           final raw = m['healthReceivedAtMs'];
           if (raw is int) return raw;
@@ -267,5 +282,6 @@ class DeviceModel {
         'propertyId': propertyId,
         'gatewayId': gatewayId,
         'wifi_ota_enabled': wifiOtaEnabled,
+        'telemetryReceivedAtMs': telemetryReceivedAtMs,
       };
 }

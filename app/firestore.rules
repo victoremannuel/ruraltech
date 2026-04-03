@@ -31,12 +31,20 @@ service cloud.firestore {
         userDoc().data.role == 'adm';
     }
 
+    function propertyDoc(propertyId) {
+      return get(/databases/$(database)/documents/ruralProperties/$(propertyId));
+    }
+
+    function propertyExists(propertyId) {
+      return propertyId is string &&
+        propertyId.size() > 0 &&
+        exists(/databases/$(database)/documents/ruralProperties/$(propertyId));
+    }
+
     function isPropertyOwner(propertyId) {
       return signedIn() &&
-        exists(/databases/$(database)/documents/ruralProperties/$(propertyId)) &&
-        matchesCurrentUserRef(
-          get(/databases/$(database)/documents/ruralProperties/$(propertyId)).data.createdByUid
-        );
+        propertyExists(propertyId) &&
+        matchesCurrentUserRef(propertyDoc(propertyId).data.createdByUid);
     }
 
     function hasUserAccess(resourceData) {
@@ -70,10 +78,10 @@ service cloud.firestore {
 
     function canAccessProperty(propertyId) {
       return isAdmin() || (
-        exists(/databases/$(database)/documents/ruralProperties/$(propertyId)) &&
+        propertyExists(propertyId) &&
         (
           isPropertyOwner(propertyId) ||
-          hasUserAccess(get(/databases/$(database)/documents/ruralProperties/$(propertyId)).data)
+          hasUserAccess(propertyDoc(propertyId).data)
         )
       );
     }
@@ -96,6 +104,12 @@ service cloud.firestore {
             canAccessProperty(propertyField)
           )
         );
+    }
+
+    function propertyScopeMatches(propertyId, scopeId) {
+      return propertyExists(propertyId) &&
+        scopeId is string &&
+        propertyDoc(propertyId).data.propertyScopeId == scopeId;
     }
 
     function canAccessGateway(gatewayData) {
@@ -123,16 +137,36 @@ service cloud.firestore {
         );
     }
 
-    function canAccessAnySelectedCollar(operationData) {
+    function isSupportedLoraCommand(data) {
+      return data.command in ['SET_FENCE', 'SET_HERDING_PLAN', 'SET_PARAMS', 'PING'];
+    }
+
+    function hasTargetList(data) {
+      return (
+          ('targetDeviceIds' in data) &&
+          data.targetDeviceIds is list &&
+          data.targetDeviceIds.size() > 0
+        ) ||
+        (
+          ('targetGatewayIds' in data) &&
+          data.targetGatewayIds is list &&
+          data.targetGatewayIds.size() > 0
+        );
+    }
+
+    function canCreateLoraCommand(data) {
       return signedIn() &&
-        ('selectedDeviceIds' in operationData) &&
-        operationData.selectedDeviceIds is list &&
-        operationData.selectedDeviceIds.size() > 0 &&
-        canAccessCollar(operationData.selectedDeviceIds[0]);
+        matchesCurrentUserRef(data.requestedByUid) &&
+        data.propertyId is string &&
+        data.propertyScopeId is string &&
+        data.matrixGatewayId is string &&
+        isSupportedLoraCommand(data) &&
+        hasTargetList(data) &&
+        canAccessPropertyField(data.propertyId) &&
+        propertyScopeMatches(data.propertyId, data.propertyScopeId);
     }
 
     match /users/{userId} {
-      // Required by profile filters to resolve owner emails for related entities.
       allow read: if signedIn();
       allow create: if signedIn() &&
         uid() == userId &&
@@ -240,45 +274,55 @@ service cloud.firestore {
             matchesCurrentUserRef(request.resource.data.ownerUid) &&
             canAccessCollar(request.resource.data.deviceId)
           )
-      );
+        );
       allow delete: if isAdmin();
     }
 
     match /herdingOperations/{operationId} {
       allow read: if signedIn() && canAccessHerdingOperation(resource.data);
-      allow create: if signedIn() && (
-        isAdmin() ||
+      allow create: if signedIn() &&
         (
-          matchesCurrentUserRef(request.resource.data.requestedByUid) &&
+          isAdmin() ||
           (
-            canAccessPropertyField(request.resource.data.propertyId) ||
-            canAccessAnySelectedCollar(request.resource.data)
-          ) &&
-          listContainsCurrentUser(request.resource.data.notifyUserIds)
-        )
-      );
-      allow update: if signedIn() && (
+            matchesCurrentUserRef(request.resource.data.requestedByUid) &&
+            canAccessPropertyField(request.resource.data.propertyId) &&
+            listContainsCurrentUser(request.resource.data.notifyUserIds)
+          )
+        );
+      allow update, delete: if false;
+    }
+
+    match /loraCommands/{commandId} {
+      allow read: if signedIn() && (
         isAdmin() ||
         matchesCurrentUserRef(resource.data.requestedByUid) ||
-        matchesCurrentUserRef(resource.data.ownerUid)
+        canAccessPropertyField(resource.data.propertyId)
       );
-      allow delete: if isAdmin();
+      allow create: if canCreateLoraCommand(request.resource.data);
+      allow update, delete: if false;
+
+      match /events/{eventId} {
+        allow read: if signedIn() && (
+          isAdmin() ||
+          matchesCurrentUserRef(get(/databases/$(database)/documents/loraCommands/$(commandId)).data.requestedByUid) ||
+          canAccessPropertyField(
+            get(/databases/$(database)/documents/loraCommands/$(commandId)).data.propertyId
+          )
+        );
+        allow create, update, delete: if false;
+      }
     }
 
     match /events/{eventId} {
       allow read: if signedIn() && (
         isAdmin() ||
-        matchesCurrentUserRef(resource.data.ownerUid)
-      );
-      allow create: if signedIn() &&
+        matchesCurrentUserRef(resource.data.ownerUid) ||
         (
-          isAdmin() ||
-          (
-            matchesCurrentUserRef(request.resource.data.ownerUid) &&
-            canAccessCollar(request.resource.data.deviceId)
-          )
-        );
-      allow update, delete: if isAdmin();
+          'propertyId' in resource.data &&
+          canAccessPropertyField(resource.data.propertyId)
+        )
+      );
+      allow create, update, delete: if false;
     }
   }
 }
