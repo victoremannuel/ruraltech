@@ -122,6 +122,12 @@ class FirebaseService {
     return parsed.toString();
   }
 
+  List<String> _normalizeLoraDeviceIds(dynamic raw) {
+    if (raw is! Iterable) return const <String>[];
+    return raw.map(_normalizeLoraDeviceId).whereType<String>().toSet().toList()
+      ..sort();
+  }
+
   String? _normalizeWsHost(String? raw) {
     final value = (raw ?? '').trim();
     if (value.isEmpty) return null;
@@ -2309,6 +2315,11 @@ class FirebaseService {
       'userUids': linkedUsers.toList(),
       'ownerUid': _userRef(normalizedOwnerUid),
       'createdByUid': _userRef(normalizedOwnerUid),
+      'updatedByUid': _userRef(
+        normalizedCreatorUid.isNotEmpty
+            ? normalizedCreatorUid
+            : normalizedOwnerUid,
+      ),
       'propertyScopeId': propertyScopeId,
       'updatedAt': FieldValue.serverTimestamp(),
     });
@@ -2337,6 +2348,11 @@ class FirebaseService {
       'points': _encodeLatLonPoints(points),
       'ownerUid': _userRef(normalizedOwnerUid),
       'createdByUid': _userRef(normalizedOwnerUid),
+      'updatedByUid': _userRef(
+        _idFromRefOrPath(editorUid).isNotEmpty
+            ? _idFromRefOrPath(editorUid)
+            : normalizedOwnerUid,
+      ),
       'propertyScopeId': _computePropertyScopeId(id),
       'updatedAt': FieldValue.serverTimestamp(),
     };
@@ -2389,13 +2405,23 @@ class FirebaseService {
     required String ownerUid,
     required String ruralPropertyId,
     required List<List<double>> perimeter,
+    String? updatedByUid,
+    List<String> linkedDeviceIds = const <String>[],
   }) async {
     final linkedUsers = await _linkedUsersForProperty(ruralPropertyId);
+    final normalizedOwnerUid = _idFromRefOrPath(ownerUid);
+    final normalizedUpdatedByUid = _idFromRefOrPath(updatedByUid);
     await _db.collection('areas').add({
-      'ownerUid': _userRef(ownerUid),
+      'ownerUid': _userRef(normalizedOwnerUid),
       'ruralPropertiesID': _propertyRefOrNull(ruralPropertyId),
       'userUids': linkedUsers,
       'perimeter': _encodeLatLonPoints(perimeter),
+      'linkedDeviceIds': _normalizeLoraDeviceIds(linkedDeviceIds),
+      'updatedByUid': _userRef(
+        normalizedUpdatedByUid.isNotEmpty
+            ? normalizedUpdatedByUid
+            : normalizedOwnerUid,
+      ),
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
@@ -2673,9 +2699,13 @@ class FirebaseService {
   Future<void> updateRuralPropertyPolygon({
     required String id,
     required List<List<double>> points,
+    String? updatedByUid,
   }) async {
+    final normalizedUpdatedByUid = _idFromRefOrPath(updatedByUid);
     await _db.collection('ruralProperties').doc(id).set({
       'points': _encodeLatLonPoints(points),
+      if (normalizedUpdatedByUid.isNotEmpty)
+        'updatedByUid': _userRef(normalizedUpdatedByUid),
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
@@ -2683,9 +2713,15 @@ class FirebaseService {
   Future<void> updateAreaPerimeter({
     required String id,
     required List<List<double>> perimeter,
+    String? updatedByUid,
+    List<String> linkedDeviceIds = const <String>[],
   }) async {
+    final normalizedUpdatedByUid = _idFromRefOrPath(updatedByUid);
     await _db.collection('areas').doc(id).set({
       'perimeter': _encodeLatLonPoints(perimeter),
+      'linkedDeviceIds': _normalizeLoraDeviceIds(linkedDeviceIds),
+      if (normalizedUpdatedByUid.isNotEmpty)
+        'updatedByUid': _userRef(normalizedUpdatedByUid),
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }

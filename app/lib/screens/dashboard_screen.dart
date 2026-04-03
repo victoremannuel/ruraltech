@@ -54,6 +54,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _lastTelemetryRetentionCleanupDayKey;
   String? _selectedAreaId;
   String? _selectedAreaPropertyId;
+  List<String> _selectedAreaLinkedDeviceIds = const <String>[];
   String? _selectedPropertyId;
   LatLng? _selectedPolygonAnchor;
   List<LatLng> _selectedPolygonPoints = const [];
@@ -319,6 +320,21 @@ class _HomeScreenState extends State<HomeScreen> {
         'para receber telemetria ao vivo.';
   }
 
+  String _repairFirebaseMirrorsErrorMessage(Object error) {
+    final raw = error.toString();
+    if (raw.contains('admin_required')) {
+      return 'Falha ao reparar espelhos Firebase: somente administradores podem executar esse reparo.';
+    }
+    if (raw.contains('missing_firebase_id_token')) {
+      return 'Falha ao reparar espelhos Firebase: sessao Firebase invalida. Entre novamente no app.';
+    }
+    if (raw.contains('firestore_list_failed:') &&
+        (raw.contains(':429') || raw.contains('RESOURCE_EXHAUSTED'))) {
+      return 'Falha ao reparar espelhos Firebase: o Firestore recusou a varredura por limite de taxa/quota. Tente novamente em instantes.';
+    }
+    return 'Falha ao reparar espelhos Firebase: $error';
+  }
+
   String _normalizeNumericDeviceId(String? raw) {
     return normalizeMapNumericDeviceId(raw);
   }
@@ -580,6 +596,7 @@ class _HomeScreenState extends State<HomeScreen> {
               'id': areaId,
               'propertyId': _selectedAreaPropertyId,
               'perimeter': _selectedPolygonPoints,
+              'linkedDeviceIds': _selectedAreaLinkedDeviceIds,
             },
           ),
         ),
@@ -588,6 +605,7 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _selectedAreaId = null;
           _selectedAreaPropertyId = null;
+          _selectedAreaLinkedDeviceIds = const <String>[];
           _selectedPolygonAnchor = null;
           _selectedPolygonPoints = const [];
         });
@@ -2942,9 +2960,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     );
                   } catch (e) {
                     if (!context.mounted) return;
-                    AppFeedback.error(
-                      'Falha ao reparar espelhos Firebase: $e',
-                    );
+                    AppFeedback.error(_repairFirebaseMirrorsErrorMessage(e));
                   }
                 },
               ),
@@ -3352,6 +3368,12 @@ class _HomeScreenState extends State<HomeScreen> {
                             setState(() {
                               _selectedAreaId = a['id'].toString();
                               _selectedAreaPropertyId = propertyId;
+                              _selectedAreaLinkedDeviceIds =
+                                  ((a['linkedDeviceIds'] as List?) ??
+                                          const <dynamic>[])
+                                      .map((entry) => entry.toString().trim())
+                                      .where((entry) => entry.isNotEmpty)
+                                      .toList();
                               _selectedPropertyId = null;
                               _selectedPolygonPoints = pts;
                               _selectedPolygonAnchor = _centroid(pts);
@@ -3369,6 +3391,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               _selectedPropertyId = p['id'].toString();
                               _selectedAreaId = null;
                               _selectedAreaPropertyId = null;
+                              _selectedAreaLinkedDeviceIds = const <String>[];
                               _selectedPolygonPoints = pts;
                               _selectedPolygonAnchor = _centroid(pts);
                             });
@@ -3379,6 +3402,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           _selectedPropertyId = null;
                           _selectedAreaId = null;
                           _selectedAreaPropertyId = null;
+                          _selectedAreaLinkedDeviceIds = const <String>[];
                           _selectedPolygonPoints = const [];
                           _selectedPolygonAnchor = null;
                         });

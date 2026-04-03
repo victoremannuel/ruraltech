@@ -68,6 +68,7 @@ Consulte tambem `gateway-matriz/pinagem.md` para a lista detalhada.
 - AP local: `RuralTech-Matriz-<ID6HEX>` / `ruraltechota`
 - HTTP: porta 80 (`/status`, `/devices`, `/logs`)
 - WebSocket: porta 81 (json bidirecional)
+- Cloud queue: stream RTDB em `matrixCommandQueues/<matrixRuntimeId>/<queueKey>` com polling de fallback
 
 ## Limites LoRa e fragmentação
 - Payload máximo LoRa por frame: `128 bytes`.
@@ -136,6 +137,11 @@ cp gateway-matriz/manual_settings.local.example.h gateway-matriz/manual_settings
 - No Arduino IDE, selecione a porta de rede `ruraltech-matriz`.
 - Use senha OTA: `ruraltechota`.
 - `GET /status` retorna `service=gateway_matrix` e o estado atual de `wifi_ota_enabled`.
+- `/status` agora inclui tambem:
+  - `queueStreamConnected`
+  - `queueStreamLastEventAtMs`
+  - `queueStreamReconnectAtMs`
+  - `queueStreamLastError`
 
 ## Regra de operação
 - `wifi_ota_enabled=true` (padrão) mantém Wi-Fi + LoRa (e BLE quando compilado).

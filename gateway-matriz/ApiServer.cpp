@@ -15,6 +15,10 @@ extern uint32_t bindingVersion;
 extern bool bindingReady;
 extern bool supportsScopedLora;
 extern uint64_t lastQueuePollAtUnixMs;
+extern bool queueStreamConnected;
+extern uint64_t queueStreamLastEventAtUnixMs;
+extern uint64_t queueStreamReconnectAtUnixMs;
+extern char queueStreamLastError[96];
 extern char lastCloudWriteError[96];
 extern LoRaGateway lora;
 extern uint8_t acceptedUplinkQueueCount;
@@ -118,6 +122,10 @@ void ApiServer::begin() {
         cfg::RTDB_QUEUE_KEY[0] != '\0' &&
         strncmp(cfg::RTDB_QUEUE_KEY, "SET_", 4) != 0;
       doc["lastQueuePollAtMs"] = lastQueuePollAtUnixMs;
+      doc["queueStreamConnected"] = queueStreamConnected;
+      doc["queueStreamLastEventAtMs"] = queueStreamLastEventAtUnixMs;
+      doc["queueStreamReconnectAtMs"] = queueStreamReconnectAtUnixMs;
+      doc["queueStreamLastError"] = queueStreamLastError;
       doc["lastCloudWriteError"] = lastCloudWriteError;
       doc["apClientCount"] = WiFi.softAPgetStationNum();
       doc["loraReady"] = lora.isReady();

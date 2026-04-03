@@ -5,10 +5,41 @@
 #include "StorageQueue.h"
 #include "config.h"
 
+namespace {
+constexpr uint32_t kQueueMagic = 0x52544532UL;
+constexpr uint16_t kQueueVersion = 2;
+constexpr uint16_t kMagicAddr = 0;
+constexpr uint16_t kVersionAddr = 4;
+}
+
+static_assert(
+    cfg::EEPROM_EVENT_START + cfg::EEPROM_EVENT_SLOTS * sizeof(EventRecord) <=
+        cfg::EEPROM_LAST_GOOD_FIX_ADDR,
+    "Event queue overlaps SmartGps persistence range");
+
+void StorageQueue::resetQueue() {
+  EEPROM.writeULong(kMagicAddr, kQueueMagic);
+  EEPROM.writeUShort(kVersionAddr, kQueueVersion);
+  EEPROM.writeUShort(headAddr_, 0);
+  EEPROM.writeUShort(tailAddr_, 0);
+}
+
 bool StorageQueue::begin() {
   if (!EEPROM.begin(cfg::EEPROM_SIZE)) return false;
-  if (EEPROM.readUShort(headAddr_) >= cfg::EEPROM_EVENT_SLOTS) EEPROM.writeUShort(headAddr_, 0);
-  if (EEPROM.readUShort(tailAddr_) >= cfg::EEPROM_EVENT_SLOTS) EEPROM.writeUShort(tailAddr_, 0);
+
+  const bool versionMismatch =
+      EEPROM.readULong(kMagicAddr) != kQueueMagic ||
+      EEPROM.readUShort(kVersionAddr) != kQueueVersion;
+  if (versionMismatch) {
+    resetQueue();
+    EEPROM.commit();
+    return true;
+  }
+
+  if (EEPROM.readUShort(headAddr_) >= cfg::EEPROM_EVENT_SLOTS ||
+      EEPROM.readUShort(tailAddr_) >= cfg::EEPROM_EVENT_SLOTS) {
+    resetQueue();
+  }
   EEPROM.commit();
   return true;
 }

@@ -95,9 +95,28 @@ esp_reset_reason_t lastResetReason_ = ESP_RST_UNKNOWN;
 bool maintenanceWindowActive_ = false;
 char bootStage_[32] = "boot";
 static void logEvent(EventType type, int32_t d1, int32_t d2);
+static void logPolygonApplyResult(
+    MsgType commandType,
+    uint64_t scopeId,
+    PolygonKind polygonKind,
+    OriginDocType originDocType,
+    const char* originDocId,
+    const char* commandId,
+    bool ok,
+    const char* errorCode = nullptr,
+    PolygonErrorStage errorStage = PolygonErrorStage::NONE,
+    int32_t pointCount = 0,
+    int32_t phaseCount = 0);
 static void copyStringToBuffer(char* dst, size_t dstSize, const char* src);
 static const char* eventTypeLabel(EventType type);
 static const char* commandLabel(MsgType type);
+static const char* polygonKindLabel(PolygonKind kind);
+static const char* originDocTypeLabel(OriginDocType type);
+static const char* polygonApplyStatusLabel(PolygonApplyStatus status);
+static const char* polygonErrorStageLabel(PolygonErrorStage stage);
+static PolygonKind polygonKindFromText(const char* raw);
+static OriginDocType originDocTypeFromText(const char* raw);
+static PolygonErrorStage polygonErrorStageFromReason(const char* reason);
 static void extractCommandMetadataFromPayload(
     const LoRaFrame& frame,
     char* commandId,
@@ -129,11 +148,21 @@ static void configureStatusServerRoutes();
 static void ensureStatusServerRunning();
 static void stopStatusServer();
 
+struct PolygonAuditContext {
+  uint64_t scopeId = 0;
+  MsgType commandType = MsgType::SET_FENCE;
+  PolygonKind polygonKind = PolygonKind::NONE;
+  OriginDocType originDocType = OriginDocType::NONE;
+  char originDocId[cfg::EVENT_ORIGIN_DOC_ID_MAX_LEN]{};
+  char commandId[cfg::EVENT_COMMAND_ID_MAX_LEN]{};
+};
+
 struct FenceChunkRxState {
   bool active = false;
   uint8_t totalParts = 0;
   uint8_t expectedPart = 0;
   Polygon fence{};
+  PolygonAuditContext audit{};
 } fenceChunkRx_;
 
 struct HerdChunkRxState {
@@ -144,6 +173,7 @@ struct HerdChunkRxState {
   uint8_t totalPartsCurrentPhase = 0;
   Polygon phaseAccum{};
   HerdingPlan plan{};
+  PolygonAuditContext audit{};
 } herdChunkRx_;
 
 static void randomNonce(uint8_t* nonce12) {
@@ -354,8 +384,119 @@ static const char* eventTypeLabel(EventType type) {
       return "gps_locked";
     case EventType::GPS_UNLOCKED:
       return "gps_unlocked";
+    case EventType::POLYGON_APPLY_RESULT:
+      return "polygon_apply_result";
   }
   return "event";
+}
+
+static const char* polygonKindLabel(PolygonKind kind) {
+  switch (kind) {
+    case PolygonKind::PROPERTY:
+      return "property";
+    case PolygonKind::AREA:
+      return "area";
+    case PolygonKind::HERDING:
+      return "herding";
+    case PolygonKind::NONE:
+      break;
+  }
+  return "";
+}
+
+static const char* originDocTypeLabel(OriginDocType type) {
+  switch (type) {
+    case OriginDocType::RURAL_PROPERTY:
+      return "ruralProperty";
+    case OriginDocType::AREA:
+      return "area";
+    case OriginDocType::HERDING_OPERATION:
+      return "herdingOperation";
+    case OriginDocType::NONE:
+      break;
+  }
+  return "";
+}
+
+static const char* polygonApplyStatusLabel(PolygonApplyStatus status) {
+  switch (status) {
+    case PolygonApplyStatus::SUCCESS:
+      return "success";
+    case PolygonApplyStatus::FAILURE:
+      return "failure";
+    case PolygonApplyStatus::NONE:
+      break;
+  }
+  return "";
+}
+
+static const char* polygonErrorStageLabel(PolygonErrorStage stage) {
+  switch (stage) {
+    case PolygonErrorStage::PARSE:
+      return "parse";
+    case PolygonErrorStage::ASSEMBLE:
+      return "assemble";
+    case PolygonErrorStage::PERSIST:
+      return "persist";
+    case PolygonErrorStage::ACTIVATE:
+      return "activate";
+    case PolygonErrorStage::SCOPE:
+      return "scope";
+    case PolygonErrorStage::BINDING:
+      return "binding";
+    case PolygonErrorStage::NONE:
+      break;
+  }
+  return "";
+}
+
+static PolygonKind polygonKindFromText(const char* raw) {
+  if (!raw || raw[0] == '\0') return PolygonKind::NONE;
+  if (strcasecmp(raw, "property") == 0) return PolygonKind::PROPERTY;
+  if (strcasecmp(raw, "area") == 0) return PolygonKind::AREA;
+  if (strcasecmp(raw, "herding") == 0) return PolygonKind::HERDING;
+  return PolygonKind::NONE;
+}
+
+static OriginDocType originDocTypeFromText(const char* raw) {
+  if (!raw || raw[0] == '\0') return OriginDocType::NONE;
+  if (strcasecmp(raw, "ruralProperty") == 0) {
+    return OriginDocType::RURAL_PROPERTY;
+  }
+  if (strcasecmp(raw, "area") == 0) return OriginDocType::AREA;
+  if (strcasecmp(raw, "herdingOperation") == 0) {
+    return OriginDocType::HERDING_OPERATION;
+  }
+  return OriginDocType::NONE;
+}
+
+static PolygonErrorStage polygonErrorStageFromReason(const char* reason) {
+  if (!reason || reason[0] == '\0') return PolygonErrorStage::NONE;
+  if (strcmp(reason, "property_binding_missing") == 0 ||
+      strcmp(reason, "binding_prefs_unavailable") == 0) {
+    return PolygonErrorStage::BINDING;
+  }
+  if (strcmp(reason, "property_scope_mismatch") == 0) {
+    return PolygonErrorStage::SCOPE;
+  }
+  if (strstr(reason, "chunk") != nullptr ||
+      strstr(reason, "phase_out_of_order") != nullptr ||
+      strstr(reason, "phase_total_mismatch") != nullptr ||
+      strstr(reason, "operation_id_mismatch") != nullptr ||
+      strstr(reason, "missing_chunk_start") != nullptr ||
+      strstr(reason, "missing_phase_start") != nullptr ||
+      strstr(reason, "too_many_points") != nullptr) {
+    return PolygonErrorStage::ASSEMBLE;
+  }
+  if (strstr(reason, "persist") != nullptr ||
+      strstr(reason, "prefs") != nullptr) {
+    return PolygonErrorStage::PERSIST;
+  }
+  if (strstr(reason, "invalid_") != nullptr ||
+      strstr(reason, "missing_") != nullptr) {
+    return PolygonErrorStage::PARSE;
+  }
+  return PolygonErrorStage::ACTIVATE;
 }
 
 static const char* activeHerdOperationId() {
@@ -652,14 +793,16 @@ static void persistWifiOtaEnabled(bool enabled) {
   prefs_.putBool(cfg::PREF_KEY_WIFI_OTA, enabled);
 }
 
-static void persistFence(const Polygon& fence) {
-  if (!beginPrefs()) return;
-  prefs_.putBytes(cfg::PREF_KEY_FENCE, &fence, sizeof(fence));
+static bool persistFence(const Polygon& fence) {
+  if (!beginPrefs()) return false;
+  return prefs_.putBytes(cfg::PREF_KEY_FENCE, &fence, sizeof(fence)) ==
+      sizeof(fence);
 }
 
-static void persistHerdingPlan(const HerdingPlan& plan) {
-  if (!beginPrefs()) return;
-  prefs_.putBytes(cfg::PREF_KEY_HERD, &plan, sizeof(plan));
+static bool persistHerdingPlan(const HerdingPlan& plan) {
+  if (!beginPrefs()) return false;
+  return prefs_.putBytes(cfg::PREF_KEY_HERD, &plan, sizeof(plan)) ==
+      sizeof(plan);
 }
 
 static void persistHealthReportDayKey(uint32_t dayKey) {
@@ -818,6 +961,11 @@ static bool applyFenceChunkJson(const JsonObject& doc, const char** err) {
     fenceChunkRx_.active = true;
     fenceChunkRx_.totalParts = (uint8_t)total;
     fenceChunkRx_.expectedPart = 0;
+    fillPolygonAuditContext(
+        &fenceChunkRx_.audit,
+        MsgType::SET_FENCE,
+        parseScopeIdHex(pickFirstText(doc["scope_id"], doc["property_scope_id"])),
+        doc.as<JsonVariantConst>());
   }
 
   if (!fenceChunkRx_.active) {
@@ -849,8 +997,23 @@ static bool applyFenceChunkJson(const JsonObject& doc, const char** err) {
       return false;
     }
     geofence.setFence(fenceChunkRx_.fence);
-    persistFence(fenceChunkRx_.fence);
-    LOGI("SET_FENCE chunked aplicado com %u pontos", fenceChunkRx_.fence.count);
+    if (!persistFence(fenceChunkRx_.fence)) {
+      resetFenceChunkRx();
+      if (err) *err = "persist_fence_failed";
+      return false;
+    }
+    logPolygonApplyResult(
+        MsgType::SET_FENCE,
+        fenceChunkRx_.audit.scopeId,
+        fenceChunkRx_.audit.polygonKind,
+        fenceChunkRx_.audit.originDocType,
+        fenceChunkRx_.audit.originDocId,
+        fenceChunkRx_.audit.commandId,
+        true,
+        nullptr,
+        PolygonErrorStage::NONE,
+        fenceChunkRx_.fence.count,
+        0);
     resetFenceChunkRx();
   }
   return true;
@@ -891,6 +1054,11 @@ static bool applyHerdChunkJson(const JsonObject& doc, const char** err) {
         herdChunkRx_.plan.operationId,
         sizeof(herdChunkRx_.plan.operationId),
         operationId);
+    fillPolygonAuditContext(
+        &herdChunkRx_.audit,
+        MsgType::SET_HERDING_PLAN,
+        parseScopeIdHex(pickFirstText(doc["scope_id"], doc["property_scope_id"])),
+        doc.as<JsonVariantConst>());
     herdChunkRx_.phaseAccum.count = 0;
   }
 
@@ -945,10 +1113,29 @@ static bool applyHerdChunkJson(const JsonObject& doc, const char** err) {
 
     if ((uint8_t)phaseIdx + 1 == (uint8_t)phaseTotal) {
       herding.setPlan(herdChunkRx_.plan);
-      persistHerdingPlan(herdChunkRx_.plan);
+      if (!persistHerdingPlan(herdChunkRx_.plan)) {
+        resetHerdChunkRx();
+        if (err) *err = "persist_herd_plan_failed";
+        return false;
+      }
       stateMachine.setMode(CollarMode::CONDUCAO);
       logEvent(EventType::HERD_START, herdChunkRx_.plan.phaseCount, 0);
-      LOGI("SET_HERDING_PLAN chunked aplicado: fases=%u", herdChunkRx_.plan.phaseCount);
+      logPolygonApplyResult(
+          MsgType::SET_HERDING_PLAN,
+          herdChunkRx_.audit.scopeId,
+          herdChunkRx_.audit.polygonKind,
+          herdChunkRx_.audit.originDocType,
+          herdChunkRx_.audit.originDocId[0] != '\0'
+              ? herdChunkRx_.audit.originDocId
+              : herdChunkRx_.plan.operationId,
+          herdChunkRx_.audit.commandId,
+          true,
+          nullptr,
+          PolygonErrorStage::NONE,
+          herdChunkRx_.plan.phaseCount > 0
+              ? herdChunkRx_.plan.phases[herdChunkRx_.plan.phaseCount - 1].count
+              : 0,
+          herdChunkRx_.plan.phaseCount);
       resetHerdChunkRx();
     } else {
       herdChunkRx_.currentPhase++;
@@ -1426,15 +1613,14 @@ static void logEvent(EventType type, int32_t d1 = 0, int32_t d2 = 0) {
   ev.type = type;
   ev.d1 = d1;
   ev.d2 = d2;
+  ev.scopeId = bindingScopeIdValue();
   if (type == EventType::HERD_START ||
       type == EventType::HERD_PHASE_CHANGE ||
       type == EventType::HERD_DONE) {
     copyStringToBuffer(
-        ev.operationId,
-        sizeof(ev.operationId),
+        ev.payload.operationId,
+        sizeof(ev.payload.operationId),
         activeHerdOperationId());
-  } else {
-    ev.operationId[0] = '\0';
   }
   storage.pushEvent(ev);
 }
@@ -1583,6 +1769,118 @@ static void extractCommandMetadataFromPayload(
       payload["cmd_id"] | payload["command_id"] | "");
 }
 
+static void fillPolygonAuditContext(
+    PolygonAuditContext* out,
+    MsgType commandType,
+    uint64_t scopeId,
+    const JsonVariantConst payload) {
+  if (!out) return;
+  *out = PolygonAuditContext{};
+  out->scopeId = scopeId;
+  out->commandType = commandType;
+  copyStringToBuffer(
+      out->commandId,
+      sizeof(out->commandId),
+      pickFirstText(payload["cmd_id"], payload["command_id"]));
+  out->polygonKind = polygonKindFromText(
+      pickFirstText(payload["polygon_kind"], payload["polygonKind"]));
+  out->originDocType = originDocTypeFromText(
+      pickFirstText(payload["origin_doc_type"], payload["originDocType"]));
+  copyStringToBuffer(
+      out->originDocId,
+      sizeof(out->originDocId),
+      pickFirstText(
+          payload["origin_doc_id"],
+          payload["originDocId"],
+          payload["operation_id"]));
+  if (out->polygonKind == PolygonKind::NONE &&
+      commandType == MsgType::SET_HERDING_PLAN) {
+    out->polygonKind = PolygonKind::HERDING;
+  }
+  if (out->originDocType == OriginDocType::NONE &&
+      commandType == MsgType::SET_HERDING_PLAN) {
+    out->originDocType = OriginDocType::HERDING_OPERATION;
+  }
+}
+
+static void logPolygonApplySerial(
+    const PolygonAuditContext& ctx,
+    bool ok,
+    const char* errorCode,
+    PolygonErrorStage stage,
+    int32_t pointCount,
+    int32_t phaseCount) {
+  if (ok) {
+    LOGI(
+        "POLYGON_APPLY success cmd=%s command=%s kind=%s origin=%s/%s points=%ld phases=%ld",
+        ctx.commandId,
+        commandLabel(ctx.commandType),
+        polygonKindLabel(ctx.polygonKind),
+        originDocTypeLabel(ctx.originDocType),
+        ctx.originDocId,
+        (long)pointCount,
+        (long)phaseCount);
+    return;
+  }
+
+  LOGW(
+      "POLYGON_APPLY failure cmd=%s command=%s kind=%s origin=%s/%s stage=%s error=%s",
+      ctx.commandId,
+      commandLabel(ctx.commandType),
+      polygonKindLabel(ctx.polygonKind),
+      originDocTypeLabel(ctx.originDocType),
+      ctx.originDocId,
+      polygonErrorStageLabel(stage),
+      errorCode ? errorCode : "");
+}
+
+static void logPolygonApplyResult(
+    MsgType commandType,
+    uint64_t scopeId,
+    PolygonKind polygonKind,
+    OriginDocType originDocType,
+    const char* originDocId,
+    const char* commandId,
+    bool ok,
+    const char* errorCode,
+    PolygonErrorStage errorStage,
+    int32_t pointCount,
+    int32_t phaseCount) {
+  EventRecord ev;
+  ev.ts = millis() / 1000;
+  ev.type = EventType::POLYGON_APPLY_RESULT;
+  ev.d1 = pointCount;
+  ev.d2 = phaseCount;
+  ev.scopeId = scopeId;
+  ev.auditStatus =
+      ok ? PolygonApplyStatus::SUCCESS : PolygonApplyStatus::FAILURE;
+  ev.polygonKind = polygonKind;
+  ev.originDocType = originDocType;
+  ev.errorStage = ok ? PolygonErrorStage::NONE : errorStage;
+  copyStringToBuffer(
+      ev.payload.audit.commandId,
+      sizeof(ev.payload.audit.commandId),
+      commandId);
+  copyStringToBuffer(
+      ev.payload.audit.originDocId,
+      sizeof(ev.payload.audit.originDocId),
+      originDocId);
+  copyStringToBuffer(
+      ev.payload.audit.errorCode,
+      sizeof(ev.payload.audit.errorCode),
+      ok ? "" : errorCode);
+  storage.pushEvent(ev);
+
+  PolygonAuditContext ctx;
+  ctx.scopeId = scopeId;
+  ctx.commandType = commandType;
+  ctx.polygonKind = polygonKind;
+  ctx.originDocType = originDocType;
+  copyStringToBuffer(ctx.originDocId, sizeof(ctx.originDocId), originDocId);
+  copyStringToBuffer(ctx.commandId, sizeof(ctx.commandId), commandId);
+  logPolygonApplySerial(ctx, ok, errorCode, errorStage, pointCount, phaseCount);
+}
+
 static void sendCommandFeedback(
     const LoRaFrame& cmd,
     bool ok,
@@ -1632,15 +1930,67 @@ static void applyDownlink(const LoRaFrame& frame) {
   const bool targetMatch = (frame.deviceId == cfg::DEVICE_ID) || (frame.deviceId == 0);
   if (!targetMatch) return;
 
-  char commandId[64]{};
+  char commandId[cfg::EVENT_COMMAND_ID_MAX_LEN]{};
   extractCommandMetadataFromPayload(frame, commandId, sizeof(commandId));
+  const bool polygonAuditCommand =
+      frame.msgType == MsgType::SET_FENCE ||
+      frame.msgType == MsgType::SET_HERDING_PLAN;
+
+  StaticJsonDocument<512> doc;
+  const bool docReady =
+      deserializeJson(doc, frame.payload, frame.payloadLen) ==
+      DeserializationError::Ok;
+  if (docReady) {
+    const char* parsedCommandId = pickFirstText(doc["cmd_id"], doc["command_id"]);
+    if (parsedCommandId[0] != '\0') {
+      copyStringToBuffer(commandId, sizeof(commandId), parsedCommandId);
+    }
+  }
+
+  PolygonAuditContext auditCtx;
+  if (polygonAuditCommand) {
+    auditCtx.scopeId = frame.scopeId;
+    auditCtx.commandType = frame.msgType;
+    copyStringToBuffer(auditCtx.commandId, sizeof(auditCtx.commandId), commandId);
+    if (docReady) {
+      fillPolygonAuditContext(
+          &auditCtx, frame.msgType, frame.scopeId, doc.as<JsonVariantConst>());
+    } else if (frame.msgType == MsgType::SET_HERDING_PLAN) {
+      auditCtx.polygonKind = PolygonKind::HERDING;
+      auditCtx.originDocType = OriginDocType::HERDING_OPERATION;
+    }
+  }
 
   if (!bindingReady_) {
+    if (polygonAuditCommand && frame.scopeId != 0) {
+      logPolygonApplyResult(
+          frame.msgType,
+          frame.scopeId,
+          auditCtx.polygonKind,
+          auditCtx.originDocType,
+          auditCtx.originDocId,
+          auditCtx.commandId,
+          false,
+          "property_binding_missing",
+          PolygonErrorStage::BINDING);
+    }
     sendCommandFeedback(
         frame, false, "property_binding_missing", nullptr, nullptr, commandId);
     return;
   }
   if (frame.scopeId == 0 || frame.scopeId != bindingScopeIdValue()) {
+    if (polygonAuditCommand && frame.scopeId != 0) {
+      logPolygonApplyResult(
+          frame.msgType,
+          frame.scopeId,
+          auditCtx.polygonKind,
+          auditCtx.originDocType,
+          auditCtx.originDocId,
+          auditCtx.commandId,
+          false,
+          "property_scope_mismatch",
+          PolygonErrorStage::SCOPE);
+    }
     sendCommandFeedback(
         frame, false, "property_scope_mismatch", nullptr, nullptr, commandId);
     return;
@@ -1657,14 +2007,21 @@ static void applyDownlink(const LoRaFrame& frame) {
     return;
   }
 
-  StaticJsonDocument<512> doc;
-  if (deserializeJson(doc, frame.payload, frame.payloadLen) != DeserializationError::Ok) {
+  if (!docReady) {
+    if (polygonAuditCommand) {
+      logPolygonApplyResult(
+          frame.msgType,
+          frame.scopeId,
+          auditCtx.polygonKind,
+          auditCtx.originDocType,
+          auditCtx.originDocId,
+          auditCtx.commandId,
+          false,
+          "invalid_json",
+          PolygonErrorStage::PARSE);
+    }
     sendCommandFeedback(frame, false, "invalid_json", nullptr, nullptr, commandId);
     return;
-  }
-  const char* parsedCommandId = pickFirstText(doc["cmd_id"], doc["command_id"]);
-  if (parsedCommandId[0] != '\0') {
-    copyStringToBuffer(commandId, sizeof(commandId), parsedCommandId);
   }
 
   if (frame.msgType == MsgType::SET_FENCE) {
@@ -1672,6 +2029,18 @@ static void applyDownlink(const LoRaFrame& frame) {
     const bool chunked = doc["chunked"].is<bool>() && doc["chunked"].as<bool>();
     if (chunked) {
       if (!applyFenceChunkJson(doc.as<JsonObject>(), &err)) {
+        const PolygonAuditContext& failureAudit =
+            fenceChunkRx_.audit.commandId[0] != '\0' ? fenceChunkRx_.audit : auditCtx;
+        logPolygonApplyResult(
+            MsgType::SET_FENCE,
+            failureAudit.scopeId != 0 ? failureAudit.scopeId : frame.scopeId,
+            failureAudit.polygonKind,
+            failureAudit.originDocType,
+            failureAudit.originDocId,
+            failureAudit.commandId[0] != '\0' ? failureAudit.commandId : commandId,
+            false,
+            err ? err : "invalid_fence_chunk",
+            polygonErrorStageFromReason(err ? err : "invalid_fence_chunk"));
         sendCommandFeedback(frame, false, err ? err : "invalid_fence_chunk", nullptr, nullptr, commandId);
         return;
       }
@@ -1680,12 +2049,52 @@ static void applyDownlink(const LoRaFrame& frame) {
       resetFenceChunkRx();
       Polygon p;
       if (!parsePolygonJson(doc["points"].as<JsonArray>(), &p, &err)) {
+        logPolygonApplyResult(
+            MsgType::SET_FENCE,
+            auditCtx.scopeId != 0 ? auditCtx.scopeId : frame.scopeId,
+            auditCtx.polygonKind,
+            auditCtx.originDocType,
+            auditCtx.originDocId,
+            auditCtx.commandId,
+            false,
+            err ? err : "invalid_fence",
+            polygonErrorStageFromReason(err ? err : "invalid_fence"));
         sendCommandFeedback(frame, false, err ? err : "invalid_fence", nullptr, nullptr, commandId);
         return;
       }
       geofence.setFence(p);
-      persistFence(p);
-      LOGI("SET_FENCE aplicado com %u pontos", p.count);
+      if (!persistFence(p)) {
+        logPolygonApplyResult(
+            MsgType::SET_FENCE,
+            auditCtx.scopeId != 0 ? auditCtx.scopeId : frame.scopeId,
+            auditCtx.polygonKind,
+            auditCtx.originDocType,
+            auditCtx.originDocId,
+            auditCtx.commandId,
+            false,
+            "persist_fence_failed",
+            PolygonErrorStage::PERSIST);
+        sendCommandFeedback(
+            frame,
+            false,
+            "persist_fence_failed",
+            nullptr,
+            nullptr,
+            commandId);
+        return;
+      }
+      logPolygonApplyResult(
+          MsgType::SET_FENCE,
+          auditCtx.scopeId != 0 ? auditCtx.scopeId : frame.scopeId,
+          auditCtx.polygonKind,
+          auditCtx.originDocType,
+          auditCtx.originDocId,
+          auditCtx.commandId,
+          true,
+          nullptr,
+          PolygonErrorStage::NONE,
+          p.count,
+          0);
       sendCommandFeedback(frame, true, nullptr, nullptr, nullptr, commandId);
     }
   } else if (frame.msgType == MsgType::SET_HERDING_PLAN) {
@@ -1693,6 +2102,20 @@ static void applyDownlink(const LoRaFrame& frame) {
     const bool chunked = doc["chunked"].is<bool>() && doc["chunked"].as<bool>();
     if (chunked) {
       if (!applyHerdChunkJson(doc.as<JsonObject>(), &err)) {
+        const PolygonAuditContext& failureAudit =
+            herdChunkRx_.audit.commandId[0] != '\0' ? herdChunkRx_.audit : auditCtx;
+        logPolygonApplyResult(
+            MsgType::SET_HERDING_PLAN,
+            failureAudit.scopeId != 0 ? failureAudit.scopeId : frame.scopeId,
+            failureAudit.polygonKind,
+            failureAudit.originDocType,
+            failureAudit.originDocId[0] != '\0'
+                ? failureAudit.originDocId
+                : herding.plan().operationId,
+            failureAudit.commandId[0] != '\0' ? failureAudit.commandId : commandId,
+            false,
+            err ? err : "invalid_herd_chunk",
+            polygonErrorStageFromReason(err ? err : "invalid_herd_chunk"));
         sendCommandFeedback(frame, false, err ? err : "invalid_herd_chunk", nullptr, nullptr, commandId);
         return;
       }
@@ -1711,6 +2134,16 @@ static void applyDownlink(const LoRaFrame& frame) {
       resetHerdChunkRx();
       HerdingPlan plan;
       if (!parseHerdingPlanJson(doc["phases"].as<JsonArray>(), &plan, &err)) {
+        logPolygonApplyResult(
+            MsgType::SET_HERDING_PLAN,
+            auditCtx.scopeId != 0 ? auditCtx.scopeId : frame.scopeId,
+            auditCtx.polygonKind,
+            auditCtx.originDocType,
+            auditCtx.originDocId,
+            auditCtx.commandId,
+            false,
+            err ? err : "invalid_herd_plan",
+            polygonErrorStageFromReason(err ? err : "invalid_herd_plan"));
         sendCommandFeedback(frame, false, err ? err : "invalid_herd_plan", nullptr, nullptr, commandId);
         return;
       }
@@ -1719,10 +2152,40 @@ static void applyDownlink(const LoRaFrame& frame) {
           sizeof(plan.operationId),
           doc["operation_id"] | "");
       herding.setPlan(plan);
-      persistHerdingPlan(plan);
+      if (!persistHerdingPlan(plan)) {
+        logPolygonApplyResult(
+            MsgType::SET_HERDING_PLAN,
+            auditCtx.scopeId != 0 ? auditCtx.scopeId : frame.scopeId,
+            auditCtx.polygonKind,
+            auditCtx.originDocType,
+            auditCtx.originDocId[0] != '\0' ? auditCtx.originDocId : plan.operationId,
+            auditCtx.commandId,
+            false,
+            "persist_herd_plan_failed",
+            PolygonErrorStage::PERSIST);
+        sendCommandFeedback(
+            frame,
+            false,
+            "persist_herd_plan_failed",
+            nullptr,
+            nullptr,
+            commandId);
+        return;
+      }
       stateMachine.setMode(CollarMode::CONDUCAO);
       logEvent(EventType::HERD_START, plan.phaseCount, 0);
-      LOGI("SET_HERDING_PLAN aplicado: fases=%u", plan.phaseCount);
+      logPolygonApplyResult(
+          MsgType::SET_HERDING_PLAN,
+          auditCtx.scopeId != 0 ? auditCtx.scopeId : frame.scopeId,
+          auditCtx.polygonKind,
+          auditCtx.originDocType,
+          auditCtx.originDocId[0] != '\0' ? auditCtx.originDocId : plan.operationId,
+          auditCtx.commandId,
+          true,
+          nullptr,
+          PolygonErrorStage::NONE,
+          plan.phaseCount > 0 ? plan.phases[plan.phaseCount - 1].count : 0,
+          plan.phaseCount);
       sendCommandFeedback(
           frame,
           true,
@@ -2122,21 +2585,52 @@ void loop() {
   while (!handledDownlink && bindingReady_ && storage.popEvent(pending)) {
     LoRaFrame ev;
     ev.deviceId = cfg::DEVICE_ID;
-    ev.scopeId = bindingScopeIdValue();
+    ev.scopeId = pending.scopeId != 0 ? pending.scopeId : bindingScopeIdValue();
     ev.msgType = MsgType::EVENT;
     ev.seq = nextLoRaSeq();
     ev.timestamp = pending.ts;
     randomNonce(ev.nonce);
-    StaticJsonDocument<192> d;
+    StaticJsonDocument<384> d;
     d["type"] = eventTypeLabel(pending.type);
     d["event_type"] = eventTypeLabel(pending.type);
     d["event_code"] = (int)pending.type;
     d["d1"] = pending.d1;
     d["d2"] = pending.d2;
-    d["scope_id"] = bindingPropertyScopeId_;
-    if (pending.operationId[0] != '\0') d["operation_id"] = pending.operationId;
+    d["scope_id"] = scopeIdToHex(ev.scopeId);
+    if (pending.type != EventType::POLYGON_APPLY_RESULT &&
+        pending.payload.operationId[0] != '\0') {
+      d["operation_id"] = pending.payload.operationId;
+    }
     if (pending.type == EventType::HERD_PHASE_CHANGE) {
       d["phase_index"] = pending.d1;
+    } else if (pending.type == EventType::POLYGON_APPLY_RESULT) {
+      d["status"] = polygonApplyStatusLabel(pending.auditStatus);
+      d["command"] = commandLabel(
+          pending.polygonKind == PolygonKind::HERDING
+              ? MsgType::SET_HERDING_PLAN
+              : MsgType::SET_FENCE);
+      d["polygon_kind"] = polygonKindLabel(pending.polygonKind);
+      d["origin_doc_type"] = originDocTypeLabel(pending.originDocType);
+      if (pending.payload.audit.originDocId[0] != '\0') {
+        d["origin_doc_id"] = pending.payload.audit.originDocId;
+      }
+      if (pending.payload.audit.commandId[0] != '\0') {
+        d["cmd_id"] = pending.payload.audit.commandId;
+      }
+      if (pending.d1 > 0) d["point_count"] = pending.d1;
+      if (pending.d2 > 0) d["phase_count"] = pending.d2;
+      if (pending.auditStatus == PolygonApplyStatus::FAILURE &&
+          pending.payload.audit.errorCode[0] != '\0') {
+        d["error_code"] = pending.payload.audit.errorCode;
+      }
+      const char* errorStage = polygonErrorStageLabel(pending.errorStage);
+      if (errorStage[0] != '\0') {
+        d["error_stage"] = errorStage;
+      }
+      if (pending.originDocType == OriginDocType::HERDING_OPERATION &&
+          pending.payload.audit.originDocId[0] != '\0') {
+        d["operation_id"] = pending.payload.audit.originDocId;
+      }
     }
     ev.payloadLen = serializeJson(d, ev.payload, sizeof(ev.payload));
     if (!lora.sendFrame(ev)) break;

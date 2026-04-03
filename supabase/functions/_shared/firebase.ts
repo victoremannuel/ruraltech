@@ -44,6 +44,10 @@ type AccessTokenCache = {
 
 let accessTokenCache: AccessTokenCache | null = null;
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export function corsHeaders() {
   return {
     "access-control-allow-origin": "*",
@@ -215,16 +219,63 @@ async function authorizedFetch(
   url: string,
   init: RequestInit = {},
 ): Promise<Response> {
-  const accessToken = await getGoogleAccessToken();
-  const headers = new Headers(init.headers ?? {});
-  headers.set("authorization", `Bearer ${accessToken}`);
-  if (init.body != null && !headers.has("content-type")) {
-    headers.set("content-type", "application/json");
+  const maxAttempts = 4;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const accessToken = await getGoogleAccessToken();
+    const headers = new Headers(init.headers ?? {});
+    headers.set("authorization", `Bearer ${accessToken}`);
+    if (init.body != null && !headers.has("content-type")) {
+      headers.set("content-type", "application/json");
+    }
+    const response = await fetch(url, {
+      ...init,
+      headers,
+    });
+    if (response.ok) {
+      return response;
+    }
+
+    if (response.status === 401 && attempt < maxAttempts - 1) {
+      accessTokenCache = null;
+      await sleep(200 * (attempt + 1));
+      continue;
+    }
+
+    const retryAfterHeader = Number(response.headers.get("retry-after") ?? "");
+    const retryableStatus = response.status === 429 || response.status >= 500;
+    if (retryableStatus && attempt < maxAttempts - 1) {
+      const retryAfterMs = Number.isFinite(retryAfterHeader) &&
+          retryAfterHeader > 0
+        ? retryAfterHeader * 1000
+        : 400 * (2 ** attempt) + Math.floor(Math.random() * 250);
+      await sleep(Math.min(retryAfterMs, 8_000));
+      continue;
+    }
+
+    return response;
   }
-  return fetch(url, {
-    ...init,
-    headers,
-  });
+
+  throw new Error("authorized_fetch_unreachable");
+}
+
+async function describeRemoteError(response: Response): Promise<string> {
+  try {
+    const json = await response.json() as {
+      error?: {
+        status?: string;
+        message?: string;
+      };
+    };
+    const status = normalizeText(json.error?.status);
+    const message = normalizeText(json.error?.message).replace(/\s+/g, " ");
+    return [status, message].filter(Boolean).join(":");
+  } catch (_) {
+    try {
+      return normalizeText(await response.text()).replace(/\s+/g, " ");
+    } catch (_) {
+      return "";
+    }
+  }
 }
 
 function fromFirestoreValue(value: FirestoreValue | null | undefined): unknown {
@@ -292,7 +343,12 @@ export async function getFirestoreDocument(
   );
   if (response.status === 404) return null;
   if (!response.ok) {
-    throw new Error(`firestore_get_failed:${normalizedPath}:${response.status}`);
+    const detail = await describeRemoteError(response);
+    throw new Error(
+      `firestore_get_failed:${normalizedPath}:${response.status}${
+        detail ? `:${detail}` : ""
+      }`,
+    );
   }
   return documentToObject(await response.json() as FirestoreDocument);
 }
@@ -321,7 +377,12 @@ export async function patchFirestoreDocument(
     body: JSON.stringify({ fields }),
   });
   if (!response.ok) {
-    throw new Error(`firestore_patch_failed:${normalizedPath}:${response.status}`);
+    const detail = await describeRemoteError(response);
+    throw new Error(
+      `firestore_patch_failed:${normalizedPath}:${response.status}${
+        detail ? `:${detail}` : ""
+      }`,
+    );
   }
 }
 
@@ -339,8 +400,11 @@ export async function listFirestoreCollectionDocuments(
     if (pageToken) url.searchParams.set("pageToken", pageToken);
     const response = await authorizedFetch(url.toString(), { method: "GET" });
     if (!response.ok) {
+      const detail = await describeRemoteError(response);
       throw new Error(
-        `firestore_list_failed:${normalizedCollection}:${response.status}`,
+        `firestore_list_failed:${normalizedCollection}:${response.status}${
+          detail ? `:${detail}` : ""
+        }`,
       );
     }
     const json = await response.json() as {

@@ -119,13 +119,16 @@ constexpr bool SMART_GPS_TEST_MODE = false;
 // Persistência
 constexpr uint16_t EEPROM_SIZE = 2048;
 constexpr uint16_t EEPROM_EVENT_START = 64;
-constexpr uint8_t EEPROM_EVENT_SLOTS = 20;
+constexpr uint8_t EEPROM_EVENT_SLOTS = 11;
 constexpr uint16_t EEPROM_LAST_GOOD_FIX_ADDR = 1792;
 
 // Geofence e condução
 constexpr uint8_t MAX_POLYGON_POINTS = 32;
 constexpr uint8_t MAX_HERD_PHASES = 8;
 constexpr uint8_t OPERATION_ID_MAX_LEN = 40;
+constexpr uint8_t EVENT_COMMAND_ID_MAX_LEN = 68;
+constexpr uint8_t EVENT_ORIGIN_DOC_ID_MAX_LEN = 24;
+constexpr uint8_t EVENT_ERROR_CODE_MAX_LEN = 32;
 constexpr float FENCE_WARNING_METERS = 20.0f;
 
 // Criptografia (MVP: chave estática por device; em produção provisionar seguro)
