@@ -24,6 +24,7 @@ class DeviceModel {
   final String? gatewayId;
   final bool wifiOtaEnabled;
   final int? telemetryReceivedAtMs;
+  final int? positionReceivedAtMs;
   final int? healthReceivedAtMs;
   final int? healthGpsDayKey;
   final int? healthFlags;
@@ -45,6 +46,7 @@ class DeviceModel {
     this.gatewayId,
     this.wifiOtaEnabled = true,
     this.telemetryReceivedAtMs,
+    this.positionReceivedAtMs,
     this.healthReceivedAtMs,
     this.healthGpsDayKey,
     this.healthFlags,
@@ -57,9 +59,8 @@ class DeviceModel {
 
   String? get loraDeviceId {
     final preferred = deviceId?.trim();
-    final candidate = (preferred == null || preferred.isEmpty)
-        ? id.trim()
-        : preferred;
+    final candidate =
+        (preferred == null || preferred.isEmpty) ? id.trim() : preferred;
     if (candidate.isEmpty) return null;
     final parsed = int.tryParse(candidate);
     if (parsed == null || parsed <= 0) return null;
@@ -89,8 +90,7 @@ class DeviceModel {
   bool get healthStorageReady => _hasHealthFlag(healthFlagStorageReady);
   bool get healthLoRaReady => _hasHealthFlag(healthFlagLoRaReady);
   bool get healthLastLoRaTxOk => _hasHealthFlag(healthFlagLastLoRaTxOk);
-  bool get healthFallbackSchedule =>
-      _hasHealthFlag(healthFlagFallbackSchedule);
+  bool get healthFallbackSchedule => _hasHealthFlag(healthFlagFallbackSchedule);
 
   DateTime? get healthReceivedAt {
     final ms = healthReceivedAtMs;
@@ -100,6 +100,12 @@ class DeviceModel {
 
   DateTime? get telemetryReceivedAt {
     final ms = telemetryReceivedAtMs;
+    if (ms == null || ms <= 0) return null;
+    return DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  DateTime? get positionReceivedAt {
+    final ms = positionReceivedAtMs ?? telemetryReceivedAtMs;
     if (ms == null || ms <= 0) return null;
     return DateTime.fromMillisecondsSinceEpoch(ms);
   }
@@ -214,6 +220,13 @@ class DeviceModel {
           if (raw is String) return int.tryParse(raw.trim());
           return null;
         })(),
+        positionReceivedAtMs: (() {
+          final raw = m['positionReceivedAtMs'];
+          if (raw is int) return raw;
+          if (raw is num) return raw.toInt();
+          if (raw is String) return int.tryParse(raw.trim());
+          return null;
+        })(),
         healthReceivedAtMs: (() {
           final raw = m['healthReceivedAtMs'];
           if (raw is int) return raw;
@@ -283,5 +296,6 @@ class DeviceModel {
         'gatewayId': gatewayId,
         'wifi_ota_enabled': wifiOtaEnabled,
         'telemetryReceivedAtMs': telemetryReceivedAtMs,
+        'positionReceivedAtMs': positionReceivedAtMs,
       };
 }

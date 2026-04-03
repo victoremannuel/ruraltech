@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import '../config/manual_settings.dart';
 import '../models/device_model.dart';
 import '../models/herding_operation_model.dart';
+import '../utils/device_map_telemetry.dart';
 
 class FirebaseService {
   static const String _defaultRtdbUrl = ManualSettings.firebaseRtdbUrl;
@@ -820,51 +821,6 @@ class FirebaseService {
     return out;
   }
 
-  List<DeviceModel> _mergeDevicesWithLiveTelemetry(
-    List<DeviceModel> devices,
-    Map<String, Map<String, dynamic>> liveBySanitizedDeviceId,
-    Map<String, Map<String, dynamic>> healthBySanitizedDeviceId,
-  ) {
-    return devices.map((device) {
-      final key = _sanitizeRtdbKey(device.networkId);
-      if (key.isEmpty) return device;
-      final live = liveBySanitizedDeviceId[key];
-      final health = healthBySanitizedDeviceId[key];
-      if (live == null && health == null) return device;
-      final lat = live?['lat'] ?? device.lat;
-      final lon = live?['lon'] ?? device.lon;
-      return DeviceModel(
-        id: device.id,
-        deviceId: device.deviceId,
-        name: device.name,
-        status: device.status,
-        lat: lat,
-        lon: lon,
-        ownerUid: device.ownerUid,
-        propertyId: device.propertyId,
-        gatewayId: device.gatewayId,
-        wifiOtaEnabled: device.wifiOtaEnabled,
-        telemetryReceivedAtMs: live?['telemetryReceivedAtMs'] as int? ??
-            device.telemetryReceivedAtMs,
-        healthReceivedAtMs:
-            health?['healthReceivedAtMs'] as int? ?? device.healthReceivedAtMs,
-        healthGpsDayKey:
-            health?['healthGpsDayKey'] as int? ?? device.healthGpsDayKey,
-        healthFlags: health?['healthFlags'] as int? ?? device.healthFlags,
-        healthUptimeSec:
-            health?['healthUptimeSec'] as int? ?? device.healthUptimeSec,
-        healthTemperatureDeciC: health?['healthTemperatureDeciC'] as int? ??
-            device.healthTemperatureDeciC,
-        healthSatellites:
-            health?['healthSatellites'] as int? ?? device.healthSatellites,
-        healthHdopCenti:
-            health?['healthHdopCenti'] as int? ?? device.healthHdopCenti,
-        healthI2cDevices:
-            health?['healthI2cDevices'] as int? ?? device.healthI2cDevices,
-      );
-    }).toList();
-  }
-
   int _eventSortKeyMs(Map<String, dynamic> event) {
     final createdAt = event['createdAt'];
     if (createdAt is Timestamp) return createdAt.millisecondsSinceEpoch;
@@ -1162,6 +1118,24 @@ class FirebaseService {
     return value;
   }
 
+  Map<String, dynamic>? _decodeJsonMap(dynamic raw) {
+    if (raw is Map<String, dynamic>) return raw;
+    if (raw is Map) {
+      final normalized = _normalizeJsonLike(raw);
+      return normalized is Map<String, dynamic> ? normalized : null;
+    }
+    if (raw is! String || raw.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) return decoded;
+      if (decoded is Map) {
+        final normalized = _normalizeJsonLike(decoded);
+        return normalized is Map<String, dynamic> ? normalized : null;
+      }
+    } catch (_) {}
+    return null;
+  }
+
   int _coerceTimestampMs(dynamic raw, {dynamic fallbackId}) {
     final direct = _toIntValue(raw);
     if (direct != null && direct > 0) {
@@ -1172,6 +1146,77 @@ class FirebaseService {
       return fallback > 1000000000000 ? fallback : fallback * 1000;
     }
     return 0;
+  }
+
+  Map<String, Map<String, dynamic>> _decodeLatestEventPositionSnapshot(
+    dynamic raw,
+  ) {
+    if (raw is! Map) return const <String, Map<String, dynamic>>{};
+    final out = <String, Map<String, dynamic>>{};
+
+    for (final dayEntry in raw.entries) {
+      final dayMap = dayEntry.value;
+      if (dayMap is! Map) continue;
+      for (final eventEntry in dayMap.entries) {
+        final entryId = eventEntry.key?.toString().trim() ?? '';
+        final value = eventEntry.value;
+        if (entryId.isEmpty || value is! Map) continue;
+
+        final payload = _decodeJsonMap(value['payload']);
+        final normalizedDeviceId = _normalizeLoraDeviceId(
+              value['deviceId'] ?? value['device_id'],
+            ) ??
+            _normalizeLoraDeviceId(
+              payload?['deviceId'] ?? payload?['device_id'],
+            );
+        if (normalizedDeviceId == null) continue;
+
+        final lat = _toFiniteCoord(
+          value['lat'] ?? payload?['lat'] ?? payload?['gps']?['lat'],
+        );
+        final lon = _toFiniteCoord(
+          value['lon'] ??
+              value['lng'] ??
+              payload?['lon'] ??
+              payload?['lng'] ??
+              payload?['gps']?['lon'],
+        );
+        if (lat == null ||
+            lon == null ||
+            lat < -90 ||
+            lat > 90 ||
+            lon < -180 ||
+            lon > 180) {
+          continue;
+        }
+
+        final receivedAtMs = _coerceTimestampMs(
+          value['receivedAtMs'] ??
+              value['receivedAt'] ??
+              value['sourceTimestampSec'] ??
+              value['timestamp'] ??
+              payload?['receivedAtMs'] ??
+              payload?['receivedAt'],
+          fallbackId: entryId,
+        );
+        final current = out[normalizedDeviceId];
+        final currentMs = current?['positionReceivedAtMs'] as int? ?? 0;
+        if (current != null && receivedAtMs <= currentMs) continue;
+
+        out[normalizedDeviceId] = <String, dynamic>{
+          'lat': lat,
+          'lon': lon,
+          'positionReceivedAtMs': receivedAtMs,
+          'positionSourceType': 'event',
+          'eventType': (value['eventType'] ??
+                  value['type'] ??
+                  payload?['event_type'] ??
+                  payload?['type'])
+              ?.toString(),
+        };
+      }
+    }
+    return out;
   }
 
   String _normalizeRoleValue(String value) {
@@ -1356,93 +1401,143 @@ class FirebaseService {
           const <String, Map<String, Map<String, dynamic>>>{};
       Map<String, Map<String, Map<String, dynamic>>> healthByPropertyId =
           const <String, Map<String, Map<String, dynamic>>>{};
-      final telemetrySubs = <StreamSubscription<rtdb.DatabaseEvent>>[];
-      final healthSubs = <StreamSubscription<rtdb.DatabaseEvent>>[];
-
-      Map<String, Map<String, dynamic>> aggregateTelemetry() {
-        final merged = <String, Map<String, dynamic>>{};
-        for (final entry in liveByPropertyId.values) {
-          merged.addAll(entry);
-        }
-        return merged;
-      }
-
-      Map<String, Map<String, dynamic>> aggregateHealth() {
-        final merged = <String, Map<String, dynamic>>{};
-        for (final entry in healthByPropertyId.values) {
-          merged.addAll(entry);
-        }
-        return merged;
-      }
+      Map<String, Map<String, Map<String, dynamic>>> eventByPropertyId =
+          const <String, Map<String, Map<String, dynamic>>>{};
+      final telemetrySubsByPropertyKey =
+          <String, StreamSubscription<rtdb.DatabaseEvent>>{};
+      final healthSubsByPropertyKey =
+          <String, StreamSubscription<rtdb.DatabaseEvent>>{};
+      final eventSubsByPropertyKey =
+          <String, StreamSubscription<rtdb.DatabaseEvent>>{};
+      final activePropertyKeys = <String>{};
 
       void emit() {
         controller.add(
-          _mergeDevicesWithLiveTelemetry(
-            devices,
-            aggregateTelemetry(),
-            aggregateHealth(),
+          mergeDevicesWithScopedLiveTelemetry(
+            devices: devices,
+            liveByPropertyId: liveByPropertyId,
+            healthByPropertyId: healthByPropertyId,
+            eventByPropertyId: eventByPropertyId,
           ),
         );
       }
 
-      Future<void> resetPropertyFeeds(List<String> propertyIds) async {
-        for (final sub in telemetrySubs) {
-          await sub.cancel();
+      Future<void> reconcilePropertyFeeds(List<String> propertyIds) async {
+        final desiredPropertyKeys = propertyIds
+            .map(_sanitizeRtdbKey)
+            .where((key) => key.isNotEmpty)
+            .toSet();
+        if (activePropertyKeys.length == desiredPropertyKeys.length &&
+            activePropertyKeys.containsAll(desiredPropertyKeys)) {
+          return;
         }
-        for (final sub in healthSubs) {
-          await sub.cancel();
+
+        final removedPropertyKeys =
+            activePropertyKeys.difference(desiredPropertyKeys).toList()..sort();
+        for (final propertyKey in removedPropertyKeys) {
+          final telemetrySub = telemetrySubsByPropertyKey.remove(propertyKey);
+          if (telemetrySub != null) {
+            await telemetrySub.cancel();
+          }
+          final healthSub = healthSubsByPropertyKey.remove(propertyKey);
+          if (healthSub != null) {
+            await healthSub.cancel();
+          }
+          final eventSub = eventSubsByPropertyKey.remove(propertyKey);
+          if (eventSub != null) {
+            await eventSub.cancel();
+          }
+
+          if (liveByPropertyId.containsKey(propertyKey)) {
+            final next = Map<String, Map<String, Map<String, dynamic>>>.from(
+              liveByPropertyId,
+            );
+            next.remove(propertyKey);
+            liveByPropertyId = next;
+          }
+          if (healthByPropertyId.containsKey(propertyKey)) {
+            final next = Map<String, Map<String, Map<String, dynamic>>>.from(
+              healthByPropertyId,
+            );
+            next.remove(propertyKey);
+            healthByPropertyId = next;
+          }
+          if (eventByPropertyId.containsKey(propertyKey)) {
+            final next = Map<String, Map<String, Map<String, dynamic>>>.from(
+              eventByPropertyId,
+            );
+            next.remove(propertyKey);
+            eventByPropertyId = next;
+          }
         }
-        telemetrySubs.clear();
-        healthSubs.clear();
-        liveByPropertyId = <String, Map<String, Map<String, dynamic>>>{};
-        healthByPropertyId = <String, Map<String, Map<String, dynamic>>>{};
 
-        for (final propertyId in propertyIds.toSet()) {
-          final propertyKey = _sanitizeRtdbKey(propertyId);
-          if (propertyKey.isEmpty) continue;
-
-          telemetrySubs.add(
-            _rtdb.ref('propertyTelemetryLatest/$propertyKey').onValue.listen(
-              (event) {
-                liveByPropertyId = {
-                  ...liveByPropertyId,
-                  propertyKey: _decodeTelemetryLatestDetailsSnapshot(
-                    event.snapshot.value,
-                  ),
-                };
-                emit();
-              },
-              onError: (_) {
-                liveByPropertyId = {
-                  ...liveByPropertyId,
-                  propertyKey: const <String, Map<String, dynamic>>{},
-                };
-                emit();
-              },
-            ),
+        final addedPropertyKeys =
+            desiredPropertyKeys.difference(activePropertyKeys).toList()..sort();
+        for (final propertyKey in addedPropertyKeys) {
+          telemetrySubsByPropertyKey[propertyKey] =
+              _rtdb.ref('propertyTelemetryLatest/$propertyKey').onValue.listen(
+            (event) {
+              liveByPropertyId = {
+                ...liveByPropertyId,
+                propertyKey: _decodeTelemetryLatestDetailsSnapshot(
+                  event.snapshot.value,
+                ),
+              };
+              emit();
+            },
+            onError: (_) {
+              liveByPropertyId = {
+                ...liveByPropertyId,
+                propertyKey: const <String, Map<String, dynamic>>{},
+              };
+              emit();
+            },
           );
 
-          healthSubs.add(
-            _rtdb.ref('propertyHealthLatest/$propertyKey').onValue.listen(
-              (event) {
-                healthByPropertyId = {
-                  ...healthByPropertyId,
-                  propertyKey: _decodeHealthLatestSnapshot(
-                    event.snapshot.value,
-                  ),
-                };
-                emit();
-              },
-              onError: (_) {
-                healthByPropertyId = {
-                  ...healthByPropertyId,
-                  propertyKey: const <String, Map<String, dynamic>>{},
-                };
-                emit();
-              },
-            ),
+          healthSubsByPropertyKey[propertyKey] =
+              _rtdb.ref('propertyHealthLatest/$propertyKey').onValue.listen(
+            (event) {
+              healthByPropertyId = {
+                ...healthByPropertyId,
+                propertyKey: _decodeHealthLatestSnapshot(
+                  event.snapshot.value,
+                ),
+              };
+              emit();
+            },
+            onError: (_) {
+              healthByPropertyId = {
+                ...healthByPropertyId,
+                propertyKey: const <String, Map<String, dynamic>>{},
+              };
+              emit();
+            },
+          );
+
+          eventSubsByPropertyKey[propertyKey] =
+              _rtdb.ref('propertyEvents/$propertyKey').onValue.listen(
+            (event) {
+              eventByPropertyId = {
+                ...eventByPropertyId,
+                propertyKey: _decodeLatestEventPositionSnapshot(
+                  event.snapshot.value,
+                ),
+              };
+              emit();
+            },
+            onError: (_) {
+              eventByPropertyId = {
+                ...eventByPropertyId,
+                propertyKey: const <String, Map<String, dynamic>>{},
+              };
+              emit();
+            },
           );
         }
+
+        activePropertyKeys
+          ..clear()
+          ..addAll(desiredPropertyKeys);
         emit();
       }
 
@@ -1460,7 +1555,7 @@ class FirebaseService {
               .where((id) => id.isNotEmpty)
               .toList()
             ..sort();
-          unawaited(resetPropertyFeeds(propertyIds));
+          unawaited(reconcilePropertyFeeds(propertyIds));
         },
         onError: controller.addError,
       );
@@ -1468,10 +1563,13 @@ class FirebaseService {
       controller.onCancel = () async {
         await firestoreSub.cancel();
         await propertySub.cancel();
-        for (final sub in telemetrySubs) {
+        for (final sub in telemetrySubsByPropertyKey.values) {
           await sub.cancel();
         }
-        for (final sub in healthSubs) {
+        for (final sub in healthSubsByPropertyKey.values) {
+          await sub.cancel();
+        }
+        for (final sub in eventSubsByPropertyKey.values) {
           await sub.cancel();
         }
       };

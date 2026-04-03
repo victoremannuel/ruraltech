@@ -101,5 +101,26 @@ void main() {
         expected.millisecondsSinceEpoch,
       );
     });
+
+    test('parses latest position timestamp independent from telemetry', () {
+      final telemetry = DateTime(2026, 4, 2, 18, 17, 43);
+      final position = DateTime(2026, 4, 2, 18, 18, 10);
+      final device = DeviceModel.fromMap('126', {
+        'deviceId': '126',
+        'name': 'Coleira Evento',
+        'status': 'active',
+        'telemetryReceivedAtMs': telemetry.millisecondsSinceEpoch,
+        'positionReceivedAtMs': position.millisecondsSinceEpoch,
+      });
+
+      expect(
+        device.telemetryReceivedAt?.millisecondsSinceEpoch,
+        telemetry.millisecondsSinceEpoch,
+      );
+      expect(
+        device.positionReceivedAt?.millisecondsSinceEpoch,
+        position.millisecondsSinceEpoch,
+      );
+    });
   });
 }

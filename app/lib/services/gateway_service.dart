@@ -317,7 +317,7 @@ class GatewayService extends ChangeNotifier {
 
   GatewayTelemetrySample? _extractTelemetrySample(Map<String, dynamic> msg) {
     final type = (msg['type'] ?? '').toString().toLowerCase();
-    if (type != 'telemetry') return null;
+    if (type != 'telemetry' && type != 'event') return null;
 
     final payload = _decodePayloadMap(msg['payload']);
     final deviceId = _extractDeviceId(msg, payload);
