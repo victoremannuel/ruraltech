@@ -49,7 +49,9 @@ Adafruit_SSD1306 display(128, 64, &Wire, -1);
 #endif
 uint32_t seqDown = 1;
 Preferences seqPrefs;
+Preferences bindingPrefs;
 bool seqPrefsReady = false;
+bool bindingPrefsReady = false;
 bool wifiOtaEnabled = cfg::WIFI_OTA_DEFAULT_ENABLED;
 bool watchdogTaskRegistered = false;
 bool otaUploadInProgress = false;
@@ -62,6 +64,16 @@ bool cloudBackhaulConnecting = false;
 uint32_t cloudBackhaulConnectStartedAtMs = 0;
 wifi_err_reason_t cloudBackhaulLastDisconnectReason = WIFI_REASON_UNSPECIFIED;
 uint32_t cloudBackhaulLastDiagScanAtMs = 0;
+uint32_t queuePollAtMs = 0;
+uint64_t lastQueuePollAtUnixMs = 0;
+uint32_t runtimeMirrorPublishAtMs = 0;
+char bindingPropertyId[48]{};
+char bindingPropertyScopeId[17]{};
+char bindingMatrixGatewayId[32]{};
+uint32_t bindingVersion = 0;
+bool bindingReady = false;
+bool supportsScopedLora = true;
+char lastCloudWriteError[96]{};
 
 struct HerdPoint {
   double lat = 0.0;
@@ -91,22 +103,53 @@ struct HerdingOperationState {
   uint32_t completedAtSec = 0;
   uint8_t pointCount = 0;
   uint8_t deviceCount = 0;
+  uint64_t createdAtMs = 0;
+  uint64_t expiresAtMs = 0;
   char operationId[48]{};
   char propertyId[48]{};
   char ownerUid[48]{};
   char requestedByUid[48]{};
   char requestedByRole[16]{};
   char matrixGatewayId[32]{};
+  char propertyScopeId[17]{};
+  char loraCommandId[48]{};
+  char lastCommandStatus[20]{};
   char failureReason[48]{};
   HerdPoint targetPolygon[cfg::MAX_POLYGON_POINTS]{};
   HerdingOperationDeviceState devices[cfg::MAX_HERD_OPERATION_DEVICES]{};
 } herdOp;
+
+struct ActiveSimpleCommandTargetState {
+  char targetId[32]{};
+  bool terminal = false;
+  bool ok = false;
+  char status[20]{};
+  char reason[48]{};
+};
+
+struct ActiveSimpleCommandState {
+  bool active = false;
+  uint32_t dispatchAtMs = 0;
+  uint64_t createdAtMs = 0;
+  uint64_t expiresAtMs = 0;
+  uint8_t targetCount = 0;
+  char commandId[48]{};
+  char command[24]{};
+  char propertyId[48]{};
+  char propertyScopeId[17]{};
+  char matrixGatewayId[32]{};
+  char requestedByUid[48]{};
+  char requestedByRole[16]{};
+  ActiveSimpleCommandTargetState targets[cfg::MAX_HERD_OPERATION_DEVICES]{};
+} activeSimpleCommand;
 
 struct CloudPublishContext {
   uint32_t nowSec = 0;
   uint64_t nowMs = 0;
   String matrixId;
   String deviceId;
+  String propertyId;
+  String propertyScopeId;
 };
 
 static void setWatchdogEnabled(bool enabled);
@@ -120,14 +163,21 @@ static void printBootChecklist(
     bool loraOk,
     bool cloudConfigured);
 static void copyStringToBuffer(char* dst, size_t dstSize, const char* src);
+static void loadBindingConfig();
+static bool persistBindingConfig(
+    const JsonVariantConst payload,
+    const char** reason = nullptr);
 static bool startHerdingOperation(const JsonVariantConst payload, const char** reason);
 static void dispatchActiveHerdingOperation();
 static void handleHerdingOperationFeedback(const LoRaFrame& rx);
 static void handleHerdingOperationEvent(const LoRaFrame& rx);
+static void handleSimpleCommandFeedback(const LoRaFrame& rx);
+static void processNextQueuedCommand();
 static void publishHerdingOperationSnapshot(
     bool force = false,
     const char* statusOverride = nullptr);
 static bool ensureCloudBackhaulConnected();
+static bool publishMatrixRuntimeMirrors(bool force = false);
 
 static const char* otaErrorText(ota_error_t error) {
   switch (error) {
@@ -274,6 +324,114 @@ static void copyStringToBuffer(char* dst, size_t dstSize, const char* src) {
   dst[dstSize - 1] = '\0';
 }
 
+static String scopeIdToHex(uint64_t scopeId) {
+  char out[17];
+  snprintf(out, sizeof(out), "%016llX", (unsigned long long)scopeId);
+  return String(out);
+}
+
+static const char* pickFirstText(
+    const JsonVariantConst a,
+    const JsonVariantConst b = JsonVariantConst(),
+    const JsonVariantConst c = JsonVariantConst(),
+    const JsonVariantConst d = JsonVariantConst()) {
+  const JsonVariantConst values[] = {a, b, c, d};
+  for (const JsonVariantConst value : values) {
+    if (!value.is<const char*>()) continue;
+    const char* text = value.as<const char*>();
+    if (text && text[0] != '\0') return text;
+  }
+  return "";
+}
+
+static bool beginBindingPrefs() {
+  if (bindingPrefsReady) return true;
+  bindingPrefsReady = bindingPrefs.begin("binding", false);
+  if (!bindingPrefsReady) LOGW("Falha ao abrir NVS binding");
+  return bindingPrefsReady;
+}
+
+static bool computeBindingReadyState() {
+  return bindingPropertyId[0] != '\0' &&
+         bindingMatrixGatewayId[0] != '\0' &&
+         rtcmd::isValidScopeId(bindingPropertyScopeId);
+}
+
+static uint64_t bindingScopeIdValue() {
+  if (!computeBindingReadyState()) return 0;
+  return strtoull(bindingPropertyScopeId, nullptr, 16);
+}
+
+static void loadBindingConfig() {
+  bindingPropertyId[0] = '\0';
+  bindingPropertyScopeId[0] = '\0';
+  bindingMatrixGatewayId[0] = '\0';
+  bindingVersion = 0;
+  bindingReady = false;
+  if (!beginBindingPrefs()) return;
+
+  bindingPrefs.getString("property_id", bindingPropertyId, sizeof(bindingPropertyId));
+  bindingPrefs.getString("scope_id", bindingPropertyScopeId, sizeof(bindingPropertyScopeId));
+  bindingPrefs.getString("matrix_gid", bindingMatrixGatewayId, sizeof(bindingMatrixGatewayId));
+  bindingVersion = bindingPrefs.getUInt("bind_ver", 0);
+  bindingReady = computeBindingReadyState();
+  LOGI(
+      "Binding matriz: ready=%d property=%s scope=%s matrix=%s ver=%lu",
+      bindingReady ? 1 : 0,
+      bindingPropertyId[0] ? bindingPropertyId : "-",
+      bindingPropertyScopeId[0] ? bindingPropertyScopeId : "-",
+      bindingMatrixGatewayId[0] ? bindingMatrixGatewayId : "-",
+      (unsigned long)bindingVersion);
+}
+
+static bool persistBindingConfig(const JsonVariantConst payload, const char** reason) {
+  const char* propertyId = pickFirstText(payload["property_id"], payload["propertyId"]);
+  const char* propertyScopeId = pickFirstText(
+      payload["property_scope_id"], payload["propertyScopeId"], payload["scope_id"]);
+  const char* matrixGatewayId = pickFirstText(
+      payload["matrix_gateway_id"], payload["matrixGatewayId"]);
+  uint32_t nextBindingVersion =
+      payload["binding_version"].is<uint32_t>()
+          ? payload["binding_version"].as<uint32_t>()
+          : (payload["bindingVersion"] | 1U);
+
+  if (!propertyId[0]) {
+    if (reason) *reason = "missing_property_id";
+    return false;
+  }
+  if (!rtcmd::isValidScopeId(propertyScopeId)) {
+    if (reason) *reason = "invalid_property_scope_id";
+    return false;
+  }
+  if (!matrixGatewayId[0]) {
+    if (reason) *reason = "missing_matrix_gateway_id";
+    return false;
+  }
+  if (nextBindingVersion == 0) nextBindingVersion = 1;
+  if (!beginBindingPrefs()) {
+    if (reason) *reason = "binding_prefs_unavailable";
+    return false;
+  }
+
+  copyStringToBuffer(bindingPropertyId, sizeof(bindingPropertyId), propertyId);
+  copyStringToBuffer(
+      bindingPropertyScopeId, sizeof(bindingPropertyScopeId), propertyScopeId);
+  copyStringToBuffer(
+      bindingMatrixGatewayId, sizeof(bindingMatrixGatewayId), matrixGatewayId);
+  bindingVersion = nextBindingVersion;
+  bindingReady = computeBindingReadyState();
+
+  bindingPrefs.putString("property_id", bindingPropertyId);
+  bindingPrefs.putString("scope_id", bindingPropertyScopeId);
+  bindingPrefs.putString("matrix_gid", bindingMatrixGatewayId);
+  bindingPrefs.putUInt("bind_ver", bindingVersion);
+  return bindingReady;
+}
+
+static bool scopeMatchesBinding(uint64_t scopeId) {
+  return bindingReady && scopeId != 0 && scopeId == bindingScopeIdValue();
+}
+
 static void restoreDownlinkSeq() {
   seqDown = 1;
   seqPrefsReady = seqPrefs.begin("lora_down", false);
@@ -333,7 +491,7 @@ static bool isUnsetCloudValue(const char* value) {
 }
 
 static bool cloudTelemetryConfigured() {
-  if (!cfg::CLOUD_TELEMETRY_ENABLED) return false;
+  if (!cfg::FEATURE_CLOUD) return false;
 
   const bool backhaulSsidOk = !isUnsetCloudValue(cfg::BACKHAUL_WIFI_SSID);
   const bool backhaulPassOk =
@@ -362,6 +520,12 @@ static String matrixCloudId() {
   return sanitizeRtdbKey(gatewayNodeId());
 }
 
+static uint64_t parseScopeIdHex(const JsonVariantConst value) {
+  const char* text = value.is<const char*>() ? value.as<const char*>() : "";
+  if (!text || !text[0] || !rtcmd::isValidScopeId(text)) return 0;
+  return strtoull(text, nullptr, 16);
+}
+
 static uint32_t unixNowSec() {
   const time_t wall = time(nullptr);
   if (wall > 1700000000) return (uint32_t)wall;
@@ -385,14 +549,27 @@ static String utcDayKey(uint32_t unixSec) {
   return String(out);
 }
 
-static bool rtdbWrite(const char* method, const String& path, const String& body) {
-  if (WiFi.status() != WL_CONNECTED) return false;
-  if (path.isEmpty()) return false;
+static bool rtdbRequest(
+    const char* method,
+    const String& path,
+    const String& body,
+    String* responseBody = nullptr) {
+  if (WiFi.status() != WL_CONNECTED) {
+    setLastCloudWriteError("wifi", path);
+    return false;
+  }
+  if (path.isEmpty()) {
+    setLastCloudWriteError("path", "-");
+    return false;
+  }
 
   WiFiClientSecure client;
   client.setInsecure();
   client.setTimeout(cfg::CLOUD_HTTP_TIMEOUT_MS);
-  if (!client.connect(cfg::FIREBASE_RTDB_HOST, 443)) return false;
+  if (!client.connect(cfg::FIREBASE_RTDB_HOST, 443)) {
+    setLastCloudWriteError("connect", path);
+    return false;
+  }
 
   const String reqPath = String("/") + path + ".json";
   const size_t bodyLen = body.length();
@@ -412,6 +589,14 @@ static bool rtdbWrite(const char* method, const String& path, const String& body
     ok = true;
   }
 
+  while (client.connected()) {
+    const String line = client.readStringUntil('\n');
+    if (line == "\r" || line.length() == 0) break;
+  }
+  if (responseBody) {
+    *responseBody = client.readString();
+  }
+
   const uint32_t drainStart = millis();
   while ((uint32_t)(millis() - drainStart) < 250) {
     while (client.available()) {
@@ -421,19 +606,160 @@ static bool rtdbWrite(const char* method, const String& path, const String& body
     delay(1);
   }
   client.stop();
+  if (ok) {
+    clearLastCloudWriteError();
+  } else {
+    setLastCloudWriteError("http", path + "|" + statusLine);
+  }
   return ok;
+}
+
+static bool rtdbWrite(const char* method, const String& path, const String& body) {
+  return rtdbRequest(method, path, body, nullptr);
+}
+
+static bool rtdbRead(const String& path, String& body) {
+  body = "";
+  return rtdbRequest("GET", path, "", &body);
+}
+
+static bool rtdbDelete(const String& path) {
+  return rtdbRequest("DELETE", path, "", nullptr);
+}
+
+static void setLastCloudWriteError(const char* stage, const String& detail) {
+  const char* safeStage = (stage && stage[0] != '\0') ? stage : "cloud";
+  const String safeDetail = detail.isEmpty() ? String("-") : detail;
+  snprintf(
+      lastCloudWriteError,
+      sizeof(lastCloudWriteError),
+      "%s:%s",
+      safeStage,
+      safeDetail.substring(0, 72).c_str());
+}
+
+static void clearLastCloudWriteError() {
+  lastCloudWriteError[0] = '\0';
+}
+
+static bool appendPropertyCommandEvent(
+    const char* propertyId,
+    const char* commandId,
+    const char* status,
+    const char* reason,
+    const DynamicJsonDocument* sourceDoc = nullptr) {
+  if (!cfg::FEATURE_CLOUD) return false;
+  if (!propertyId || !propertyId[0] || !commandId || !commandId[0] || !status ||
+      !status[0]) {
+    return false;
+  }
+
+  DynamicJsonDocument doc(1024);
+  doc["type"] = status;
+  doc["status"] = status;
+  doc["matrixId"] = matrixCloudId();
+  doc["matrixGatewayId"] = bindingMatrixGatewayId;
+  doc["createdAtMs"] = unixNowMs(unixNowSec());
+  doc["writer"] = "gateway_matrix";
+  doc["writerKey"] = cfg::RTDB_WRITER_KEY;
+  if (reason && reason[0]) doc["reason"] = reason;
+  if (sourceDoc && (*sourceDoc)["deviceResults"].is<JsonObjectConst>()) {
+    doc["deviceResults"] = (*sourceDoc)["deviceResults"].as<JsonObjectConst>();
+  }
+
+  String body;
+  serializeJson(doc, body);
+  char eventId[72];
+  snprintf(
+      eventId,
+      sizeof(eventId),
+      "%llu_%s_%lu",
+      (unsigned long long)unixNowMs(unixNowSec()),
+      status,
+      (unsigned long)esp_random());
+  return rtdbWrite(
+      "PUT",
+      String("propertyCommandEvents/") + sanitizeRtdbKey(String(propertyId)) + "/" +
+          commandId + "/" + eventId,
+      body);
 }
 
 static bool cloudPublishReady() {
   return cloudTelemetryConfigured() && ensureCloudBackhaulConnected();
 }
 
+static bool publishMatrixRuntimeMirrors(bool force) {
+  if (!cloudTelemetryConfigured()) return false;
+  if (!ensureCloudBackhaulConnected()) return false;
+
+  const uint32_t nowTick = millis();
+  if (!force && runtimeMirrorPublishAtMs != 0 &&
+      (uint32_t)(nowTick - runtimeMirrorPublishAtMs) < 30000UL) {
+    return true;
+  }
+
+  const String runtimeId = matrixCloudId();
+  const uint64_t nowMs = unixNowMs(unixNowSec());
+  DynamicJsonDocument bindingDoc(640);
+  bindingDoc["propertyId"] = bindingPropertyId;
+  bindingDoc["propertyScopeId"] = bindingPropertyScopeId;
+  bindingDoc["matrixGatewayId"] = bindingMatrixGatewayId;
+  bindingDoc["matrixRuntimeId"] = runtimeId;
+  bindingDoc["enabled"] = bindingReady && supportsScopedLora;
+  bindingDoc["updatedAtMs"] = nowMs;
+  bindingDoc["writer"] = "gateway_matrix";
+  bindingDoc["writerKey"] = cfg::RTDB_WRITER_KEY;
+  String bindingBody;
+  serializeJson(bindingDoc, bindingBody);
+
+  const String runtimeBindingPath = String("matrixBindings/") + runtimeId;
+  bool ok = rtdbWrite("PUT", runtimeBindingPath, bindingBody);
+  if (!ok) {
+    setLastCloudWriteError("binding", runtimeBindingPath);
+    return false;
+  }
+
+  const String gatewayAlias = sanitizeRtdbKey(gatewayNodeId());
+  if (!gatewayAlias.isEmpty() && gatewayAlias != runtimeId) {
+    ok = rtdbWrite("PUT", String("matrixBindings/") + gatewayAlias, bindingBody) && ok;
+  }
+  const String matrixAlias = sanitizeRtdbKey(String(bindingMatrixGatewayId));
+  if (!matrixAlias.isEmpty() && matrixAlias != runtimeId && matrixAlias != gatewayAlias) {
+    ok = rtdbWrite("PUT", String("matrixBindings/") + matrixAlias, bindingBody) && ok;
+  }
+
+  if (!isUnsetCloudValue(cfg::RTDB_QUEUE_KEY)) {
+    DynamicJsonDocument queueDoc(384);
+    queueDoc["queueKey"] = cfg::RTDB_QUEUE_KEY;
+    queueDoc["matrixRuntimeId"] = runtimeId;
+    queueDoc["updatedAtMs"] = nowMs;
+    queueDoc["writer"] = "gateway_matrix";
+    queueDoc["writerKey"] = cfg::RTDB_WRITER_KEY;
+    String queueBody;
+    serializeJson(queueDoc, queueBody);
+    const String queuePath = String("matrixQueueKeys/") + runtimeId;
+    ok = rtdbWrite("PUT", queuePath, queueBody) && ok;
+    if (!ok) {
+      setLastCloudWriteError("queue_key", queuePath);
+      return false;
+    }
+  }
+
+  runtimeMirrorPublishAtMs = nowTick;
+  clearLastCloudWriteError();
+  return ok;
+}
+
 static bool buildCloudPublishContext(const LoRaFrame& rx, CloudPublishContext& ctx) {
+  if (!scopeMatchesBinding(rx.scopeId)) return false;
   ctx.nowSec = unixNowSec();
   ctx.nowMs = unixNowMs(ctx.nowSec);
   ctx.matrixId = matrixCloudId();
   ctx.deviceId = sanitizeRtdbKey(String(rx.deviceId));
-  return !ctx.deviceId.isEmpty();
+  ctx.propertyId = sanitizeRtdbKey(String(bindingPropertyId));
+  ctx.propertyScopeId = String(bindingPropertyScopeId);
+  return !ctx.deviceId.isEmpty() && !ctx.propertyId.isEmpty() &&
+         rtcmd::isValidScopeId(ctx.propertyScopeId.c_str());
 }
 
 static void populateCommonCloudFields(
@@ -447,6 +773,10 @@ static void populateCommonCloudFields(
   payload["gatewayId"] = ctx.matrixId;
   payload["gatewayRole"] = "matrix";
   payload["gatewayWifiOtaEnabled"] = wifiOtaEnabled;
+  payload["propertyId"] = ctx.propertyId;
+  payload["propertyScopeId"] = ctx.propertyScopeId;
+  payload["matrixGatewayId"] = bindingMatrixGatewayId;
+  payload["scope_id"] = ctx.propertyScopeId;
   payload["transport"] = "lora";
   payload["writer"] = "gateway_matrix";
   payload["matrixId"] = ctx.matrixId;
@@ -464,13 +794,14 @@ static bool publishCloudLatestAndHistory(
     const String& body,
     const char* logLabel,
     uint32_t entrySeq) {
-  const String latestPath = String(latestRoot) + "/" + ctx.deviceId;
+  const String latestPath =
+      String(latestRoot) + "/" + ctx.propertyId + "/" + ctx.deviceId;
   char historyEntryId[40];
   snprintf(historyEntryId, sizeof(historyEntryId), "%llu_%lu",
            (unsigned long long)ctx.nowMs, (unsigned long)entrySeq);
   const String historyPath =
-      String(historyRoot) + "/" + ctx.deviceId + "/" + historyDayKey + "/" +
-      String(historyEntryId);
+      String(historyRoot) + "/" + ctx.propertyId + "/" + ctx.deviceId + "/" +
+      historyDayKey + "/" + String(historyEntryId);
 
   const bool latestOk = rtdbWrite("PUT", latestPath, body);
   const bool historyOk = rtdbWrite("PUT", historyPath, body);
@@ -484,6 +815,7 @@ static bool publishCloudLatestAndHistory(
 }
 
 static bool ensureCloudBackhaulConnected() {
+  if (!cfg::FEATURE_BACKHAUL) return false;
   if (!cloudTelemetryConfigured()) return false;
   if (WiFi.status() == WL_CONNECTED) {
     cloudBackhaulConnecting = false;
@@ -517,7 +849,8 @@ static bool ensureCloudBackhaulConnected() {
   }
   cloudBackhaulAttemptAtMs = now;
   // Em modo OTA/manual, preserva AP local e sobe STA para backhaul cloud.
-  const wifi_mode_t desiredMode = wifiOtaEnabled ? WIFI_AP_STA : WIFI_STA;
+  const wifi_mode_t desiredMode =
+      (cfg::FEATURE_WIFI_AP && wifiOtaEnabled) ? WIFI_AP_STA : WIFI_STA;
   if (WiFi.getMode() != desiredMode) {
     WiFi.mode(desiredMode);
   }
@@ -564,7 +897,7 @@ static void publishTelemetryToCloud(const LoRaFrame& rx) {
   String body;
   serializeJson(payload, body);
   publishCloudLatestAndHistory(
-      "telemetryLatest", "telemetryHistory", ctx, utcDayKey(ctx.nowSec), body,
+      "propertyTelemetryLatest", "propertyTelemetryHistory", ctx, utcDayKey(ctx.nowSec), body,
       "telemetria", rx.seq);
 }
 
@@ -608,12 +941,207 @@ static void publishDailyHealthToCloud(const LoRaFrame& rx) {
   const String historyDayKey =
       gpsDayKey > 0 ? String(gpsDayKey) : utcDayKey(ctx.nowSec);
   publishCloudLatestAndHistory(
-      "healthLatest", "healthHistory", ctx, historyDayKey, body, "health_daily",
+      "propertyHealthLatest", "propertyHealthHistory", ctx, historyDayKey, body, "health_daily",
       rx.seq);
 }
 
+static void publishEventToCloud(const LoRaFrame& rx) {
+  if (rx.msgType != MsgType::EVENT) return;
+  if (!cloudPublishReady()) return;
+
+  DynamicJsonDocument eventPayload(768);
+  if (deserializeJson(eventPayload, rx.payload, rx.payloadLen) != DeserializationError::Ok) {
+    return;
+  }
+
+  CloudPublishContext ctx;
+  if (!buildCloudPublishContext(rx, ctx)) return;
+
+  DynamicJsonDocument payload(1024);
+  payload["deviceId"] = ctx.deviceId;
+  const char* eventType = pickFirstText(eventPayload["event_type"], eventPayload["type"]);
+  if (!eventType[0]) eventType = "event";
+  payload["eventType"] = eventType;
+  payload["type"] = eventType;
+  if (eventPayload["operation_id"].is<const char*>()) {
+    payload["operationId"] = eventPayload["operation_id"].as<const char*>();
+  }
+  if (eventPayload["cmd_id"].is<const char*>()) {
+    payload["cmd_id"] = eventPayload["cmd_id"].as<const char*>();
+  }
+  payload["payload"] = eventPayload.as<JsonVariantConst>();
+  populateCommonCloudFields(payload.as<JsonObject>(), ctx, rx);
+
+  String body;
+  serializeJson(payload, body);
+  char entryId[40];
+  snprintf(entryId, sizeof(entryId), "%llu_%lu",
+           (unsigned long long)ctx.nowMs, (unsigned long)rx.seq);
+  const String eventPath =
+      String("propertyEvents/") + ctx.propertyId + "/" + utcDayKey(ctx.nowSec) +
+      "/" + String(entryId);
+  if (!rtdbWrite("PUT", eventPath, body)) {
+    LOGW("Falha upload RTDB event device=%s type=%s",
+         ctx.deviceId.c_str(), eventType);
+  }
+}
+
+static void clearActiveSimpleCommand() {
+  activeSimpleCommand = ActiveSimpleCommandState{};
+}
+
+static int findActiveSimpleCommandTarget(const char* targetId) {
+  if (!targetId || !targetId[0]) return -1;
+  for (uint8_t i = 0; i < activeSimpleCommand.targetCount; ++i) {
+    if (strcmp(activeSimpleCommand.targets[i].targetId, targetId) == 0) return (int)i;
+  }
+  return -1;
+}
+
+static bool allActiveSimpleTargetsTerminal() {
+  if (!activeSimpleCommand.active || activeSimpleCommand.targetCount == 0) return false;
+  for (uint8_t i = 0; i < activeSimpleCommand.targetCount; ++i) {
+    if (!activeSimpleCommand.targets[i].terminal) return false;
+  }
+  return true;
+}
+
+static bool anyActiveSimpleTargetFailed() {
+  for (uint8_t i = 0; i < activeSimpleCommand.targetCount; ++i) {
+    if (activeSimpleCommand.targets[i].terminal && !activeSimpleCommand.targets[i].ok) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool publishSimpleCommandResult(const char* status, const char* reason = nullptr) {
+  if (!cfg::FEATURE_CLOUD) return false;
+  if (!activeSimpleCommand.active || !activeSimpleCommand.commandId[0]) return false;
+
+  DynamicJsonDocument doc(2048);
+  doc["commandId"] = activeSimpleCommand.commandId;
+  doc["command"] = activeSimpleCommand.command;
+  doc["status"] = status;
+  doc["createdAtMs"] = activeSimpleCommand.createdAtMs;
+  doc["updatedAtMs"] = unixNowMs(unixNowSec());
+  doc["expiresAtMs"] = activeSimpleCommand.expiresAtMs;
+  doc["propertyId"] = activeSimpleCommand.propertyId;
+  doc["propertyScopeId"] = activeSimpleCommand.propertyScopeId;
+  doc["matrixId"] = matrixCloudId();
+  doc["matrixGatewayId"] = activeSimpleCommand.matrixGatewayId;
+  doc["matrixRuntimeId"] = matrixCloudId();
+  doc["requestedByUid"] = activeSimpleCommand.requestedByUid;
+  doc["requestedByRole"] = activeSimpleCommand.requestedByRole;
+  doc["writer"] = "gateway_matrix";
+  doc["writerKey"] = cfg::RTDB_WRITER_KEY;
+  if (reason && reason[0]) doc["reason"] = reason;
+
+  JsonObject deviceResults = doc["deviceResults"].to<JsonObject>();
+  for (uint8_t i = 0; i < activeSimpleCommand.targetCount; ++i) {
+    const ActiveSimpleCommandTargetState& target = activeSimpleCommand.targets[i];
+    JsonObject item = deviceResults.createNestedObject(target.targetId);
+    item["ok"] = target.ok;
+    item["status"] = target.status[0] ? target.status : (target.terminal ? "completed" : "dispatching");
+    if (target.reason[0]) item["reason"] = target.reason;
+  }
+
+  String body;
+  serializeJson(doc, body);
+  const bool matrixOk = rtdbWrite(
+      "PUT",
+      String("matrixCommandResults/") + matrixCloudId() + "/" + activeSimpleCommand.commandId,
+      body);
+  const bool propertyOk = rtdbWrite(
+      "PUT",
+      String("propertyCommands/") + sanitizeRtdbKey(String(activeSimpleCommand.propertyId)) +
+          "/" + activeSimpleCommand.commandId,
+      body);
+  const bool eventOk = appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      status,
+      reason,
+      &doc);
+  if (!(matrixOk && propertyOk && eventOk)) {
+    setLastCloudWriteError("command_status", activeSimpleCommand.commandId);
+  }
+  return matrixOk && propertyOk && eventOk;
+}
+
+static void markActiveSimpleCommandTarget(
+    const char* targetId,
+    bool ok,
+    const char* status,
+    const char* reason) {
+  const int idx = findActiveSimpleCommandTarget(targetId);
+  if (idx < 0) return;
+
+  ActiveSimpleCommandTargetState& target = activeSimpleCommand.targets[idx];
+  target.terminal = true;
+  target.ok = ok;
+  copyStringToBuffer(target.status, sizeof(target.status), status ? status : (ok ? "completed" : "failed"));
+  copyStringToBuffer(target.reason, sizeof(target.reason), reason ? reason : "");
+}
+
+static bool publishImmediateMatrixCommandResult(
+    const char* commandId,
+    const char* command,
+    const char* propertyId,
+    const char* propertyScopeId,
+    const char* matrixGatewayId,
+    const char* requestedByUid,
+    const char* requestedByRole,
+    uint64_t createdAtMs,
+    uint64_t expiresAtMs,
+    const char* status,
+    const char* reason) {
+  if (!cfg::FEATURE_CLOUD) return false;
+  if (!commandId || !commandId[0]) return false;
+  DynamicJsonDocument doc(1024);
+  doc["commandId"] = commandId;
+  if (command && command[0]) doc["command"] = command;
+  doc["status"] = status;
+  doc["createdAtMs"] = createdAtMs;
+  doc["updatedAtMs"] = unixNowMs(unixNowSec());
+  doc["expiresAtMs"] = expiresAtMs;
+  doc["propertyId"] = propertyId ? propertyId : "";
+  doc["propertyScopeId"] = propertyScopeId ? propertyScopeId : "";
+  doc["matrixId"] = matrixCloudId();
+  doc["matrixGatewayId"] = matrixGatewayId ? matrixGatewayId : "";
+  doc["matrixRuntimeId"] = matrixCloudId();
+  if (requestedByUid && requestedByUid[0]) doc["requestedByUid"] = requestedByUid;
+  if (requestedByRole && requestedByRole[0]) doc["requestedByRole"] = requestedByRole;
+  doc["writer"] = "gateway_matrix";
+  doc["writerKey"] = cfg::RTDB_WRITER_KEY;
+  if (reason && reason[0]) doc["reason"] = reason;
+
+  String body;
+  serializeJson(doc, body);
+  const bool matrixOk = rtdbWrite(
+      "PUT",
+      String("matrixCommandResults/") + matrixCloudId() + "/" + commandId,
+      body);
+  const bool propertyOk = rtdbWrite(
+      "PUT",
+      String("propertyCommands/") + sanitizeRtdbKey(String(propertyId ? propertyId : "")) +
+          "/" + commandId,
+      body);
+  const bool eventOk = appendPropertyCommandEvent(
+      propertyId,
+      commandId,
+      status,
+      reason,
+      &doc);
+  if (!(matrixOk && propertyOk && eventOk)) {
+    setLastCloudWriteError("command_status", String(commandId));
+  }
+  return matrixOk && propertyOk && eventOk;
+}
+
 static bool setupWiFi() {
-  WiFi.mode(WIFI_AP_STA);
+  if (!cfg::FEATURE_WIFI_AP) return false;
+  WiFi.mode(cfg::FEATURE_BACKHAUL ? WIFI_AP_STA : WIFI_AP);
   WiFi.setSleep(false);
   const String apSsid = gatewayApSsid();
   const bool apOk = WiFi.softAP(apSsid.c_str(), cfg::AP_PASS);
@@ -630,7 +1158,7 @@ static bool setupWiFi() {
 }
 
 static void setupOta() {
-  if (!wifiOtaEnabled || !cfg::OTA_ENABLED) return;
+  if (!wifiOtaEnabled || !cfg::FEATURE_OTA || !cfg::OTA_ENABLED) return;
   ArduinoOTA.setHostname(cfg::OTA_HOSTNAME);
   ArduinoOTA.setPort(3232);
   ArduinoOTA.setTimeout(cfg::OTA_HANDSHAKE_TIMEOUT_MS);
@@ -743,13 +1271,14 @@ static void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
 }
 
 static bool wifiApClientConnected() {
-  if (!wifiOtaEnabled || !wifiApRunning) return false;
+  if (!cfg::FEATURE_WIFI_AP || !wifiOtaEnabled || !wifiApRunning) return false;
   const wifi_mode_t mode = WiFi.getMode();
   if (mode != WIFI_AP && mode != WIFI_AP_STA) return false;
   return WiFi.softAPgetStationNum() > 0;
 }
 
 static bool shouldBlePresenceBeEnabled() {
+  if (!cfg::FEATURE_BLE) return false;
   if (!wifiOtaEnabled) return false;
   if (otaUploadInProgress) return false;
   return true;
@@ -762,6 +1291,7 @@ static uint32_t wifiRecoveryBackoffMs() {
 }
 
 static void ensureWifiOtaServices() {
+  if (!cfg::FEATURE_WIFI_AP) return;
   if (!wifiOtaEnabled) return;
   const wifi_mode_t mode = WiFi.getMode();
   if (wifiApRunning && (mode == WIFI_AP || mode == WIFI_AP_STA)) return;
@@ -841,6 +1371,10 @@ static bool targetIncludesCollars(const JsonVariantConst payload) {
 }
 
 static void applyWifiOtaMode(bool enabled, const char* source) {
+  if (enabled && !cfg::FEATURE_WIFI_AP) {
+    LOGW("SET_PARAMS: WiFi/AP indisponivel neste perfil (%s)", cfg::DIAG_PROFILE_NAME);
+    return;
+  }
   if (wifiOtaEnabled == enabled) {
     LOGI("SET_PARAMS: wifi_ota_enabled ja estava em %d (%s)", enabled ? 1 : 0, source);
     return;
@@ -876,7 +1410,9 @@ static bool isRelayCandidate(const LoRaFrame& frame) {
          frame.msgType == MsgType::ACK ||
          frame.msgType == MsgType::NACK ||
          frame.msgType == MsgType::SET_FENCE ||
-         frame.msgType == MsgType::SET_HERDING_PLAN;
+         frame.msgType == MsgType::SET_HERDING_PLAN ||
+         frame.msgType == MsgType::SET_PARAMS ||
+         frame.msgType == MsgType::PING;
 }
 
 static const char* uplinkTypeLabel(MsgType t) {
@@ -903,6 +1439,8 @@ static bool sendLoRaJsonFrame(uint32_t deviceId, MsgType msgType, const JsonVari
 
   LoRaFrame tx;
   tx.deviceId = deviceId;
+  tx.scopeId = parseScopeIdHex(payload["scope_id"]);
+  if (tx.scopeId == 0) tx.scopeId = bindingScopeIdValue();
   tx.msgType = msgType;
   tx.seq = nextDownlinkSeq();
   tx.timestamp = millis() / 1000;
@@ -1015,6 +1553,15 @@ static bool sendFenceCommandChunked(uint32_t deviceId, const JsonVariantConst pa
     chunkDoc["chunked"] = true;
     chunkDoc["part"] = part;
     chunkDoc["total"] = chunkCount;
+    const char* commandId = pickFirstText(payload["cmd_id"], payload["command_id"]);
+    const char* scopeId = pickFirstText(payload["scope_id"], payload["property_scope_id"]);
+    const char* matrixGatewayId = pickFirstText(payload["matrix_gateway_id"]);
+    if (commandId[0] != '\0') chunkDoc["cmd_id"] = commandId;
+    if (scopeId[0] != '\0') chunkDoc["scope_id"] = scopeId;
+    if (matrixGatewayId[0] != '\0') chunkDoc["matrix_gateway_id"] = matrixGatewayId;
+    if (!payload["requested_at_ms"].isNull()) {
+      chunkDoc["requested_at_ms"] = payload["requested_at_ms"];
+    }
     JsonArray chunkPoints = chunkDoc["points"].to<JsonArray>();
     for (uint8_t i = starts[part]; i < ends[part]; ++i) {
       const JsonArrayConst srcPair = points[i].as<JsonArrayConst>();
@@ -1056,7 +1603,16 @@ static bool sendHerdingPlanChunked(uint32_t deviceId, const JsonVariantConst pay
       StaticJsonDocument<384> chunkDoc;
       chunkDoc["chunked"] = true;
       const char* operationId = payload["operation_id"] | "";
+      const char* commandId = pickFirstText(payload["cmd_id"], payload["command_id"]);
+      const char* scopeId = pickFirstText(payload["scope_id"], payload["property_scope_id"]);
+      const char* matrixGatewayId = pickFirstText(payload["matrix_gateway_id"]);
       if (operationId[0] != '\0') chunkDoc["operation_id"] = operationId;
+      if (commandId[0] != '\0') chunkDoc["cmd_id"] = commandId;
+      if (scopeId[0] != '\0') chunkDoc["scope_id"] = scopeId;
+      if (matrixGatewayId[0] != '\0') chunkDoc["matrix_gateway_id"] = matrixGatewayId;
+      if (!payload["requested_at_ms"].isNull()) {
+        chunkDoc["requested_at_ms"] = payload["requested_at_ms"];
+      }
       chunkDoc["phase_index"] = phaseIdx;
       chunkDoc["phase_total"] = phaseTotal;
       chunkDoc["part"] = part;
@@ -1074,6 +1630,308 @@ static bool sendHerdingPlanChunked(uint32_t deviceId, const JsonVariantConst pay
   }
 
   return true;
+}
+
+static bool queuePollingConfigured() {
+  return cloudTelemetryConfigured() && !isUnsetCloudValue(cfg::RTDB_QUEUE_KEY);
+}
+
+static String queueRootPath() {
+  return String("matrixCommandQueues/") + matrixCloudId() + "/" + String(cfg::RTDB_QUEUE_KEY);
+}
+
+static bool loadNextQueuedCommand(String& commandIdOut, DynamicJsonDocument& commandDocOut) {
+  if (!queuePollingConfigured()) return false;
+  String body;
+  if (!rtdbRead(queueRootPath(), body)) return false;
+  body.trim();
+  if (body.isEmpty() || body == "null") return false;
+
+  DynamicJsonDocument queueDoc(16384);
+  if (deserializeJson(queueDoc, body) != DeserializationError::Ok ||
+      !queueDoc.is<JsonObjectConst>()) {
+    return false;
+  }
+
+  String selectedId;
+  String selectedBody;
+  for (JsonPairConst kv : queueDoc.as<JsonObjectConst>()) {
+    const String key = kv.key().c_str();
+    if (!selectedId.isEmpty() && key >= selectedId) continue;
+    String candidateBody;
+    serializeJson(kv.value(), candidateBody);
+    selectedId = key;
+    selectedBody = candidateBody;
+  }
+  if (selectedId.isEmpty() || selectedBody.isEmpty()) return false;
+
+  commandDocOut.clear();
+  if (deserializeJson(commandDocOut, selectedBody) != DeserializationError::Ok) {
+    return false;
+  }
+  commandIdOut = selectedId;
+  return true;
+}
+
+static bool deleteQueuedCommand(const String& commandId) {
+  if (commandId.isEmpty()) return false;
+  return rtdbDelete(queueRootPath() + "/" + commandId);
+}
+
+static bool dispatchQueuedSimpleCommand(
+    const String& commandId,
+    DynamicJsonDocument& commandDoc,
+    const char** reason) {
+  const char* command = commandDoc["command"] | "";
+  const char* propertyId = commandDoc["propertyId"] | "";
+  const char* propertyScopeId = commandDoc["propertyScopeId"] | "";
+  const char* matrixGatewayId = commandDoc["matrixGatewayId"] | "";
+  const JsonArrayConst targetDeviceIds = commandDoc["targetDeviceIds"].as<JsonArrayConst>();
+  const JsonArrayConst targetGatewayIds = commandDoc["targetGatewayIds"].as<JsonArrayConst>();
+  JsonVariant payloadVariant = commandDoc["payload"];
+  if (!payloadVariant.isNull() && !payloadVariant.is<JsonObject>()) {
+    if (reason) *reason = "invalid_payload";
+    return false;
+  }
+
+  DynamicJsonDocument payloadDoc(8192);
+  if (payloadVariant.is<JsonObject>()) {
+    payloadDoc.set(payloadVariant);
+  } else {
+    payloadDoc.to<JsonObject>();
+  }
+  payloadDoc["cmd_id"] = commandId;
+
+  clearActiveSimpleCommand();
+  activeSimpleCommand.active = true;
+  activeSimpleCommand.dispatchAtMs = millis();
+  activeSimpleCommand.createdAtMs = commandDoc["createdAtMs"] | 0ULL;
+  activeSimpleCommand.expiresAtMs = commandDoc["expiresAtMs"] | 0ULL;
+  copyStringToBuffer(activeSimpleCommand.commandId, sizeof(activeSimpleCommand.commandId), commandId.c_str());
+  copyStringToBuffer(activeSimpleCommand.command, sizeof(activeSimpleCommand.command), command);
+  copyStringToBuffer(activeSimpleCommand.propertyId, sizeof(activeSimpleCommand.propertyId), propertyId);
+  copyStringToBuffer(
+      activeSimpleCommand.propertyScopeId,
+      sizeof(activeSimpleCommand.propertyScopeId),
+      propertyScopeId);
+  copyStringToBuffer(
+      activeSimpleCommand.matrixGatewayId,
+      sizeof(activeSimpleCommand.matrixGatewayId),
+      matrixGatewayId);
+  copyStringToBuffer(
+      activeSimpleCommand.requestedByUid,
+      sizeof(activeSimpleCommand.requestedByUid),
+      commandDoc["requestedByUid"] | "");
+  copyStringToBuffer(
+      activeSimpleCommand.requestedByRole,
+      sizeof(activeSimpleCommand.requestedByRole),
+      commandDoc["requestedByRole"] | "user");
+
+  bool sentAny = false;
+  if (!targetDeviceIds.isNull() && targetDeviceIds.size() > 0) {
+    for (JsonVariantConst rawId : targetDeviceIds) {
+      const char* textId = rawId | "";
+      uint32_t deviceId = rawId.is<uint32_t>() ? rawId.as<uint32_t>() : (uint32_t)strtoul(textId, nullptr, 10);
+      if (deviceId == 0) {
+        if (reason) *reason = "invalid_target_device";
+        clearActiveSimpleCommand();
+        return false;
+      }
+      if (activeSimpleCommand.targetCount >= cfg::MAX_HERD_OPERATION_DEVICES) {
+        if (reason) *reason = "too_many_targets";
+        clearActiveSimpleCommand();
+        return false;
+      }
+      const uint8_t idx = activeSimpleCommand.targetCount++;
+      snprintf(
+          activeSimpleCommand.targets[idx].targetId,
+          sizeof(activeSimpleCommand.targets[idx].targetId),
+          "%lu",
+          (unsigned long)deviceId);
+      bool ok = false;
+      if (strcmp(command, "SET_FENCE") == 0) {
+        ok = sendFenceCommandChunked(deviceId, payloadDoc.as<JsonVariantConst>(), reason);
+      } else if (strcmp(command, "SET_PARAMS") == 0 || strcmp(command, "PING") == 0) {
+        const MsgType msgType =
+            strcmp(command, "SET_PARAMS") == 0 ? MsgType::SET_PARAMS : MsgType::PING;
+        ok = sendLoRaJsonFrame(deviceId, msgType, payloadDoc.as<JsonVariantConst>(), reason);
+      }
+      if (!ok) {
+        clearActiveSimpleCommand();
+        return false;
+      }
+      sentAny = true;
+    }
+  } else if (!targetGatewayIds.isNull() && targetGatewayIds.size() > 0) {
+    JsonArray gatewayTargetIds = payloadDoc["target_gateway_ids"].to<JsonArray>();
+    for (JsonVariantConst rawId : targetGatewayIds) {
+      const char* textId = rawId | "";
+      if (!textId[0]) continue;
+      if (activeSimpleCommand.targetCount >= cfg::MAX_HERD_OPERATION_DEVICES) {
+        if (reason) *reason = "too_many_targets";
+        clearActiveSimpleCommand();
+        return false;
+      }
+      const uint8_t idx = activeSimpleCommand.targetCount++;
+      copyStringToBuffer(
+          activeSimpleCommand.targets[idx].targetId,
+          sizeof(activeSimpleCommand.targets[idx].targetId),
+          textId);
+      gatewayTargetIds.add(textId);
+    }
+    const MsgType msgType =
+        strcmp(command, "SET_PARAMS") == 0 ? MsgType::SET_PARAMS : MsgType::PING;
+    if (!sendLoRaJsonFrame(0, msgType, payloadDoc.as<JsonVariantConst>(), reason)) {
+      clearActiveSimpleCommand();
+      return false;
+    }
+    sentAny = activeSimpleCommand.targetCount > 0;
+  }
+
+  if (!sentAny || activeSimpleCommand.targetCount == 0) {
+    clearActiveSimpleCommand();
+    if (reason) *reason = "no_targets";
+    return false;
+  }
+  publishSimpleCommandResult("dispatching", nullptr);
+  return true;
+}
+
+static void processNextQueuedCommand() {
+  if (!queuePollingConfigured() || !bindingReady) return;
+  if (herdOp.active || activeSimpleCommand.active) return;
+  const uint32_t nowMsTick = millis();
+  if (queuePollAtMs != 0 &&
+      (uint32_t)(nowMsTick - queuePollAtMs) < 1000UL) {
+    return;
+  }
+  queuePollAtMs = nowMsTick;
+  lastQueuePollAtUnixMs = unixNowMs(unixNowSec());
+
+  String commandId;
+  DynamicJsonDocument commandDoc(16384);
+  if (!loadNextQueuedCommand(commandId, commandDoc)) return;
+
+  const char* command = commandDoc["command"] | "";
+  const char* propertyId = commandDoc["propertyId"] | "";
+  const char* propertyScopeId = commandDoc["propertyScopeId"] | "";
+  const char* matrixGatewayId = commandDoc["matrixGatewayId"] | "";
+  const uint64_t expiresAtMs = commandDoc["expiresAtMs"] | 0ULL;
+  const uint64_t nowMs = unixNowMs(unixNowSec());
+
+  const char* failReason = nullptr;
+  const char* failStatus = nullptr;
+  if (!commandId.length() || !command[0]) {
+    return;
+  } else if (expiresAtMs != 0 && expiresAtMs <= nowMs) {
+    failStatus = "expired";
+    failReason = "command_expired";
+  } else if (!bindingReady) {
+    failStatus = "rejected";
+    failReason = "property_binding_missing";
+  } else if (strcmp(propertyId, bindingPropertyId) != 0) {
+    failStatus = "rejected";
+    failReason = "property_binding_mismatch";
+  } else if (!rtcmd::isValidScopeId(propertyScopeId) ||
+             strcmp(propertyScopeId, bindingPropertyScopeId) != 0) {
+    failStatus = "rejected";
+    failReason = "property_scope_mismatch";
+  } else if (bindingMatrixGatewayId[0] != '\0' &&
+             strcmp(matrixGatewayId, bindingMatrixGatewayId) != 0) {
+    failStatus = "rejected";
+    failReason = "matrix_gateway_mismatch";
+  }
+
+  if (failStatus) {
+    publishImmediateMatrixCommandResult(
+        commandId.c_str(),
+        command,
+        propertyId,
+        propertyScopeId,
+        matrixGatewayId,
+        commandDoc["requestedByUid"] | "",
+        commandDoc["requestedByRole"] | "user",
+        commandDoc["createdAtMs"] | 0ULL,
+        commandDoc["expiresAtMs"] | 0ULL,
+        failStatus,
+        failReason);
+    deleteQueuedCommand(commandId);
+    return;
+  }
+
+  if (strcmp(command, "SET_HERDING_PLAN") == 0) {
+    JsonVariant payloadVariant = commandDoc["payload"];
+    const char* startReason = nullptr;
+    DynamicJsonDocument payloadDoc(8192);
+    if (payloadVariant.is<JsonObject>()) {
+      payloadDoc.set(payloadVariant);
+    }
+    payloadDoc["cmd_id"] = commandId;
+    payloadDoc["command_id"] = commandId;
+    payloadDoc["scope_id"] = propertyScopeId;
+    payloadDoc["property_scope_id"] = propertyScopeId;
+    payloadDoc["matrix_gateway_id"] = matrixGatewayId;
+    payloadDoc["requested_at_ms"] = commandDoc["createdAtMs"] | 0ULL;
+    if (!payloadDoc.is<JsonObject>() ||
+        !startHerdingOperation(payloadDoc.as<JsonVariantConst>(), &startReason)) {
+      publishImmediateMatrixCommandResult(
+          commandId.c_str(),
+          command,
+          propertyId,
+          propertyScopeId,
+          matrixGatewayId,
+          commandDoc["requestedByUid"] | "",
+          commandDoc["requestedByRole"] | "user",
+          commandDoc["createdAtMs"] | 0ULL,
+          commandDoc["expiresAtMs"] | 0ULL,
+          "failed",
+          startReason ? startReason : "invalid_operation_payload");
+    } else {
+      copyStringToBuffer(herdOp.loraCommandId, sizeof(herdOp.loraCommandId), commandId.c_str());
+      copyStringToBuffer(
+          herdOp.propertyScopeId, sizeof(herdOp.propertyScopeId), propertyScopeId);
+      herdOp.createdAtMs = commandDoc["createdAtMs"] | 0ULL;
+      herdOp.expiresAtMs = commandDoc["expiresAtMs"] | 0ULL;
+      publishHerdingOperationSnapshot(true, "dispatching");
+    }
+    deleteQueuedCommand(commandId);
+    return;
+  }
+
+  if (strcmp(command, "SET_FENCE") != 0 &&
+      strcmp(command, "SET_PARAMS") != 0 &&
+      strcmp(command, "PING") != 0) {
+    publishImmediateMatrixCommandResult(
+        commandId.c_str(),
+        command,
+        propertyId,
+        propertyScopeId,
+        matrixGatewayId,
+        commandDoc["requestedByUid"] | "",
+        commandDoc["requestedByRole"] | "user",
+        commandDoc["createdAtMs"] | 0ULL,
+        commandDoc["expiresAtMs"] | 0ULL,
+        "rejected",
+        "unsupported_command");
+    deleteQueuedCommand(commandId);
+    return;
+  }
+
+  if (!dispatchQueuedSimpleCommand(commandId, commandDoc, &failReason)) {
+    publishImmediateMatrixCommandResult(
+        commandId.c_str(),
+        command,
+        propertyId,
+        propertyScopeId,
+        matrixGatewayId,
+        commandDoc["requestedByUid"] | "",
+        commandDoc["requestedByRole"] | "user",
+        commandDoc["createdAtMs"] | 0ULL,
+        commandDoc["expiresAtMs"] | 0ULL,
+        "failed",
+        failReason ? failReason : "lora_send_failed");
+  }
+  deleteQueuedCommand(commandId);
 }
 
 static void resetHerdingOperationState() {
@@ -1174,6 +2032,8 @@ static void publishHerdingOperationSnapshot(
   doc["requestedByUid"] = herdOp.requestedByUid;
   doc["requestedByRole"] = herdOp.requestedByRole;
   doc["matrixGatewayId"] = herdOp.matrixGatewayId;
+  if (herdOp.propertyScopeId[0] != '\0') doc["propertyScopeId"] = herdOp.propertyScopeId;
+  if (herdOp.loraCommandId[0] != '\0') doc["loraCommandId"] = herdOp.loraCommandId;
   doc["updatedAt"] = nowMs;
   doc["writer"] = "gateway_matrix";
   doc["matrixId"] = matrixCloudId();
@@ -1209,13 +2069,68 @@ static void publishHerdingOperationSnapshot(
     if (device.lastReason[0] != '\0') item["reason"] = device.lastReason;
   }
 
-  String body;
-  serializeJson(doc, body);
-  const bool cloudOk = cloudTelemetryConfigured() && ensureCloudBackhaulConnected() &&
-                       rtdbWrite("PUT", String("herdingOperations/") + herdOp.operationId, body);
-  if (!cloudOk && cloudTelemetryConfigured()) {
-    LOGW("Falha upload RTDB herding operation op=%s status=%s",
-         herdOp.operationId, status);
+  if (herdOp.loraCommandId[0] != '\0' && herdOp.propertyId[0] != '\0' &&
+      herdOp.propertyScopeId[0] != '\0') {
+    const char* resultStatus = "dispatching";
+    if (strcmp(status, "requested") == 0) resultStatus = "acknowledged";
+    if (strcmp(status, "completed") == 0) resultStatus = "completed";
+    if (strcmp(status, "failed") == 0 || strcmp(status, "superseded") == 0) {
+      resultStatus = "failed";
+    }
+
+    DynamicJsonDocument resultDoc(2048);
+    resultDoc["commandId"] = herdOp.loraCommandId;
+    resultDoc["command"] = "SET_HERDING_PLAN";
+    resultDoc["status"] = resultStatus;
+    resultDoc["createdAtMs"] = herdOp.createdAtMs;
+    resultDoc["updatedAtMs"] = nowMs;
+    resultDoc["expiresAtMs"] = herdOp.expiresAtMs;
+    resultDoc["propertyId"] = herdOp.propertyId;
+    resultDoc["propertyScopeId"] = herdOp.propertyScopeId;
+    resultDoc["matrixId"] = matrixCloudId();
+    resultDoc["matrixGatewayId"] = herdOp.matrixGatewayId;
+    resultDoc["matrixRuntimeId"] = matrixCloudId();
+    resultDoc["requestedByUid"] = herdOp.requestedByUid;
+    resultDoc["requestedByRole"] = herdOp.requestedByRole;
+    resultDoc["writer"] = "gateway_matrix";
+    resultDoc["writerKey"] = cfg::RTDB_WRITER_KEY;
+    if (herdOp.failureReason[0] != '\0') resultDoc["reason"] = herdOp.failureReason;
+    JsonObject resultStatuses = resultDoc["deviceResults"].to<JsonObject>();
+    for (uint8_t i = 0; i < herdOp.deviceCount; ++i) {
+      const HerdingOperationDeviceState& device = herdOp.devices[i];
+      JsonObject item = resultStatuses.createNestedObject(String(device.deviceId));
+      item["status"] = herdDeviceStatusLabel(device);
+      item["retryCount"] = device.retryCount;
+      if (device.lastReason[0] != '\0') item["reason"] = device.lastReason;
+      item["ok"] = device.lastReason[0] == '\0';
+    }
+    String resultBody;
+    serializeJson(resultDoc, resultBody);
+    const bool matrixOk = rtdbWrite(
+        "PUT",
+        String("matrixCommandResults/") + matrixCloudId() + "/" + herdOp.loraCommandId,
+        resultBody);
+    const bool propertyOk = rtdbWrite(
+        "PUT",
+        String("propertyCommands/") + sanitizeRtdbKey(String(herdOp.propertyId)) + "/" +
+            herdOp.loraCommandId,
+        resultBody);
+    bool eventOk = true;
+    if (strcmp(herdOp.lastCommandStatus, resultStatus) != 0) {
+      eventOk = appendPropertyCommandEvent(
+          herdOp.propertyId,
+          herdOp.loraCommandId,
+          resultStatus,
+          herdOp.failureReason[0] != '\0' ? herdOp.failureReason : nullptr,
+          &resultDoc);
+      copyStringToBuffer(
+          herdOp.lastCommandStatus,
+          sizeof(herdOp.lastCommandStatus),
+          resultStatus);
+    }
+    if (!(matrixOk && propertyOk && eventOk)) {
+      setLastCloudWriteError("herd_status", herdOp.loraCommandId);
+    }
   }
 
   herdOp.updatedAtMs = (uint32_t)(nowMs > 0xFFFFFFFFULL ? 0xFFFFFFFFUL : nowMs);
@@ -1283,6 +2198,8 @@ static bool startHerdingOperation(const JsonVariantConst payload, const char** r
   next.active = true;
   next.finalized = false;
   next.startedAtMs = millis();
+  next.createdAtMs = payload["created_at_ms"] | (payload["requested_at_ms"] | 0ULL);
+  next.expiresAtMs = payload["expires_at_ms"] | 0ULL;
   copyStringToBuffer(next.operationId, sizeof(next.operationId), operationId);
   copyStringToBuffer(next.propertyId, sizeof(next.propertyId), payload["property_id"] | "");
   copyStringToBuffer(next.ownerUid, sizeof(next.ownerUid), payload["owner_uid"] | "");
@@ -1296,6 +2213,17 @@ static bool startHerdingOperation(const JsonVariantConst payload, const char** r
       next.matrixGatewayId,
       sizeof(next.matrixGatewayId),
       payload["matrix_gateway_id"] | "");
+  const char* nextPropertyScopeId =
+      pickFirstText(payload["property_scope_id"], payload["scope_id"]);
+  if (!nextPropertyScopeId[0]) nextPropertyScopeId = bindingPropertyScopeId;
+  copyStringToBuffer(
+      next.propertyScopeId,
+      sizeof(next.propertyScopeId),
+      nextPropertyScopeId);
+  copyStringToBuffer(
+      next.loraCommandId,
+      sizeof(next.loraCommandId),
+      pickFirstText(payload["cmd_id"], payload["command_id"]));
 
   for (uint8_t i = 0; i < pointCount; ++i) {
     double lat = 0.0;
@@ -1504,9 +2432,47 @@ static void handleHerdingOperationEvent(const LoRaFrame& rx) {
   }
 }
 
+static void handleSimpleCommandFeedback(const LoRaFrame& rx) {
+  if (!activeSimpleCommand.active) return;
+  if (rx.msgType != MsgType::ACK && rx.msgType != MsgType::NACK) return;
+
+  StaticJsonDocument<256> payload;
+  if (deserializeJson(payload, rx.payload, rx.payloadLen) != DeserializationError::Ok) {
+    return;
+  }
+
+  const char* commandId = pickFirstText(payload["cmd_id"], payload["command_id"]);
+  if (strcmp(commandId, activeSimpleCommand.commandId) != 0) return;
+
+  char targetId[32]{};
+  const char* gatewayId = payload["gateway_id"] | "";
+  if (gatewayId[0] != '\0') {
+    copyStringToBuffer(targetId, sizeof(targetId), gatewayId);
+  } else {
+    snprintf(targetId, sizeof(targetId), "%lu", (unsigned long)rx.deviceId);
+  }
+
+  const char* reason = payload["reason"] | "";
+  const char* status = payload["status"] | (rx.msgType == MsgType::ACK ? "completed" : "nacked");
+  markActiveSimpleCommandTarget(targetId, rx.msgType == MsgType::ACK, status, reason);
+  if (rx.msgType == MsgType::NACK) {
+    publishSimpleCommandResult("nacked", reason[0] ? reason : "nack");
+    clearActiveSimpleCommand();
+    return;
+  }
+
+  if (allActiveSimpleTargetsTerminal()) {
+    publishSimpleCommandResult(anyActiveSimpleTargetFailed() ? "failed" : "completed", nullptr);
+    clearActiveSimpleCommand();
+    return;
+  }
+  publishSimpleCommandResult("acknowledged", nullptr);
+}
+
 static void relayFrameToPeerGateways(const LoRaFrame& rx) {
   if (!cfg::GATEWAY_RELAY_ENABLED) return;
   if (!isRelayCandidate(rx)) return;
+  if (!scopeMatchesBinding(rx.scopeId)) return;
 
   LoRaFrame relay = rx;
   for (int i = 0; i < 12; ++i) relay.nonce[i] = (uint8_t)esp_random();
@@ -1623,6 +2589,7 @@ void setup() {
 #endif
   WiFi.onEvent(onWifiEvent);
   restoreDownlinkSeq();
+  loadBindingConfig();
 
   Wire.begin(cfg::PIN_I2C_SDA, cfg::PIN_I2C_SCL);
   bool displayOk = true;
@@ -1632,13 +2599,13 @@ void setup() {
 #endif
   drawStatus("Boot", cfg::FW_VERSION);
 
-  bool wifiOk = true;
-  if (wifiOtaEnabled) {
+  bool wifiOk = !cfg::FEATURE_WIFI_AP;
+  if (cfg::FEATURE_WIFI_AP && wifiOtaEnabled) {
     wifiOk = setupWiFi();
     if (wifiOk) setupOta();
   }
-  bool bleInitOk = !cfg::BLE_PRESENCE_ENABLED;
-  if (cfg::BLE_PRESENCE_ENABLED) {
+  bool bleInitOk = !cfg::FEATURE_BLE;
+  if (cfg::FEATURE_BLE) {
     const String nodeId = gatewayNodeId();
     bleInitOk = blePresence.begin(
         BleNodeKind::MATRIX,
@@ -1649,13 +2616,18 @@ void setup() {
     blePresence.setEnabled(shouldBlePresenceBeEnabled());
     blePresence.setFlags(wifiOtaEnabled, WiFi.status() == WL_CONNECTED);
   }
-  api.begin();
+  if (cfg::FEATURE_HTTP || cfg::FEATURE_WS) {
+    api.begin();
+  }
   const bool rtcOk = rtc.begin();
   if (!rtcOk) LOGW("RTC indisponivel");
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
 
-  const bool sdOk = sdlog.begin(cfg::PIN_SD_CS);
-  if (!sdOk) LOGW("SD indisponivel");
+  bool sdOk = !cfg::FEATURE_SD;
+  if (cfg::FEATURE_SD) {
+    sdOk = sdlog.begin(cfg::PIN_SD_CS);
+    if (!sdOk) LOGW("SD indisponivel");
+  }
   const bool loraOk = lora.begin();
   if (!loraOk) LOGE("LoRa indisponivel");
   const bool cloudConfigured = cloudTelemetryConfigured();
@@ -1668,6 +2640,7 @@ void setup() {
       sdOk,
       loraOk,
       cloudConfigured);
+  if (bindingReady) publishMatrixRuntimeMirrors(true);
 
   LOGI("Gateway matriz pronto fw=%s", cfg::FW_VERSION);
 }
@@ -1676,72 +2649,103 @@ void loop() {
   feedWatchdogIfEnabled();
   ensureWifiOtaServices();
   feedWatchdogIfEnabled();
-  ensureCloudBackhaulConnected();
+  if (cfg::FEATURE_BACKHAUL) {
+    ensureCloudBackhaulConnected();
+  }
+  if (cfg::FEATURE_CLOUD) {
+    publishMatrixRuntimeMirrors(false);
+  }
   feedWatchdogIfEnabled();
   const bool apClientConnected = wifiApClientConnected();
-  if (wifiOtaEnabled && cfg::OTA_ENABLED) {
+  if (wifiOtaEnabled && cfg::FEATURE_OTA && cfg::OTA_ENABLED) {
     ArduinoOTA.handle();
     feedWatchdogIfEnabled();
-    if (otaUploadInProgress || apClientConnected) {
+    if (otaUploadInProgress) {
       delay(2);
       return;
     }
   }
-  if (cfg::BLE_PRESENCE_ENABLED) {
+  if (apClientConnected) {
+    static uint32_t lastApClientLoopLogAtMs = 0;
+    const uint32_t now = millis();
+    if (now - lastApClientLoopLogAtMs >= 10000UL) {
+      lastApClientLoopLogAtMs = now;
+      LOGI("Cliente no AP ativo; mantendo loop LoRa/cloud (n=%d)", WiFi.softAPgetStationNum());
+    }
+  }
+  if (cfg::FEATURE_BLE) {
     const bool bleEnabled = shouldBlePresenceBeEnabled();
     blePresence.setEnabled(bleEnabled);
     blePresence.setFlags(wifiOtaEnabled, WiFi.status() == WL_CONNECTED);
     if (bleEnabled) blePresence.loop();
   }
   feedWatchdogIfEnabled();
-  if (wifiOtaEnabled && WiFi.getMode() != WIFI_OFF) api.loop();
+  if ((cfg::FEATURE_HTTP || cfg::FEATURE_WS) &&
+      (!cfg::FEATURE_WIFI_AP || (wifiOtaEnabled && WiFi.getMode() != WIFI_OFF))) {
+    api.loop();
+  }
   feedWatchdogIfEnabled();
 
   LoRaFrame rx;
   if (lora.receive(rx)) {
-    if (rx.msgType == MsgType::SET_PARAMS) {
-      StaticJsonDocument<256> params;
-      if (deserializeJson(params, rx.payload, rx.payloadLen) == DeserializationError::Ok) {
-        bool wifiEnabled = false;
-        const JsonVariantConst payload = params.as<JsonVariantConst>();
-        const bool hasWifiField = parseWifiOtaParam(payload, wifiEnabled);
-        const JsonVariantConst requestedByAdmin = payload["requested_by_admin"];
-        const rtcmd::ValidationCode setParamsCode = rtcmd::validateSetParamsPayload(
-            hasWifiField,
-            wifiEnabled,
-            requestedByAdmin.is<bool>() && requestedByAdmin.as<bool>(),
-            payload["requested_by_role"] | "",
-            payload["actor_role"] | "");
-        if (setParamsCode == rtcmd::ValidationCode::kOk && targetIncludesGateway(payload)) {
-          applyWifiOtaMode(wifiEnabled, "LoRa");
-        } else if (setParamsCode == rtcmd::ValidationCode::kAdminRequiredForLoraOnly) {
-          LOGW("SET_PARAMS LoRa rejeitado: admin requerido para LoRa-only");
+    if (!scopeMatchesBinding(rx.scopeId)) {
+      LOGW(
+          "scope_reject device=%lu msg=%u seq=%lu scope=%s ready=%d",
+          (unsigned long)rx.deviceId,
+          (unsigned)rx.msgType,
+          (unsigned long)rx.seq,
+          scopeIdToHex(rx.scopeId).c_str(),
+          bindingReady ? 1 : 0);
+    } else {
+      if (rx.msgType == MsgType::SET_PARAMS) {
+        StaticJsonDocument<256> params;
+        if (deserializeJson(params, rx.payload, rx.payloadLen) == DeserializationError::Ok) {
+          bool wifiEnabled = false;
+          const JsonVariantConst payload = params.as<JsonVariantConst>();
+          const bool hasWifiField = parseWifiOtaParam(payload, wifiEnabled);
+          const JsonVariantConst requestedByAdmin = payload["requested_by_admin"];
+          const rtcmd::ValidationCode setParamsCode = rtcmd::validateSetParamsPayload(
+              hasWifiField,
+              wifiEnabled,
+              requestedByAdmin.is<bool>() && requestedByAdmin.as<bool>(),
+              payload["requested_by_role"] | "",
+              payload["actor_role"] | "");
+          if (setParamsCode == rtcmd::ValidationCode::kOk && targetIncludesGateway(payload)) {
+            applyWifiOtaMode(wifiEnabled, "LoRa");
+          } else if (setParamsCode == rtcmd::ValidationCode::kAdminRequiredForLoraOnly) {
+            LOGW("SET_PARAMS LoRa rejeitado: admin requerido para LoRa-only");
+          }
         }
       }
+
+      handleSimpleCommandFeedback(rx);
+      handleHerdingOperationFeedback(rx);
+      handleHerdingOperationEvent(rx);
+      relayFrameToPeerGateways(rx);
+
+      StaticJsonDocument<576> packet;
+      packet["type"] = uplinkTypeLabel(rx.msgType);
+      packet["device_id"] = rx.deviceId;
+      packet["msg_type"] = (int)rx.msgType;
+      packet["seq"] = rx.seq;
+      packet["timestamp"] = rx.timestamp;
+      packet["scope_id"] = scopeIdToHex(rx.scopeId);
+      packet["gateway_id"] = gatewayNodeId();
+      packet["gateway_role"] = "matrix";
+      packet["gateway_wifi_ota_enabled"] = wifiOtaEnabled;
+      packet["payload"] = String((char*)rx.payload).substring(0, rx.payloadLen);
+      String out;
+      serializeJson(packet, out);
+      api.broadcastTelemetry(out);
+      if (cfg::FEATURE_SD) sdlog.log(String("UL|") + out);
+      drawStatus("RX LoRa", out.substring(0, 16).c_str());
+
+      if (cfg::FEATURE_CLOUD) {
+        publishTelemetryToCloud(rx);
+        publishDailyHealthToCloud(rx);
+        publishEventToCloud(rx);
+      }
     }
-
-    handleHerdingOperationFeedback(rx);
-    handleHerdingOperationEvent(rx);
-    relayFrameToPeerGateways(rx);
-
-    StaticJsonDocument<512> packet;
-    packet["type"] = uplinkTypeLabel(rx.msgType);
-    packet["device_id"] = rx.deviceId;
-    packet["msg_type"] = (int)rx.msgType;
-    packet["seq"] = rx.seq;
-    packet["timestamp"] = rx.timestamp;
-    packet["gateway_id"] = gatewayNodeId();
-    packet["gateway_role"] = "matrix";
-    packet["gateway_wifi_ota_enabled"] = wifiOtaEnabled;
-    packet["payload"] = String((char*)rx.payload).substring(0, rx.payloadLen);
-    String out;
-    serializeJson(packet, out);
-    api.broadcastTelemetry(out);
-    sdlog.log(String("UL|") + out);
-    drawStatus("RX LoRa", out.substring(0, 16).c_str());
-
-    publishTelemetryToCloud(rx);
-    publishDailyHealthToCloud(rx);
   }
   feedWatchdogIfEnabled();
 
@@ -1762,31 +2766,39 @@ void loop() {
         String out;
         serializeJson(res, out);
         api.broadcastTelemetry(out);
-        sdlog.log(String("HERD_CMD|") + out);
-        if (!ok && res["operation_id"].as<const char*>()[0] != '\0') {
-          const uint32_t nowSec = unixNowSec();
-          const uint64_t nowMs = unixNowMs(nowSec);
-          DynamicJsonDocument doc(1024);
-          doc["operationId"] = res["operation_id"].as<const char*>();
-          doc["status"] = "failed";
-          doc["failureReason"] = failReason ? failReason : "invalid_operation_payload";
-          doc["updatedAt"] = nowMs;
-          doc["writer"] = "gateway_matrix";
-          doc["matrixId"] = matrixCloudId();
-          doc["writerKey"] = cfg::RTDB_WRITER_KEY;
-          String body;
-          serializeJson(doc, body);
-          if (cloudTelemetryConfigured() && ensureCloudBackhaulConnected()) {
-            rtdbWrite(
-                "PUT",
-                String("herdingOperations/") +
-                    String(res["operation_id"].as<const char*>()),
-                body);
-          }
-        }
+        if (cfg::FEATURE_SD) sdlog.log(String("HERD_CMD|") + out);
       } else {
         const String command = cmd["command"] | "PING";
         const JsonVariantConst payload = cmd["payload"].as<JsonVariantConst>();
+        bool handledLocally = false;
+        if (command == "SET_BINDING") {
+          const char* failReason = nullptr;
+          const bool ok = persistBindingConfig(payload, &failReason);
+          StaticJsonDocument<256> res;
+          res["type"] = "command_result";
+          res["ok"] = ok;
+          res["command"] = command;
+          res["supports_scoped_lora"] = true;
+          res["binding_ready"] = bindingReady;
+          if (bindingPropertyId[0]) res["property_id"] = bindingPropertyId;
+          if (bindingPropertyScopeId[0]) res["property_scope_id"] = bindingPropertyScopeId;
+          if (bindingMatrixGatewayId[0]) res["matrix_gateway_id"] = bindingMatrixGatewayId;
+          res["binding_version"] = bindingVersion;
+          if (!ok && failReason) res["reason"] = failReason;
+          String out;
+          serializeJson(res, out);
+          api.broadcastTelemetry(out);
+          if (cfg::FEATURE_SD) sdlog.log(String("CFG|") + out);
+          if (ok && cfg::FEATURE_CLOUD) publishMatrixRuntimeMirrors(true);
+          publishHerdingOperationSnapshot(false, nullptr);
+          handledLocally = true;
+        }
+
+        if (handledLocally) {
+          dispatchActiveHerdingOperation();
+          feedWatchdogIfEnabled();
+          return;
+        }
 
         bool localToggleRequested = false;
         bool localWifiEnabled = wifiOtaEnabled;
@@ -1813,6 +2825,12 @@ void loop() {
         bool shouldRelayLoRa = !(command == "SET_PARAMS" && !targetIncludesCollars(payload));
         const bool setParamsRejected =
             command == "SET_PARAMS" && setParamsCode != rtcmd::ValidationCode::kOk;
+        const uint64_t commandScopeId = parseScopeIdHex(payload["scope_id"]);
+        if (!bindingReady) {
+          shouldRelayLoRa = false;
+        } else if (commandScopeId != 0 && !scopeMatchesBinding(commandScopeId)) {
+          shouldRelayLoRa = false;
+        }
         if (setParamsRejected) {
           shouldRelayLoRa = false;
           localToggleRequested = false;
@@ -1827,6 +2845,12 @@ void loop() {
         if (setParamsRejected) {
           ok = false;
           failReason = rtcmd::validationCodeToReason(setParamsCode);
+        } else if (!bindingReady) {
+          ok = false;
+          failReason = "property_binding_missing";
+        } else if (commandScopeId != 0 && !scopeMatchesBinding(commandScopeId)) {
+          ok = false;
+          failReason = "property_scope_mismatch";
         } else if (shouldRelayLoRa) {
           if (command == "SET_FENCE") {
             ok = sendFenceCommandChunked(deviceId, payload, &failReason);
@@ -1846,7 +2870,7 @@ void loop() {
         String out;
         serializeJson(res, out);
         api.broadcastTelemetry(out);
-        sdlog.log(String("DL|") + out);
+        if (cfg::FEATURE_SD) sdlog.log(String("DL|") + out);
 
         if (localToggleRequested) {
           applyWifiOtaMode(localWifiEnabled, "WiFi");
@@ -1857,6 +2881,15 @@ void loop() {
     }
   }
 
+  if (activeSimpleCommand.active) {
+    const uint64_t nowMs = unixNowMs(unixNowSec());
+    if (activeSimpleCommand.expiresAtMs != 0 && nowMs >= activeSimpleCommand.expiresAtMs) {
+      publishSimpleCommandResult("failed", "command_timeout");
+      clearActiveSimpleCommand();
+    }
+  }
+
+  if (cfg::FEATURE_CLOUD) processNextQueuedCommand();
   dispatchActiveHerdingOperation();
   feedWatchdogIfEnabled();
 

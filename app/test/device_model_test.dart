@@ -86,5 +86,20 @@ void main() {
       expect(device.healthFallbackSchedule, isTrue);
       expect(device.healthSummary, 'Atencao');
     });
+
+    test('parses latest telemetry timestamp from merged payload', () {
+      final expected = DateTime(2026, 4, 2, 18, 17, 43);
+      final device = DeviceModel.fromMap('125', {
+        'deviceId': '125',
+        'name': 'Coleira Telemetria',
+        'status': 'active',
+        'telemetryReceivedAtMs': expected.millisecondsSinceEpoch,
+      });
+
+      expect(
+        device.telemetryReceivedAt?.millisecondsSinceEpoch,
+        expected.millisecondsSinceEpoch,
+      );
+    });
   });
 }

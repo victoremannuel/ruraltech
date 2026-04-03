@@ -33,7 +33,24 @@ bool LoRaManager::sendFrame(LoRaFrame& frame) {
   memcpy(out, frame.nonce, 12);  // nonce em claro para verificação HMAC
   crypto_.encryptAndSign(plain, cipherLen, out + 12, frame.tag, frame.nonce);
   memcpy(out + 12 + cipherLen, frame.tag, 16);
-  return radio_.transmit(out, 12 + cipherLen + 16) == RADIOLIB_ERR_NONE;
+  const int txState = radio_.transmit(out, 12 + cipherLen + 16);
+  if (txState == RADIOLIB_ERR_NONE) {
+    LOGI(
+        "LoRa TX ok type=%u seq=%lu target=%lu scope=%016llX bytes=%u",
+        (unsigned)frame.msgType,
+        (unsigned long)frame.seq,
+        (unsigned long)frame.deviceId,
+        (unsigned long long)frame.scopeId,
+        (unsigned)(12 + cipherLen + 16));
+    return true;
+  }
+  LOGW(
+      "LoRa TX falhou type=%u seq=%lu target=%lu err=%d",
+      (unsigned)frame.msgType,
+      (unsigned long)frame.seq,
+      (unsigned long)frame.deviceId,
+      txState);
+  return false;
 }
 
 bool LoRaManager::receiveFrame(LoRaFrame& frame, uint32_t windowMs) {
@@ -46,30 +63,55 @@ bool LoRaManager::receiveFrame(LoRaFrame& frame, uint32_t windowMs) {
       if (len < 28) continue;
       lastRssi_ = radio_.getRSSI();
       lastSnr_ = radio_.getSNR();
+      LOGI(
+          "LoRa RX raw len=%u rssi=%d snr=%.1f",
+          (unsigned)len,
+          (int)lastRssi_,
+          lastSnr_);
       const uint8_t* nonce = buf;
       const size_t cipherLen = len - 28;
       const uint8_t* cipher = buf + 12;
       const uint8_t* tag = buf + 12 + cipherLen;
       uint8_t plain[256];
-      if (!crypto_.verifyAndDecrypt(cipher, cipherLen, tag, plain, nonce)) continue;
+      if (!crypto_.verifyAndDecrypt(cipher, cipherLen, tag, plain, nonce)) {
+        LOGW("LoRa RX descartado: decrypt_or_hmac_failed len=%u", (unsigned)len);
+        continue;
+      }
       memcpy(plain + cipherLen, tag, 16);
-      if (!LoRaProtocol::decodePlain(plain, cipherLen + 16, frame)) continue;
+      if (!LoRaProtocol::decodePlain(plain, cipherLen + 16, frame)) {
+        LOGW("LoRa RX descartado: invalid_plain_frame len=%u", (unsigned)len);
+        continue;
+      }
 
       // A coleira só deve consumir comandos destinados a ela (ou broadcast).
       const bool targetMatch = frame.deviceId == cfg::DEVICE_ID || frame.deviceId == 0;
-      if (!targetMatch) continue;
+      if (!targetMatch) {
+        LOGI(
+            "LoRa RX ignorado: target=%lu self=%lu",
+            (unsigned long)frame.deviceId,
+            (unsigned long)cfg::DEVICE_ID);
+        continue;
+      }
 
       const bool downlinkCommand =
           frame.msgType == MsgType::SET_FENCE ||
           frame.msgType == MsgType::SET_HERDING_PLAN ||
           frame.msgType == MsgType::SET_PARAMS ||
           frame.msgType == MsgType::PING;
-      if (!downlinkCommand) continue;
+      if (!downlinkCommand) {
+        LOGI("LoRa RX ignorado: unsupported_type=%u", (unsigned)frame.msgType);
+        continue;
+      }
 
       if (frame.seq <= lastSeqSeen_) {
         LOGW("Replay detectado seq=%lu", frame.seq);
         continue;
       }
+      LOGI(
+          "LoRa RX aceito type=%u seq=%lu scope=%016llX",
+          (unsigned)frame.msgType,
+          (unsigned long)frame.seq,
+          (unsigned long long)frame.scopeId);
       lastSeqSeen_ = frame.seq;
       if (replayPrefsReady_ &&
           replayPrefs_.putULong("last_seq", lastSeqSeen_) != sizeof(uint32_t)) {

@@ -11,6 +11,15 @@
 // #define RT_CFG_AP_SSID "RuralTech-Matriz"
 // #define RT_CFG_AP_PASS "ruraltechota"
 
+// Perfil de diagnostico da matriz (opcional):
+//   0 = operacional completo
+//   1 = LoRa puro
+//   2 = LoRa + AP + HTTP
+//   3 = stage 2 + WS + OTA + BLE
+//   4 = stage 3 + backhaul/cloud
+//   5 = stage 4 + SD
+// #define RT_MATRIX_DIAG_STAGE 2
+
 // OTA local (opcional)
 // #define RT_CFG_OTA_HOSTNAME "ruraltech-matriz"
 // #define RT_CFG_OTA_PASSWORD "ruraltechota"
@@ -23,3 +32,4 @@
 #define RT_CFG_FIREBASE_RTDB_HOST "ruraltech10-default-rtdb.firebaseio.com"
 #define RT_CFG_RTDB_MATRIX_ID "SET_RTDB_MATRIX_ID"
 #define RT_CFG_RTDB_WRITER_KEY "SET_RTDB_WRITER_KEY"
+#define RT_CFG_RTDB_QUEUE_KEY "SET_RTDB_QUEUE_KEY"

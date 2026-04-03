@@ -20,6 +20,7 @@
 #include <Preferences.h>
 #include <math.h>
 #include <esp_task_wdt.h>
+#include <esp_heap_caps.h>
 #include <esp_sleep.h>
 #include <esp_system.h>
 #include <esp_ota_ops.h>
@@ -37,6 +38,7 @@
 #include "BlePresence.h"
 #include "HerdingController.h"
 #include "StateMachine.h"
+#include "../firmware/shared/command_contract.h"
 
 SensorsManager sensors;
 SmartGps smartGps;
@@ -66,8 +68,16 @@ uint32_t wifiOtaEnabledAtMs = 0;
 uint32_t otaApLastClientSeenMs = 0;
 uint32_t otaRecoveryAttemptAtMs = 0;
 uint8_t otaRecoveryAttemptCount = 0;
+bool statusServerRoutesConfigured_ = false;
+bool statusServerRunning_ = false;
 Preferences prefs_;
 bool prefsReady_ = false;
+char bindingPropertyId_[48]{};
+char bindingPropertyScopeId_[17]{};
+char bindingMatrixGatewayId_[32]{};
+uint32_t bindingVersion_ = 0;
+bool bindingReady_ = false;
+bool supportsScopedLora_ = true;
 GpsData lastGpsForStatus_;
 bool hasLastGpsForStatus_ = false;
 uint32_t lastHealthReportDayKey_ = 0;
@@ -78,6 +88,12 @@ uint32_t lastGpsFailEventAtMs_ = 0;
 uint32_t lastGpsInvalidFixEventAtMs_ = 0;
 uint32_t lastGpsOutlierEventAtMs_ = 0;
 bool gpsFailEventActive_ = false;
+uint32_t bootStartedAtMs_ = 0;
+uint32_t rebootCounter_ = 0;
+uint32_t bootMinFreeHeap_ = 0xFFFFFFFFUL;
+esp_reset_reason_t lastResetReason_ = ESP_RST_UNKNOWN;
+bool maintenanceWindowActive_ = false;
+char bootStage_[32] = "boot";
 static void logEvent(EventType type, int32_t d1, int32_t d2);
 static void copyStringToBuffer(char* dst, size_t dstSize, const char* src);
 static const char* eventTypeLabel(EventType type);
@@ -86,6 +102,10 @@ static const char* activeHerdOperationId();
 static void promoteCompletedHerdingFence();
 static bool isValidPolygon(const Polygon& p);
 static bool beginPrefs();
+static void loadBindingConfig();
+static bool persistBindingConfig(
+    const JsonVariantConst payload,
+    const char** reason = nullptr);
 static bool gpsFixUsableForOnboarding(const GpsData& gps);
 static void updateBlePositionForOnboarding(
     const GpsData* preferred,
@@ -98,6 +118,12 @@ static void persistHealthReportDayKey(uint32_t dayKey);
 static uint32_t loadPersistedHealthReportDayKey();
 static bool sendDailyHealthReport(const Telemetry& t, uint32_t intervalMs);
 static TaskHandle_t watchdogTargetTask();
+static void recordBootStage(const char* stage);
+static void incrementBootCounter();
+static void waitMaintenanceWindow();
+static void configureStatusServerRoutes();
+static void ensureStatusServerRunning();
+static void stopStatusServer();
 
 struct FenceChunkRxState {
   bool active = false;
@@ -120,6 +146,37 @@ static void randomNonce(uint8_t* nonce12) {
   for (int i = 0; i < 12; ++i) nonce12[i] = (uint8_t)esp_random();
 }
 
+static String scopeIdToHex(uint64_t scopeId) {
+  char out[17];
+  snprintf(out, sizeof(out), "%016llX", (unsigned long long)scopeId);
+  return String(out);
+}
+
+static const char* pickFirstText(
+    const JsonVariantConst a,
+    const JsonVariantConst b = JsonVariantConst(),
+    const JsonVariantConst c = JsonVariantConst(),
+    const JsonVariantConst d = JsonVariantConst()) {
+  const JsonVariantConst values[] = {a, b, c, d};
+  for (const JsonVariantConst value : values) {
+    if (!value.is<const char*>()) continue;
+    const char* text = value.as<const char*>();
+    if (text && text[0] != '\0') return text;
+  }
+  return "";
+}
+
+static bool computeBindingReadyState() {
+  return bindingPropertyId_[0] != '\0' &&
+         bindingMatrixGatewayId_[0] != '\0' &&
+         rtcmd::isValidScopeId(bindingPropertyScopeId_);
+}
+
+static uint64_t bindingScopeIdValue() {
+  if (!computeBindingReadyState()) return 0;
+  return strtoull(bindingPropertyScopeId_, nullptr, 16);
+}
+
 static void copyStringToBuffer(char* dst, size_t dstSize, const char* src) {
   if (dstSize == 0) return;
   if (!src) {
@@ -128,6 +185,126 @@ static void copyStringToBuffer(char* dst, size_t dstSize, const char* src) {
   }
   strncpy(dst, src, dstSize - 1);
   dst[dstSize - 1] = '\0';
+}
+
+static void recordBootStage(const char* stage) {
+  copyStringToBuffer(bootStage_, sizeof(bootStage_), stage ? stage : "boot");
+  const uint32_t freeHeap = ESP.getFreeHeap();
+  const uint32_t minHeap = ESP.getMinFreeHeap();
+  if (freeHeap < bootMinFreeHeap_) bootMinFreeHeap_ = freeHeap;
+  if (minHeap < bootMinFreeHeap_) bootMinFreeHeap_ = minHeap;
+  const bool heapOk = heap_caps_check_integrity_all(true);
+  LOGI(
+      "BOOT stage=%s free_heap=%lu min_heap=%lu heap_ok=%d",
+      bootStage_,
+      (unsigned long)freeHeap,
+      (unsigned long)bootMinFreeHeap_,
+      heapOk ? 1 : 0);
+}
+
+static void incrementBootCounter() {
+  if (!beginPrefs()) return;
+  rebootCounter_ = prefs_.getUInt(cfg::PREF_KEY_REBOOT_COUNT, 0) + 1U;
+  prefs_.putUInt(cfg::PREF_KEY_REBOOT_COUNT, rebootCounter_);
+}
+
+static void waitMaintenanceWindow() {
+  if (!wifiOtaEnabled || cfg::MAINTENANCE_BOOT_WINDOW_MS == 0) return;
+  maintenanceWindowActive_ = true;
+  recordBootStage("maintenance_window");
+  const uint32_t startedAtMs = millis();
+  LOGI(
+      "Janela de manutencao segura por %lu ms antes do boot pesado",
+      (unsigned long)cfg::MAINTENANCE_BOOT_WINDOW_MS);
+  while ((uint32_t)(millis() - startedAtMs) < cfg::MAINTENANCE_BOOT_WINDOW_MS) {
+    if (statusServerRunning_) {
+      statusServer.handleClient();
+      if (cfg::OTA_ENABLED) ArduinoOTA.handle();
+    }
+    delay(20);
+  }
+  maintenanceWindowActive_ = false;
+}
+
+static void loadBindingConfig() {
+  bindingPropertyId_[0] = '\0';
+  bindingPropertyScopeId_[0] = '\0';
+  bindingMatrixGatewayId_[0] = '\0';
+  bindingVersion_ = 0;
+  bindingReady_ = false;
+  if (beginPrefs()) {
+    prefs_.getString("property_id", bindingPropertyId_, sizeof(bindingPropertyId_));
+    prefs_.getString("scope_id", bindingPropertyScopeId_, sizeof(bindingPropertyScopeId_));
+    prefs_.getString("matrix_gid", bindingMatrixGatewayId_, sizeof(bindingMatrixGatewayId_));
+    bindingVersion_ = prefs_.getUInt("bind_ver", 0);
+  }
+
+  if (!computeBindingReadyState()) {
+    copyStringToBuffer(
+        bindingPropertyId_, sizeof(bindingPropertyId_), cfg_manual::DEFAULT_PROPERTY_ID);
+    copyStringToBuffer(
+        bindingPropertyScopeId_,
+        sizeof(bindingPropertyScopeId_),
+        cfg_manual::DEFAULT_PROPERTY_SCOPE_ID);
+    copyStringToBuffer(
+        bindingMatrixGatewayId_,
+        sizeof(bindingMatrixGatewayId_),
+        cfg_manual::DEFAULT_MATRIX_GATEWAY_ID);
+    bindingVersion_ = cfg_manual::DEFAULT_BINDING_VERSION;
+  }
+
+  bindingReady_ = computeBindingReadyState();
+  LOGI(
+      "Binding coleira: ready=%d property=%s scope=%s matrix=%s ver=%lu",
+      bindingReady_ ? 1 : 0,
+      bindingPropertyId_[0] ? bindingPropertyId_ : "-",
+      bindingPropertyScopeId_[0] ? bindingPropertyScopeId_ : "-",
+      bindingMatrixGatewayId_[0] ? bindingMatrixGatewayId_ : "-",
+      (unsigned long)bindingVersion_);
+}
+
+static bool persistBindingConfig(const JsonVariantConst payload, const char** reason) {
+  const char* propertyId = pickFirstText(payload["property_id"], payload["propertyId"]);
+  const char* propertyScopeId = pickFirstText(
+      payload["property_scope_id"], payload["propertyScopeId"], payload["scope_id"]);
+  const char* matrixGatewayId = pickFirstText(
+      payload["matrix_gateway_id"], payload["matrixGatewayId"]);
+  uint32_t nextBindingVersion =
+      payload["binding_version"].is<uint32_t>()
+          ? payload["binding_version"].as<uint32_t>()
+          : (payload["bindingVersion"] | 1U);
+
+  if (!propertyId[0]) {
+    if (reason) *reason = "missing_property_id";
+    return false;
+  }
+  if (!rtcmd::isValidScopeId(propertyScopeId)) {
+    if (reason) *reason = "invalid_property_scope_id";
+    return false;
+  }
+  if (!matrixGatewayId[0]) {
+    if (reason) *reason = "missing_matrix_gateway_id";
+    return false;
+  }
+  if (nextBindingVersion == 0) nextBindingVersion = 1;
+  if (!beginPrefs()) {
+    if (reason) *reason = "binding_prefs_unavailable";
+    return false;
+  }
+
+  copyStringToBuffer(bindingPropertyId_, sizeof(bindingPropertyId_), propertyId);
+  copyStringToBuffer(
+      bindingPropertyScopeId_, sizeof(bindingPropertyScopeId_), propertyScopeId);
+  copyStringToBuffer(
+      bindingMatrixGatewayId_, sizeof(bindingMatrixGatewayId_), matrixGatewayId);
+  bindingVersion_ = nextBindingVersion;
+  bindingReady_ = computeBindingReadyState();
+
+  prefs_.putString("property_id", bindingPropertyId_);
+  prefs_.putString("scope_id", bindingPropertyScopeId_);
+  prefs_.putString("matrix_gid", bindingMatrixGatewayId_);
+  prefs_.putUInt("bind_ver", bindingVersion_);
+  return bindingReady_;
 }
 
 static const char* commandLabel(MsgType type) {
@@ -191,11 +368,20 @@ static bool persistLoRaSeqHighWatermark(uint32_t hi) {
 }
 
 static void restoreLoRaSeq() {
+  constexpr uint32_t kSeqBootStride = 1000000UL;
   if (seq == 0) seq = 1;
   if (!beginPrefs()) {
     seqPersistReady_ = false;
+    const uint32_t bootIndex = rebootCounter_ == 0 ? 1U : rebootCounter_;
+    const uint64_t derivedNext = (uint64_t)bootIndex * (uint64_t)kSeqBootStride + 1ULL;
+    if (derivedNext > seq) {
+      seq = derivedNext > 0xFFFFFFFFULL ? 0xFFFFFFFFUL : (uint32_t)derivedNext;
+    }
     seqPersistedHi_ = seq - 1;
-    LOGW("NVS indisponivel para seq uplink; fallback RTC only (next=%lu)", seq);
+    LOGW(
+        "NVS indisponivel para seq uplink; fallback boot-stride next=%lu reboot=%lu",
+        seq,
+        (unsigned long)rebootCounter_);
     return;
   }
 
@@ -208,9 +394,18 @@ static void restoreLoRaSeq() {
   }
   // Mitigacao de bancada: a escrita recorrente do high-watermark em Preferences
   // esta disparando panic de alinhamento nesta placa. Mantemos a restauracao do
-  // ultimo valor salvo e seguimos com monotonicidade em RTC durante a sessao.
+  // ultimo valor salvo e seguimos com monotonicidade via RTC + stride por boot.
   seqPersistReady_ = false;
-  LOGW("Seq uplink restaurado next=%lu hi=%lu (persistencia write-through desabilitada)", seq, seqPersistedHi_);
+  const uint32_t bootIndex = rebootCounter_ == 0 ? 1U : rebootCounter_;
+  const uint64_t derivedNext = (uint64_t)bootIndex * (uint64_t)kSeqBootStride + 1ULL;
+  if (derivedNext > seq) {
+    seq = derivedNext > 0xFFFFFFFFULL ? 0xFFFFFFFFUL : (uint32_t)derivedNext;
+  }
+  LOGW(
+      "Seq uplink restaurado next=%lu hi=%lu reboot=%lu (persistencia write-through desabilitada)",
+      seq,
+      seqPersistedHi_,
+      (unsigned long)rebootCounter_);
 }
 
 static void ensureLoRaSeqReservation(uint32_t nextSeq) {
@@ -282,9 +477,10 @@ static String collarApSsid() {
   return String(ssid);
 }
 
-static void setupStatusServer() {
+static void configureStatusServerRoutes() {
+  if (statusServerRoutesConfigured_) return;
   statusServer.on("/status", HTTP_GET, []() {
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<768> doc;
     doc["ok"] = true;
     doc["service"] = "collar";
     doc["fw"] = cfg::FW_VERSION;
@@ -296,6 +492,19 @@ static void setupStatusServer() {
     doc["ota"] = cfg::OTA_ENABLED;
     doc["wifi_ota_enabled"] = wifiOtaEnabled;
     doc["ota_mode_active"] = otaModeActive;
+    doc["maintenanceWindowActive"] = maintenanceWindowActive_;
+    doc["supportsScopedLora"] = supportsScopedLora_;
+    doc["bindingReady"] = bindingReady_;
+    doc["bindingVersion"] = bindingVersion_;
+    doc["resetReason"] = (int)lastResetReason_;
+    doc["bootStage"] = bootStage_;
+    doc["bootStartedAtMs"] = bootStartedAtMs_;
+    doc["rebootCounter"] = rebootCounter_;
+    doc["freeHeap"] = ESP.getFreeHeap();
+    doc["minFreeHeap"] = bootMinFreeHeap_;
+    if (bindingPropertyId_[0]) doc["propertyId"] = bindingPropertyId_;
+    if (bindingPropertyScopeId_[0]) doc["propertyScopeId"] = bindingPropertyScopeId_;
+    if (bindingMatrixGatewayId_[0]) doc["matrixGatewayId"] = bindingMatrixGatewayId_;
     doc["gps_valid"] = hasLastGpsForStatus_;
     if (hasLastGpsForStatus_) {
       doc["lat"] = lastGpsForStatus_.lat;
@@ -316,7 +525,67 @@ static void setupStatusServer() {
     serializeJson(doc, out);
     statusServer.send(200, "application/json", out);
   });
+  statusServer.on("/binding", HTTP_POST, []() {
+    StaticJsonDocument<384> response;
+    if (!wifiOtaEnabled || WiFi.getMode() == WIFI_OFF) {
+      response["ok"] = false;
+      response["reason"] = "wifi_ota_disabled";
+      String out;
+      serializeJson(response, out);
+      statusServer.send(503, "application/json", out);
+      return;
+    }
+    if (!statusServer.hasArg("plain")) {
+      response["ok"] = false;
+      response["reason"] = "missing_body";
+      String out;
+      serializeJson(response, out);
+      statusServer.send(400, "application/json", out);
+      return;
+    }
+
+    StaticJsonDocument<384> payload;
+    DeserializationError err = deserializeJson(payload, statusServer.arg("plain"));
+    if (err != DeserializationError::Ok) {
+      response["ok"] = false;
+      response["reason"] = "invalid_json";
+      String out;
+      serializeJson(response, out);
+      statusServer.send(400, "application/json", out);
+      return;
+    }
+
+    const char* failReason = nullptr;
+    const bool ok = persistBindingConfig(payload.as<JsonVariantConst>(), &failReason);
+    response["ok"] = ok;
+    response["supportsScopedLora"] = supportsScopedLora_;
+    response["bindingReady"] = bindingReady_;
+    response["bindingVersion"] = bindingVersion_;
+    if (bindingPropertyId_[0]) response["propertyId"] = bindingPropertyId_;
+    if (bindingPropertyScopeId_[0]) response["propertyScopeId"] = bindingPropertyScopeId_;
+    if (bindingMatrixGatewayId_[0]) response["matrixGatewayId"] = bindingMatrixGatewayId_;
+    if (!ok && failReason) response["reason"] = failReason;
+    String out;
+    serializeJson(response, out);
+    statusServer.send(ok ? 200 : 400, "application/json", out);
+  });
+  statusServerRoutesConfigured_ = true;
+}
+
+static void ensureStatusServerRunning() {
+  if (!statusServerRoutesConfigured_) configureStatusServerRoutes();
+  if (statusServerRunning_) return;
+  if (WiFi.getMode() == WIFI_OFF) return;
   statusServer.begin();
+  statusServerRunning_ = true;
+  LOGI("Status HTTP iniciado na porta 80");
+}
+
+static void stopStatusServer() {
+  if (!statusServerRunning_) return;
+  statusServer.close();
+  statusServerRunning_ = false;
+  LOGI("Status HTTP parado");
 }
 
 static bool otaDisableGuardActive() {
@@ -423,6 +692,7 @@ static void loadPersistedConfig() {
   wifiOtaEnabled = loadPersistedWifiOtaEnabled();
   if (wifiOtaEnabled) wifiOtaEnabledAtMs = millis();
   restoreLoRaSeq();
+  loadBindingConfig();
   lastHealthReportDayKey_ = loadPersistedHealthReportDayKey();
 
   Polygon savedFence;
@@ -724,16 +994,19 @@ static void feedWatchdogIfEnabled() {
 }
 
 static void stopWifiOtaMaintenance() {
-  otaModeActive = false;
   otaRecoveryAttemptCount = 0;
   otaRecoveryAttemptAtMs = 0;
+  stopStatusServer();
+  MDNS.end();
   if (WiFi.getMode() == WIFI_STA || WiFi.getMode() == WIFI_AP_STA) {
     WiFi.disconnect(true, true);
   }
   if (WiFi.getMode() == WIFI_AP || WiFi.getMode() == WIFI_AP_STA) {
     WiFi.softAPdisconnect(true);
   }
+  delay(50);
   WiFi.mode(WIFI_OFF);
+  otaModeActive = false;
   LOGI("OTA/WiFi desativado: modo LoRa-only");
 }
 
@@ -910,28 +1183,37 @@ static void printBootChecklist(bool bleInitOk, bool storageOk, bool loraOk) {
       "GPS_UART",
       sensors.gpsUartReady(),
       "UART GPS nao inicializou; revisar pinos RX/TX e baud.");
-  String gpsBootDetail = String("baud=") + sensors.gpsBaudUsed() +
-      " bytes=" + sensors.gpsBootBytes() +
-      " nmea=$" + sensors.gpsBootDollarCount() +
-      " sample=" + sensors.gpsBootSample();
+  char gpsBootDetail[160] = {};
+  snprintf(
+      gpsBootDetail,
+      sizeof(gpsBootDetail),
+      "baud=%lu bytes=%lu nmea=$%lu sample=%s",
+      (unsigned long)sensors.gpsBaudUsed(),
+      (unsigned long)sensors.gpsBootBytes(),
+      (unsigned long)sensors.gpsBootDollarCount(),
+      sensors.gpsBootSample().c_str());
   checklistLine(
       "GPS_BOOT_RX",
       sensors.gpsBootBytes() > 0,
       "Nenhum byte recebido no boot; verificar TX do GPS->D16, alimentacao e GND.",
-      gpsBootDetail.c_str());
+      gpsBootDetail);
   const bool gpsHasRxBytes = sensors.gpsBootBytes() > 0;
   const char* gpsNmeaOffHint = gpsHasRxBytes
       ? "Recebe bytes sem '$'; verificar baud do GPS (9600/38400/57600/115200), TX->D16 e ruido na UART."
       : "Sem sentencas NMEA no boot; verificar TX do GPS->D16, alimentacao e visada do ceu.";
-  String gpsNmeaDetail;
+  char gpsNmeaDetail[128] = {};
   const char* gpsNmeaOkDetail = nullptr;
   if (sensors.gpsBootFixValid()) {
     const GpsData& bootFix = sensors.gpsBootFix();
-    gpsNmeaDetail = String("lat=") + String(bootFix.lat, 6) +
-        " lon=" + String(bootFix.lon, 6) +
-        " sats=" + String(bootFix.sats) +
-        " hdop=" + String(bootFix.hdop, 2);
-    gpsNmeaOkDetail = gpsNmeaDetail.c_str();
+    snprintf(
+        gpsNmeaDetail,
+        sizeof(gpsNmeaDetail),
+        "lat=%.6f lon=%.6f sats=%u hdop=%.2f",
+        bootFix.lat,
+        bootFix.lon,
+        bootFix.sats,
+        bootFix.hdop);
+    gpsNmeaOkDetail = gpsNmeaDetail;
   }
   checklistLine(
       "GPS_NMEA",
@@ -940,13 +1222,18 @@ static void printBootChecklist(bool bleInitOk, bool storageOk, bool loraOk) {
       gpsNmeaOkDetail);
 
   const bool i2cBusAlive = sensors.i2cDevicesFound() > 0;
-  const String i2cDetail = String("found=") + sensors.i2cDevicesFound() +
-      " [" + sensors.i2cScanSummary() + "]";
+  char i2cDetail[128] = {};
+  snprintf(
+      i2cDetail,
+      sizeof(i2cDetail),
+      "found=%u [%s]",
+      sensors.i2cDevicesFound(),
+      sensors.i2cScanSummary().c_str());
   checklistLine(
       "I2C_BUS_SCAN",
       i2cBusAlive,
       "Nenhum dispositivo I2C detectado; revisar SDA/SCL, 3v3 e GND.",
-      i2cDetail.c_str());
+      i2cDetail);
 
   const bool mpuDetected = sensors.mpuDetected();
   char mpuOkDetail[24] = {};
@@ -1003,6 +1290,7 @@ static void setupWifiOtaMaintenance() {
       return;
     }
     startOtaService();
+    ensureStatusServerRunning();
     otaRecoveryAttemptCount = 0;
     LOGI("OTA pronto (AP FORCADO) SSID=%s IP=%s host=%s", apSsid.c_str(), WiFi.softAPIP().toString().c_str(), cfg::OTA_HOSTNAME);
     return;
@@ -1020,6 +1308,7 @@ static void setupWifiOtaMaintenance() {
 
   if (WiFi.status() == WL_CONNECTED) {
     startOtaService();
+    ensureStatusServerRunning();
     LOGI("OTA pronto (STA) IP=%s host=%s", WiFi.localIP().toString().c_str(), cfg::OTA_HOSTNAME);
     return;
   }
@@ -1048,6 +1337,7 @@ static void setupWifiOtaMaintenance() {
   }
 
   startOtaService();
+  ensureStatusServerRunning();
   otaRecoveryAttemptCount = 0;
   LOGI("OTA pronto (AP) SSID=%s IP=%s host=%s", apSsid.c_str(), WiFi.softAPIP().toString().c_str(), cfg::OTA_HOSTNAME);
 }
@@ -1198,6 +1488,7 @@ static uint16_t buildHealthFlags(const Telemetry& t, bool fallbackScheduleUsed) 
 }
 
 static bool sendDailyHealthReport(const Telemetry& t, uint32_t intervalMs) {
+  if (!bindingReady_) return false;
   const uint32_t dayKey = gpsDayKey(t.gps);
   bool fallbackScheduleUsed = false;
 
@@ -1225,9 +1516,11 @@ static bool sendDailyHealthReport(const Telemetry& t, uint32_t intervalMs) {
   payload["i2"] = sensors.i2cDevicesFound();
   payload["hf"] = buildHealthFlags(t, fallbackScheduleUsed);
   if (dayKey != 0) payload["dk"] = dayKey;
+  payload["scope_id"] = bindingPropertyScopeId_;
 
   LoRaFrame health;
   health.deviceId = cfg::DEVICE_ID;
+  health.scopeId = bindingScopeIdValue();
   health.msgType = MsgType::EVENT;
   health.seq = nextLoRaSeq();
   health.timestamp = t.gps.gpsTime ? t.gps.gpsTime : millis() / 1000;
@@ -1253,8 +1546,10 @@ static bool sendDailyHealthReport(const Telemetry& t, uint32_t intervalMs) {
 }
 
 static uint8_t buildTelemetryPayload(const Telemetry& t, uint8_t* out, size_t max) {
+  if (!bindingReady_) return 0;
   StaticJsonDocument<256> doc;
   doc["fw"] = cfg::FW_VERSION;
+  doc["scope_id"] = bindingPropertyScopeId_;
   doc["uptime"] = t.uptime;
   doc["mode"] = (int)t.mode;
   doc["tmp"] = t.temperatureC;
@@ -1278,9 +1573,11 @@ static void sendCommandFeedback(
     bool ok,
     const char* reason = nullptr,
     const char* status = nullptr,
-    const char* operationId = nullptr) {
+    const char* operationId = nullptr,
+    const char* commandId = nullptr) {
   LoRaFrame reply;
   reply.deviceId = cfg::DEVICE_ID;
+  reply.scopeId = cmd.scopeId;
   reply.msgType = ok ? MsgType::ACK : MsgType::NACK;
   reply.seq = nextLoRaSeq();
   reply.timestamp = millis() / 1000;
@@ -1291,6 +1588,8 @@ static void sendCommandFeedback(
   payload["cmd_code"] = (int)cmd.msgType;
   payload["cmd_seq"] = cmd.seq;
   payload["ok"] = ok;
+  if (reply.scopeId != 0) payload["scope_id"] = scopeIdToHex(reply.scopeId);
+  if (commandId && commandId[0]) payload["cmd_id"] = commandId;
   if (status && status[0]) payload["status"] = status;
   if (reason && reason[0]) payload["reason"] = reason;
   if (operationId && operationId[0]) payload["operation_id"] = operationId;
@@ -1305,6 +1604,15 @@ static void sendCommandFeedback(
 static void applyDownlink(const LoRaFrame& frame) {
   const bool targetMatch = (frame.deviceId == cfg::DEVICE_ID) || (frame.deviceId == 0);
   if (!targetMatch) return;
+
+  if (!bindingReady_) {
+    sendCommandFeedback(frame, false, "property_binding_missing");
+    return;
+  }
+  if (frame.scopeId == 0 || frame.scopeId != bindingScopeIdValue()) {
+    sendCommandFeedback(frame, false, "property_scope_mismatch");
+    return;
+  }
 
   if (frame.msgType == MsgType::PING) {
     sendCommandFeedback(frame, true, "pong");
@@ -1322,34 +1630,35 @@ static void applyDownlink(const LoRaFrame& frame) {
     sendCommandFeedback(frame, false, "invalid_json");
     return;
   }
+  const char* commandId = pickFirstText(doc["cmd_id"], doc["command_id"]);
 
   if (frame.msgType == MsgType::SET_FENCE) {
     const char* err = nullptr;
     const bool chunked = doc["chunked"].is<bool>() && doc["chunked"].as<bool>();
     if (chunked) {
       if (!applyFenceChunkJson(doc.as<JsonObject>(), &err)) {
-        sendCommandFeedback(frame, false, err ? err : "invalid_fence_chunk");
+        sendCommandFeedback(frame, false, err ? err : "invalid_fence_chunk", nullptr, nullptr, commandId);
         return;
       }
-      sendCommandFeedback(frame, true);
+      sendCommandFeedback(frame, true, nullptr, nullptr, nullptr, commandId);
     } else {
       resetFenceChunkRx();
       Polygon p;
       if (!parsePolygonJson(doc["points"].as<JsonArray>(), &p, &err)) {
-        sendCommandFeedback(frame, false, err ? err : "invalid_fence");
+        sendCommandFeedback(frame, false, err ? err : "invalid_fence", nullptr, nullptr, commandId);
         return;
       }
       geofence.setFence(p);
       persistFence(p);
       LOGI("SET_FENCE aplicado com %u pontos", p.count);
-      sendCommandFeedback(frame, true);
+      sendCommandFeedback(frame, true, nullptr, nullptr, nullptr, commandId);
     }
   } else if (frame.msgType == MsgType::SET_HERDING_PLAN) {
     const char* err = nullptr;
     const bool chunked = doc["chunked"].is<bool>() && doc["chunked"].as<bool>();
     if (chunked) {
       if (!applyHerdChunkJson(doc.as<JsonObject>(), &err)) {
-        sendCommandFeedback(frame, false, err ? err : "invalid_herd_chunk");
+        sendCommandFeedback(frame, false, err ? err : "invalid_herd_chunk", nullptr, nullptr, commandId);
         return;
       }
       const bool herdCompletedAssembly =
@@ -1360,13 +1669,14 @@ static void applyDownlink(const LoRaFrame& frame) {
             true,
             "assembled",
             "assembled",
-            herding.plan().operationId);
+            herding.plan().operationId,
+            commandId);
       }
     } else {
       resetHerdChunkRx();
       HerdingPlan plan;
       if (!parseHerdingPlanJson(doc["phases"].as<JsonArray>(), &plan, &err)) {
-        sendCommandFeedback(frame, false, err ? err : "invalid_herd_plan");
+        sendCommandFeedback(frame, false, err ? err : "invalid_herd_plan", nullptr, nullptr, commandId);
         return;
       }
       copyStringToBuffer(
@@ -1383,21 +1693,22 @@ static void applyDownlink(const LoRaFrame& frame) {
           true,
           "assembled",
           "assembled",
-          plan.operationId);
+          plan.operationId,
+          commandId);
     }
   } else if (frame.msgType == MsgType::SET_PARAMS) {
     if (doc["wifi_ota_enabled"].is<bool>()) {
       const bool enableWifi = doc["wifi_ota_enabled"].as<bool>();
       if (!enableWifi && !hasAdminModePermission(doc.as<JsonVariantConst>())) {
         LOGW("SET_PARAMS rejeitado: admin requerido para LoRa-only");
-        sendCommandFeedback(frame, false, "admin_required_for_lora_only");
+        sendCommandFeedback(frame, false, "admin_required_for_lora_only", nullptr, nullptr, commandId);
         return;
       }
       applyWifiOtaMode(enableWifi, "LoRa");
-      sendCommandFeedback(frame, true);
+      sendCommandFeedback(frame, true, nullptr, nullptr, nullptr, commandId);
     } else {
       LOGW("SET_PARAMS sem campo wifi_ota_enabled");
-      sendCommandFeedback(frame, false, "missing_wifi_ota_enabled");
+      sendCommandFeedback(frame, false, "missing_wifi_ota_enabled", nullptr, nullptr, commandId);
     }
   }
 }
@@ -1505,8 +1816,11 @@ static void runSmartGpsSelfTest() {
 }
 
 void setup() {
+  bootStartedAtMs_ = millis();
+  lastResetReason_ = esp_reset_reason();
   Serial.begin(cfg::SERIAL_BAUD);
-  LOGI("Boot reset_reason=%d", (int)esp_reset_reason());
+  LOGI("Boot reset_reason=%d", (int)lastResetReason_);
+  recordBootStage("serial");
   watchdogOwnerTask = xTaskGetCurrentTaskHandle();
   if (cfg::TASK_WDT_ENABLED) {
 #if defined(ESP_IDF_VERSION_MAJOR) && ESP_IDF_VERSION_MAJOR >= 5
@@ -1537,20 +1851,32 @@ void setup() {
 #endif
     }
   }
+  recordBootStage("wdt");
+  incrementBootCounter();
+  recordBootStage("prefs_counter");
   loadPersistedConfig();
+  recordBootStage("load_config");
 
   if (cfg::SMART_GPS_TEST_MODE) {
+    recordBootStage("smart_gps_test");
     smartGps.begin();
     runSmartGpsSelfTest();
     return;
   }
 
+  WiFi.persistent(false);
   WiFi.onEvent(onWifiEvent);
+  recordBootStage("wifi_event");
 
+  configureStatusServerRoutes();
+  recordBootStage("status_routes");
   setupWifiOtaMaintenance();
-  setupStatusServer();
+  recordBootStage("wifi_ota");
+  recordBootStage("status_server");
+  waitMaintenanceWindow();
   bool bleInitOk = !cfg::BLE_PRESENCE_ENABLED;
   if (cfg::BLE_PRESENCE_ENABLED) {
+    recordBootStage("ble_begin");
     const String nodeId = collarNodeId();
     bleInitOk = blePresence.begin(
         BleNodeKind::COLLAR,
@@ -1562,16 +1888,23 @@ void setup() {
     blePresence.setFlags(wifiOtaEnabled, WiFi.status() == WL_CONNECTED);
   }
 
+  recordBootStage("sensors_begin");
   sensors.begin();
+  recordBootStage("safety_begin");
   safety.begin();
+  recordBootStage("storage_begin");
   storageReady_ = storage.begin();
   if (!storageReady_) LOGW("StorageQueue indisponivel");
+  recordBootStage("smart_gps_begin");
   smartGps.begin();
   refreshBlePositionForOnboarding();
+  recordBootStage("lora_begin");
   loraReady_ = lora.begin();
   if (!loraReady_) LOGE("LoRa indisponivel");
   setWatchdogEnabled(wifiOtaEnabled);
+  recordBootStage("checklist");
   printBootChecklist(bleInitOk, storageReady_, loraReady_);
+  recordBootStage("ready");
 
   LOGI("Coleira inicializada: id=%lu fw=%s", cfg::DEVICE_ID, cfg::FW_VERSION);
 }
@@ -1583,7 +1916,7 @@ void loop() {
   }
 
   ensureWifiOtaMaintenance();
-  if (wifiOtaEnabled && WiFi.getMode() != WIFI_OFF) {
+  if (statusServerRunning_) {
     statusServer.handleClient();
   }
 
@@ -1713,17 +2046,22 @@ void loop() {
     }
   }
 
-  LoRaFrame uplink;
-  uplink.deviceId = cfg::DEVICE_ID;
-  uplink.msgType = MsgType::TELEMETRY;
-  uplink.seq = nextLoRaSeq();
-  uplink.timestamp = t.gps.gpsTime ? t.gps.gpsTime : now / 1000;
-  randomNonce(uplink.nonce);
-  uplink.payloadLen = buildTelemetryPayload(t, uplink.payload, sizeof(uplink.payload));
+  if (bindingReady_) {
+    LoRaFrame uplink;
+    uplink.deviceId = cfg::DEVICE_ID;
+    uplink.scopeId = bindingScopeIdValue();
+    uplink.msgType = MsgType::TELEMETRY;
+    uplink.seq = nextLoRaSeq();
+    uplink.timestamp = t.gps.gpsTime ? t.gps.gpsTime : now / 1000;
+    randomNonce(uplink.nonce);
+    uplink.payloadLen = buildTelemetryPayload(t, uplink.payload, sizeof(uplink.payload));
 
-  lastLoRaTxOk_ = lora.sendFrame(uplink);
-  if (!lastLoRaTxOk_) {
-    LOGW("Falha envio telemetria; permanece em fila local.");
+    lastLoRaTxOk_ = uplink.payloadLen > 0 && lora.sendFrame(uplink);
+    if (!lastLoRaTxOk_) {
+      LOGW("Falha envio telemetria; permanece em fila local.");
+    }
+  } else {
+    lastLoRaTxOk_ = false;
   }
   sendDailyHealthReport(t, stateMachine.intervalMs());
 
@@ -1735,9 +2073,10 @@ void loop() {
 
   EventRecord pending;
   uint8_t eventBudget = otaSessionLikelyActive ? cfg::OTA_UPLOAD_EVENT_BURST : 0xFF;
-  while (storage.popEvent(pending)) {
+  while (bindingReady_ && storage.popEvent(pending)) {
     LoRaFrame ev;
     ev.deviceId = cfg::DEVICE_ID;
+    ev.scopeId = bindingScopeIdValue();
     ev.msgType = MsgType::EVENT;
     ev.seq = nextLoRaSeq();
     ev.timestamp = pending.ts;
@@ -1748,6 +2087,7 @@ void loop() {
     d["event_code"] = (int)pending.type;
     d["d1"] = pending.d1;
     d["d2"] = pending.d2;
+    d["scope_id"] = bindingPropertyScopeId_;
     if (pending.operationId[0] != '\0') d["operation_id"] = pending.operationId;
     if (pending.type == EventType::HERD_PHASE_CHANGE) {
       d["phase_index"] = pending.d1;

@@ -9,6 +9,17 @@ class ManualSettings {
     defaultValue: 'https://ruraltech10-default-rtdb.firebaseio.com',
   );
 
+  // Supabase usado como backend leve para validacao/queue sem Blaze.
+  static const String supabaseUrl = String.fromEnvironment(
+    'SUPABASE_URL',
+    defaultValue: 'https://nhoewnfuyjbtpklrotbf.supabase.co',
+  );
+
+  static const String supabasePublishableKey = String.fromEnvironment(
+    'SUPABASE_PUBLISHABLE_KEY',
+    defaultValue: 'sb_publishable_Esa4TxfvLs6Slc_WA5DFUw_RY8H7Uug',
+  );
+
   // Host padrao de conexao WebSocket com gateway.
   static const String defaultGatewayWsHost = String.fromEnvironment(
     'RT_GATEWAY_WS_HOST',

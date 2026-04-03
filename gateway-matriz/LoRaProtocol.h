@@ -8,6 +8,7 @@
 
 struct LoRaFrame {
   uint32_t deviceId = 0;
+  uint64_t scopeId = 0;
   MsgType msgType = MsgType::HEARTBEAT;
   uint32_t seq = 0;
   uint32_t timestamp = 0;

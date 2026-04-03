@@ -1,11 +1,22 @@
 /** @file ApiServer.cpp */
 #include "ApiServer.h"
 #include "config.h"
+#include "LoRaGateway.h"
 #include <ctype.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <WiFi.h>
+
+extern char bindingPropertyId[48];
+extern char bindingPropertyScopeId[17];
+extern char bindingMatrixGatewayId[32];
+extern uint32_t bindingVersion;
+extern bool bindingReady;
+extern bool supportsScopedLora;
+extern uint64_t lastQueuePollAtUnixMs;
+extern char lastCloudWriteError[96];
+extern LoRaGateway lora;
 
 static ApiServer* g_server = nullptr;
 
@@ -67,31 +78,69 @@ static bool parseCoordinate(const JsonVariantConst& value, double& out) {
 
 void ApiServer::begin() {
   g_server = this;
-  http_.on("/status", HTTP_GET, [this]() {
-    StaticJsonDocument<256> doc;
-    doc["ok"] = true;
-    doc["service"] = "gateway_matrix";
-    doc["fw"] = cfg::FW_VERSION;
-    const String apSsid = WiFi.softAPSSID();
-    doc["ap_ssid"] = apSsid.isEmpty() ? String(cfg::AP_SSID) : apSsid;
-    doc["ap_ip"] = WiFi.softAPIP().toString();
-    doc["gatewayId"] = compactIdentifier(WiFi.softAPmacAddress());
-    doc["ota"] = cfg::OTA_ENABLED;
-    doc["wifi_ota_enabled"] = WiFi.getMode() != WIFI_OFF;
-    doc["role"] = "matrix";
-    String out;
-    serializeJson(doc, out);
-    http_.send(200, "application/json", out);
-  });
-  http_.on("/devices", HTTP_GET, [this]() { handleDevicesRequest(); });
-  http_.on("/logs", HTTP_GET, [this]() { handleLogsRequest(); });
-  http_.begin();
+  if (cfg::FEATURE_HTTP) {
+    http_.on("/status", HTTP_GET, [this]() {
+      StaticJsonDocument<512> doc;
+      doc["ok"] = true;
+      doc["service"] = "gateway_matrix";
+      doc["fw"] = cfg::FW_VERSION;
+      doc["diagStage"] = cfg::DIAG_STAGE;
+      doc["diagProfile"] = cfg::DIAG_PROFILE_NAME;
+      const String apSsid = WiFi.softAPSSID();
+      doc["ap_ssid"] = apSsid.isEmpty() ? String(cfg::AP_SSID) : apSsid;
+      doc["ap_ip"] = WiFi.softAPIP().toString();
+      doc["gatewayId"] = compactIdentifier(WiFi.softAPmacAddress());
+      doc["ota"] = cfg::FEATURE_OTA && cfg::OTA_ENABLED;
+      doc["wifi_ota_enabled"] = WiFi.getMode() != WIFI_OFF;
+      doc["role"] = "matrix";
+      doc["supportsScopedLora"] = supportsScopedLora;
+      doc["bindingReady"] = bindingReady;
+      doc["bindingVersion"] = bindingVersion;
+      doc["featureWifiAp"] = cfg::FEATURE_WIFI_AP;
+      doc["featureHttp"] = cfg::FEATURE_HTTP;
+      doc["featureWs"] = cfg::FEATURE_WS;
+      doc["featureOta"] = cfg::FEATURE_OTA;
+      doc["featureBle"] = cfg::FEATURE_BLE;
+      doc["featureBackhaul"] = cfg::FEATURE_BACKHAUL;
+      doc["featureCloud"] = cfg::FEATURE_CLOUD;
+      doc["featureSd"] = cfg::FEATURE_SD;
+      doc["queueConfigured"] = cfg::FEATURE_CLOUD &&
+        cfg::RTDB_QUEUE_KEY[0] != '\0' &&
+        strncmp(cfg::RTDB_QUEUE_KEY, "SET_", 4) != 0;
+      doc["lastQueuePollAtMs"] = lastQueuePollAtUnixMs;
+      doc["lastCloudWriteError"] = lastCloudWriteError;
+      doc["apClientCount"] = WiFi.softAPgetStationNum();
+      doc["loraReady"] = lora.isReady();
+      doc["lastLoraReceiveCode"] = lora.lastReceiveCode();
+      doc["lastLoraRawLen"] = (uint32_t)lora.lastReceiveLen();
+      doc["lastLoraRssi"] = lora.lastRssi();
+      doc["lastLoraSnr"] = lora.lastSnr();
+      doc["lastLoraRawRxAtMs"] = lora.lastRawRxAtMs();
+      doc["lastLoraAcceptedRxAtMs"] = lora.lastAcceptedRxAtMs();
+      doc["loraRxArmCount"] = lora.rxArmCount();
+      doc["loraTxCount"] = lora.txCount();
+      doc["lastLoraIrqFlags"] = lora.lastIrqFlags();
+      doc["lastLoraState"] = lora.lastRadioState();
+      if (bindingPropertyId[0]) doc["propertyId"] = bindingPropertyId;
+      if (bindingPropertyScopeId[0]) doc["propertyScopeId"] = bindingPropertyScopeId;
+      if (bindingMatrixGatewayId[0]) doc["matrixGatewayId"] = bindingMatrixGatewayId;
+      String out;
+      serializeJson(doc, out);
+      http_.send(200, "application/json", out);
+    });
+    http_.on("/devices", HTTP_GET, [this]() { handleDevicesRequest(); });
+    http_.on("/logs", HTTP_GET, [this]() { handleLogsRequest(); });
+    http_.begin();
+    appendLogLine("HTTP_READY");
+  }
 
-  appendLogLine("HTTP_READY");
-  ws_.begin();
-  ws_.onEvent([](uint8_t num, WStype_t type, uint8_t* payload, size_t len) {
-    if (g_server) g_server->onWsEvent(num, type, payload, len);
-  });
+  if (cfg::FEATURE_WS) {
+    ws_.begin();
+    ws_.onEvent([](uint8_t num, WStype_t type, uint8_t* payload, size_t len) {
+      if (g_server) g_server->onWsEvent(num, type, payload, len);
+    });
+    appendLogLine("WS_READY");
+  }
 }
 
 void ApiServer::appendLogLine(const String& line) {
@@ -290,8 +339,8 @@ void ApiServer::onWsEvent(
 }
 
 void ApiServer::loop() {
-  http_.handleClient();
-  ws_.loop();
+  if (cfg::FEATURE_HTTP) http_.handleClient();
+  if (cfg::FEATURE_WS) ws_.loop();
 }
 
 void ApiServer::broadcastTelemetry(const String& json) {

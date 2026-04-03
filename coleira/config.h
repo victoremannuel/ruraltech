@@ -17,13 +17,10 @@ constexpr char FW_VERSION[] = "coleira-1.0.0";
 constexpr uint32_t DEVICE_ID = 0xC011A001;
 
 // Debug/log
-constexpr uint8_t LOG_LEVEL = 2;  // 1=ERRO,2=WARNING,3=INFO
+constexpr uint8_t LOG_LEVEL = 3;  // 1=ERRO,2=WARNING,3=INFO
 constexpr uint32_t SERIAL_BAUD = 115200;
 constexpr uint16_t TASK_WDT_TIMEOUT_SEC = 30;
-// Mitigacao de bancada: a stack atual desta placa esta panicking no TWDT antes
-// de concluir o onboarding BLE/GPS. Mantemos desabilitado ate isolar a causa
-// raiz no IDF/driver, priorizando a validacao funcional fim a fim.
-constexpr bool TASK_WDT_ENABLED = false;
+constexpr bool TASK_WDT_ENABLED = true;
 
 // Pinos ESP32 DevKit V1
 constexpr int PIN_GPS_RX = 16;
@@ -47,7 +44,7 @@ constexpr uint8_t LORA_SYNC_WORD = 0x12;
 
 // Wi-Fi / OTA (manutenção)
 constexpr bool OTA_ENABLED = true;
-constexpr bool WIFI_OTA_DEFAULT_ENABLED = true;
+constexpr bool WIFI_OTA_DEFAULT_ENABLED = cfg_manual::WIFI_OTA_DEFAULT_ENABLED;
 constexpr const char* WIFI_SSID = cfg_manual::WIFI_SSID;
 constexpr const char* WIFI_PASS = cfg_manual::WIFI_PASS;
 constexpr const char* OTA_HOSTNAME = cfg_manual::OTA_HOSTNAME;
@@ -65,9 +62,14 @@ constexpr uint8_t OTA_AP_MAX_CLIENTS = 2;
 constexpr uint32_t OTA_DISABLE_GUARD_MS = 300000;
 constexpr uint16_t OTA_UPLOAD_RX_WINDOW_MS = 120;
 constexpr uint8_t OTA_UPLOAD_EVENT_BURST = 2;
+constexpr uint32_t MAINTENANCE_BOOT_WINDOW_MS = 30000;
 
 // BLE discovery for app onboarding
+#if defined(ARDUINO_PARTITION_min_spiffs)
+constexpr bool BLE_PRESENCE_ENABLED = false;
+#else
 constexpr bool BLE_PRESENCE_ENABLED = true;
+#endif
 constexpr char BLE_DEVICE_PREFIX[] = "RT-C";
 constexpr uint16_t BLE_COMPANY_ID = 0x1234;
 constexpr char BLE_SERVICE_UUID[] = "7f920001-0a26-4d09-a606-0cfef4f9a1f0";
@@ -79,6 +81,7 @@ constexpr char PREF_KEY_FENCE[] = "fence";
 constexpr char PREF_KEY_HERD[] = "herd";
 constexpr char PREF_KEY_LORA_SEQ_HI[] = "lora_seq_hi";
 constexpr char PREF_KEY_HEALTH_DAY[] = "health_day";
+constexpr char PREF_KEY_REBOOT_COUNT[] = "reboot_count";
 constexpr uint16_t LORA_SEQ_RESERVE_WINDOW = 128;
 
 // Intervalos (ms)

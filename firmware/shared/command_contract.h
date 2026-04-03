@@ -24,6 +24,8 @@ struct ChunkRange {
 
 bool isValidCoordinate(double lat, double lon);
 bool isAdminRole(const char* role);
+bool isValidScopeId(const char* scopeId);
+bool isTraceableCommandId(const char* commandId);
 bool hasAdminModePermission(
     bool requestedByAdmin,
     const char* requestedByRole,

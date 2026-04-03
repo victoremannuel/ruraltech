@@ -16,6 +16,17 @@
 #define RT_MATRIX_LOG_LEVEL 2
 #endif
 
+// Perfis de diagnostico da matriz:
+//   0 = operacional completo (padrao)
+//   1 = LoRa puro
+//   2 = LoRa + AP local + HTTP /status,/devices,/logs
+//   3 = stage 2 + WS + OTA + BLE
+//   4 = stage 3 + backhaul/cloud/RTDB
+//   5 = stage 4 + SD
+#ifndef RT_MATRIX_DIAG_STAGE
+#define RT_MATRIX_DIAG_STAGE 0
+#endif
+
 // BLE da matriz:
 // - em partições maiores que min_spiffs, padrão = 1 (onboarding BLE ativo);
 // - em min_spiffs, padrão = 0 para caber em flash sem trocar partição.
@@ -31,9 +42,13 @@
 namespace cfg {
 constexpr char FW_VERSION[] = "gateway-matriz-1.0.0";
 constexpr uint8_t LOG_LEVEL = RT_MATRIX_LOG_LEVEL;
+constexpr uint8_t DIAG_STAGE = RT_MATRIX_DIAG_STAGE;
 constexpr uint32_t SERIAL_BAUD = 115200;
 constexpr uint16_t TASK_WDT_TIMEOUT_SEC = 30;
 
+constexpr int PIN_SPI_SCK = 18;
+constexpr int PIN_SPI_MISO = 19;
+constexpr int PIN_SPI_MOSI = 23;
 constexpr int PIN_LORA_CS = 5;
 constexpr int PIN_LORA_RST = 14;
 constexpr int PIN_LORA_DIO0 = 27;
@@ -48,7 +63,6 @@ constexpr uint16_t WS_PORT = 81;
 constexpr const char* AP_SSID = cfg_manual::AP_SSID;
 constexpr const char* AP_PASS = cfg_manual::AP_PASS;
 constexpr bool OTA_ENABLED = true;
-constexpr bool WIFI_OTA_DEFAULT_ENABLED = true;
 constexpr const char* OTA_HOSTNAME = cfg_manual::OTA_HOSTNAME;
 constexpr const char* OTA_PASSWORD = cfg_manual::OTA_PASSWORD;
 constexpr uint32_t OTA_HANDSHAKE_TIMEOUT_MS = 120000;
@@ -62,6 +76,7 @@ constexpr const char* BACKHAUL_WIFI_PASS = cfg_manual::BACKHAUL_WIFI_PASS;
 constexpr const char* FIREBASE_RTDB_HOST = cfg_manual::FIREBASE_RTDB_HOST;
 constexpr const char* RTDB_MATRIX_ID = cfg_manual::RTDB_MATRIX_ID;
 constexpr const char* RTDB_WRITER_KEY = cfg_manual::RTDB_WRITER_KEY;
+constexpr const char* RTDB_QUEUE_KEY = cfg_manual::RTDB_QUEUE_KEY;
 constexpr uint16_t CLOUD_HTTP_TIMEOUT_MS = 3500;
 constexpr uint32_t CLOUD_BACKHAUL_RETRY_MS = 10000;
 constexpr uint32_t CLOUD_BACKHAUL_CONNECT_TIMEOUT_MS = 30000;
@@ -73,6 +88,25 @@ constexpr bool BLE_PRESENCE_ENABLED = RT_MATRIX_BLE_ENABLED;
 constexpr char BLE_DEVICE_PREFIX[] = "RT-M";
 constexpr uint16_t BLE_COMPANY_ID = 0x1234;
 constexpr char BLE_SERVICE_UUID[] = "7f920001-0a26-4d09-a606-0cfef4f9a1f0";
+
+constexpr bool DIAG_FULL_PROFILE = DIAG_STAGE == 0;
+constexpr bool FEATURE_WIFI_AP = DIAG_FULL_PROFILE || DIAG_STAGE >= 2;
+constexpr bool FEATURE_HTTP = DIAG_FULL_PROFILE || DIAG_STAGE >= 2;
+constexpr bool FEATURE_WS = DIAG_FULL_PROFILE || DIAG_STAGE >= 3;
+constexpr bool FEATURE_OTA = DIAG_FULL_PROFILE || DIAG_STAGE >= 3;
+constexpr bool FEATURE_BLE = BLE_PRESENCE_ENABLED && (DIAG_FULL_PROFILE || DIAG_STAGE >= 3);
+constexpr bool FEATURE_BACKHAUL = DIAG_FULL_PROFILE || DIAG_STAGE >= 4;
+constexpr bool FEATURE_CLOUD = CLOUD_TELEMETRY_ENABLED && FEATURE_BACKHAUL;
+constexpr bool FEATURE_SD = DIAG_FULL_PROFILE || DIAG_STAGE >= 5;
+constexpr bool WIFI_OTA_DEFAULT_ENABLED = FEATURE_WIFI_AP;
+constexpr const char* DIAG_PROFILE_NAME =
+    DIAG_STAGE == 0 ? "operational-full" :
+    DIAG_STAGE == 1 ? "diag-lora-only" :
+    DIAG_STAGE == 2 ? "diag-lora-http" :
+    DIAG_STAGE == 3 ? "diag-local-stack" :
+    DIAG_STAGE == 4 ? "diag-cloud-no-sd" :
+    DIAG_STAGE == 5 ? "diag-cloud-with-sd" :
+    "diag-custom";
 
 // Limites de protocolo LoRa/app
 constexpr uint8_t LORA_MAX_PAYLOAD_BYTES = 128;

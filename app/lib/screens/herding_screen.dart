@@ -7,7 +7,6 @@ import '../models/device_model.dart';
 import '../models/herding_operation_model.dart';
 import '../services/auth_service.dart';
 import '../services/firebase_service.dart';
-import '../services/gateway_service.dart';
 import '../utils/top_feedback.dart';
 
 class HerdingScreen extends StatefulWidget {
@@ -29,6 +28,7 @@ class HerdingScreen extends StatefulWidget {
 }
 
 class _HerdingScreenState extends State<HerdingScreen> {
+  static const int _maxTargetPolygonPoints = 32;
   final MapController _mapController = MapController();
   final Set<String> _selectedDeviceIds = <String>{};
   final List<LatLng> _targetPolygon = <LatLng>[];
@@ -235,9 +235,9 @@ class _HerdingScreenState extends State<HerdingScreen> {
   }
 
   void _addPolygonPoint(LatLng point) {
-    if (_targetPolygon.length >= GatewayService.maxPolygonPoints) {
+    if (_targetPolygon.length >= _maxTargetPolygonPoints) {
       _showFeedback(
-        'O poligono suporta no maximo ${GatewayService.maxPolygonPoints} pontos.',
+        'O poligono suporta no maximo $_maxTargetPolygonPoints pontos.',
         error: true,
       );
       return;
@@ -295,7 +295,6 @@ class _HerdingScreenState extends State<HerdingScreen> {
     List<DeviceModel> propertyDevices,
     AuthService auth,
     FirebaseService firebase,
-    GatewayService gateway,
   ) async {
     if (_isSubmitting) return;
     final propertyId = _selectedPropertyId?.trim();
@@ -323,14 +322,9 @@ class _HerdingScreenState extends State<HerdingScreen> {
       return;
     }
 
-    final matrixGatewayId = await firebase.resolveMatrixGatewayIdForProperty(
-        propertyId: propertyId);
-    final matrixGatewayWsHost =
-        await firebase.resolveMatrixGatewayWsHost(propertyId: propertyId);
-    if (matrixGatewayId == null ||
-        matrixGatewayId.isEmpty ||
-        matrixGatewayWsHost == null ||
-        matrixGatewayWsHost.isEmpty) {
+    final matrixGatewayId =
+        await firebase.resolveMatrixGatewayIdForProperty(propertyId: propertyId);
+    if (matrixGatewayId == null || matrixGatewayId.isEmpty) {
       _showFeedback(
         'Nao encontrei um gateway matriz conectado para essa propriedade.',
         error: true,
@@ -366,8 +360,13 @@ class _HerdingScreenState extends State<HerdingScreen> {
         matrixGatewayId: matrixGatewayId,
       );
 
-      final sent = await gateway.startHerdingOperationEnsuringConnection(
-        hostOverride: matrixGatewayWsHost,
+      final loraCommandId = await firebase.enqueueScopedCommand(
+        command: 'SET_HERDING_PLAN',
+        propertyId: propertyId,
+        requestedByUid: uid,
+        requestedByRole: auth.role,
+        matrixGatewayId: matrixGatewayId,
+        targetDeviceIds: selectedDeviceIds,
         payload: <String, dynamic>{
           'operation_id': operationId,
           'property_id': propertyId,
@@ -379,25 +378,22 @@ class _HerdingScreenState extends State<HerdingScreen> {
           'notify_user_ids': notifyUserIds,
           'target_polygon': targetPolygon,
           'area_promotion_requested': true,
+          'phases': <List<List<double>>>[targetPolygon],
         },
+        businessRef: <String, dynamic>{
+          'type': 'herdingOperation',
+          'id': operationId,
+        },
+        ttl: const Duration(minutes: 20),
       );
-
-      if (!sent) {
-        await firebase.markHerdingOperationSubmissionFailed(
-          operationId: operationId,
-          reason: gateway.lastError ?? 'gateway_not_connected',
-        );
-        if (!mounted) return;
-        _showFeedback(
-          'Operacao criada, mas o envio para a matriz falhou (${gateway.lastError ?? 'gateway_not_connected'}).',
-          error: true,
-        );
-        return;
-      }
+      await firebase.attachLoraCommandToHerdingOperation(
+        operationId: operationId,
+        loraCommandId: loraCommandId,
+      );
 
       if (!mounted) return;
       setState(() => _createdOperationId = operationId);
-      _showFeedback('Operacao enviada para o gateway matriz.');
+      _showFeedback('Operacao criada e enfileirada para a matriz.');
     } catch (e) {
       if (operationId != null) {
         await firebase.markHerdingOperationSubmissionFailed(
@@ -460,7 +456,6 @@ class _HerdingScreenState extends State<HerdingScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
     final firebase = context.read<FirebaseService>();
-    final gateway = context.read<GatewayService>();
     final uid = auth.user?.uid;
     if (uid == null || uid.trim().isEmpty) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
@@ -788,7 +783,6 @@ class _HerdingScreenState extends State<HerdingScreen> {
                                               propertyDevices,
                                               auth,
                                               firebase,
-                                              gateway,
                                             ),
                                     icon: _isSubmitting
                                         ? const SizedBox(

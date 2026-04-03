@@ -43,13 +43,21 @@ RTC_DS3231 rtc;
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
 uint32_t seqDown = 1;
 Preferences seqPrefs;
+Preferences bindingPrefs;
 bool seqPrefsReady = false;
+bool bindingPrefsReady = false;
 bool wifiOtaEnabled = cfg::WIFI_OTA_DEFAULT_ENABLED;
 bool watchdogTaskRegistered = false;
 bool otaUploadInProgress = false;
 bool wifiApRunning = false;
 uint32_t wifiRecoveryAttemptAtMs = 0;
 uint8_t wifiRecoveryAttemptCount = 0;
+char bindingPropertyId[48]{};
+char bindingPropertyScopeId[17]{};
+char bindingMatrixGatewayId[32]{};
+uint32_t bindingVersion = 0;
+bool bindingReady = false;
+bool supportsScopedLora = true;
 static void setWatchdogEnabled(bool enabled);
 static void printBootChecklist(
     bool displayOk,
@@ -58,6 +66,8 @@ static void printBootChecklist(
     bool rtcOk,
     bool sdOk,
     bool loraOk);
+static void copyStringToBuffer(char* dst, size_t dstSize, const char* src);
+static bool targetIncludesGateway(const JsonVariantConst payload);
 
 static const char* otaErrorText(ota_error_t error) {
   switch (error) {
@@ -116,6 +126,141 @@ static String gatewayApSsid() {
   String ssid = String(cfg::AP_SSID) + "-" + suffix;
   if (ssid.length() > 31) ssid = ssid.substring(0, 31);
   return ssid;
+}
+
+static void copyStringToBuffer(char* dst, size_t dstSize, const char* src) {
+  if (dstSize == 0) return;
+  if (!src) {
+    dst[0] = '\0';
+    return;
+  }
+  strncpy(dst, src, dstSize - 1);
+  dst[dstSize - 1] = '\0';
+}
+
+static String scopeIdToHex(uint64_t scopeId) {
+  char out[17];
+  snprintf(out, sizeof(out), "%016llX", (unsigned long long)scopeId);
+  return String(out);
+}
+
+static const char* pickFirstText(
+    const JsonVariantConst a,
+    const JsonVariantConst b = JsonVariantConst(),
+    const JsonVariantConst c = JsonVariantConst(),
+    const JsonVariantConst d = JsonVariantConst()) {
+  const JsonVariantConst values[] = {a, b, c, d};
+  for (const JsonVariantConst value : values) {
+    if (!value.is<const char*>()) continue;
+    const char* text = value.as<const char*>();
+    if (text && text[0] != '\0') return text;
+  }
+  return "";
+}
+
+static uint64_t parseScopeIdHex(const JsonVariantConst value) {
+  const char* text = value.is<const char*>() ? value.as<const char*>() : "";
+  if (!text || !text[0] || !rtcmd::isValidScopeId(text)) return 0;
+  return strtoull(text, nullptr, 16);
+}
+
+static bool beginBindingPrefs() {
+  if (bindingPrefsReady) return true;
+  bindingPrefsReady = bindingPrefs.begin("binding", false);
+  if (!bindingPrefsReady) LOGW("Falha ao abrir NVS binding");
+  return bindingPrefsReady;
+}
+
+static bool computeBindingReadyState() {
+  return bindingPropertyId[0] != '\0' &&
+         bindingMatrixGatewayId[0] != '\0' &&
+         rtcmd::isValidScopeId(bindingPropertyScopeId);
+}
+
+static uint64_t bindingScopeIdValue() {
+  if (!computeBindingReadyState()) return 0;
+  return strtoull(bindingPropertyScopeId, nullptr, 16);
+}
+
+static void loadBindingConfig() {
+  bindingPropertyId[0] = '\0';
+  bindingPropertyScopeId[0] = '\0';
+  bindingMatrixGatewayId[0] = '\0';
+  bindingVersion = 0;
+  bindingReady = false;
+  if (!beginBindingPrefs()) return;
+
+  bindingPrefs.getString("property_id", bindingPropertyId, sizeof(bindingPropertyId));
+  bindingPrefs.getString("scope_id", bindingPropertyScopeId, sizeof(bindingPropertyScopeId));
+  bindingPrefs.getString("matrix_gid", bindingMatrixGatewayId, sizeof(bindingMatrixGatewayId));
+  bindingVersion = bindingPrefs.getUInt("bind_ver", 0);
+  bindingReady = computeBindingReadyState();
+  LOGI(
+      "Binding gateway: ready=%d property=%s scope=%s matrix=%s ver=%lu",
+      bindingReady ? 1 : 0,
+      bindingPropertyId[0] ? bindingPropertyId : "-",
+      bindingPropertyScopeId[0] ? bindingPropertyScopeId : "-",
+      bindingMatrixGatewayId[0] ? bindingMatrixGatewayId : "-",
+      (unsigned long)bindingVersion);
+}
+
+static bool persistBindingConfig(const JsonVariantConst payload, const char** reason = nullptr) {
+  const char* propertyId = pickFirstText(payload["property_id"], payload["propertyId"]);
+  const char* propertyScopeId = pickFirstText(
+      payload["property_scope_id"], payload["propertyScopeId"], payload["scope_id"]);
+  const char* matrixGatewayId = pickFirstText(
+      payload["matrix_gateway_id"], payload["matrixGatewayId"]);
+  uint32_t nextBindingVersion =
+      payload["binding_version"].is<uint32_t>()
+          ? payload["binding_version"].as<uint32_t>()
+          : (payload["bindingVersion"] | 1U);
+
+  if (!propertyId[0]) {
+    if (reason) *reason = "missing_property_id";
+    return false;
+  }
+  if (!rtcmd::isValidScopeId(propertyScopeId)) {
+    if (reason) *reason = "invalid_property_scope_id";
+    return false;
+  }
+  if (!matrixGatewayId[0]) {
+    if (reason) *reason = "missing_matrix_gateway_id";
+    return false;
+  }
+  if (nextBindingVersion == 0) nextBindingVersion = 1;
+  if (!beginBindingPrefs()) {
+    if (reason) *reason = "binding_prefs_unavailable";
+    return false;
+  }
+
+  copyStringToBuffer(bindingPropertyId, sizeof(bindingPropertyId), propertyId);
+  copyStringToBuffer(bindingPropertyScopeId, sizeof(bindingPropertyScopeId), propertyScopeId);
+  copyStringToBuffer(bindingMatrixGatewayId, sizeof(bindingMatrixGatewayId), matrixGatewayId);
+  bindingVersion = nextBindingVersion;
+  bindingReady = computeBindingReadyState();
+
+  bindingPrefs.putString("property_id", bindingPropertyId);
+  bindingPrefs.putString("scope_id", bindingPropertyScopeId);
+  bindingPrefs.putString("matrix_gid", bindingMatrixGatewayId);
+  bindingPrefs.putUInt("bind_ver", bindingVersion);
+  return bindingReady;
+}
+
+static bool scopeMatchesBinding(uint64_t scopeId) {
+  return bindingReady && scopeId != 0 && scopeId == bindingScopeIdValue();
+}
+
+static bool targetPayloadIncludesThisGateway(const JsonVariantConst payload) {
+  if (!targetIncludesGateway(payload)) return false;
+  const JsonArrayConst ids = payload["target_gateway_ids"].as<JsonArrayConst>();
+  if (ids.isNull() || ids.size() == 0) return true;
+
+  const String selfId = gatewayNodeId();
+  for (JsonVariantConst rawId : ids) {
+    const char* text = rawId | "";
+    if (text[0] != '\0' && selfId.equalsIgnoreCase(text)) return true;
+  }
+  return false;
 }
 
 static void restoreDownlinkSeq() {
@@ -360,7 +505,9 @@ static bool isRelayCandidate(const LoRaFrame& frame) {
          frame.msgType == MsgType::ACK ||
          frame.msgType == MsgType::NACK ||
          frame.msgType == MsgType::SET_FENCE ||
-         frame.msgType == MsgType::SET_HERDING_PLAN;
+         frame.msgType == MsgType::SET_HERDING_PLAN ||
+         frame.msgType == MsgType::SET_PARAMS ||
+         frame.msgType == MsgType::PING;
 }
 
 static const char* uplinkTypeLabel(MsgType t) {
@@ -387,6 +534,8 @@ static bool sendLoRaJsonFrame(uint32_t deviceId, MsgType msgType, const JsonVari
 
   LoRaFrame tx;
   tx.deviceId = deviceId;
+  tx.scopeId = parseScopeIdHex(payload["scope_id"]);
+  if (tx.scopeId == 0) tx.scopeId = bindingScopeIdValue();
   tx.msgType = msgType;
   tx.seq = nextDownlinkSeq();
   tx.timestamp = millis() / 1000;
@@ -400,6 +549,35 @@ static bool sendLoRaJsonFrame(uint32_t deviceId, MsgType msgType, const JsonVari
   const bool ok = lora.send(tx);
   if (!ok && reason && !*reason) *reason = "lora_send_failed";
   return ok;
+}
+
+static void sendCommandFeedback(
+    const LoRaFrame& cmd,
+    bool ok,
+    const char* reason = nullptr,
+    const char* commandId = nullptr) {
+  LoRaFrame reply;
+  reply.deviceId = 0;
+  reply.scopeId = cmd.scopeId;
+  reply.msgType = ok ? MsgType::ACK : MsgType::NACK;
+  reply.seq = nextDownlinkSeq();
+  reply.timestamp = millis() / 1000;
+  for (int i = 0; i < 12; ++i) reply.nonce[i] = (uint8_t)esp_random();
+
+  StaticJsonDocument<224> payload;
+  payload["cmd"] = cmd.msgType == MsgType::SET_PARAMS ? "SET_PARAMS" : "PING";
+  payload["cmd_code"] = (int)cmd.msgType;
+  payload["cmd_seq"] = cmd.seq;
+  payload["ok"] = ok;
+  payload["gateway_id"] = gatewayNodeId();
+  payload["gateway_role"] = "gateway";
+  if (reply.scopeId != 0) payload["scope_id"] = scopeIdToHex(reply.scopeId);
+  if (commandId && commandId[0]) payload["cmd_id"] = commandId;
+  if (reason && reason[0]) payload["reason"] = reason;
+  reply.payloadLen = serializeJson(payload, reply.payload, sizeof(reply.payload));
+  if (!lora.send(reply)) {
+    LOGW("Falha envio feedback gateway cmd=%u seq=%lu", (unsigned)cmd.msgType, cmd.seq);
+  }
 }
 
 static bool splitPointArrayForPayload(
@@ -499,6 +677,11 @@ static bool sendFenceCommandChunked(uint32_t deviceId, const JsonVariantConst pa
     chunkDoc["chunked"] = true;
     chunkDoc["part"] = part;
     chunkDoc["total"] = chunkCount;
+    const char* commandId = pickFirstText(payload["cmd_id"], payload["command_id"]);
+    const char* scopeId = pickFirstText(payload["scope_id"], payload["property_scope_id"]);
+    if (commandId[0] != '\0') chunkDoc["cmd_id"] = commandId;
+    if (scopeId[0] != '\0') chunkDoc["scope_id"] = scopeId;
+    if (!payload["requested_at_ms"].isNull()) chunkDoc["requested_at_ms"] = payload["requested_at_ms"];
     JsonArray chunkPoints = chunkDoc["points"].to<JsonArray>();
     for (uint8_t i = starts[part]; i < ends[part]; ++i) {
       const JsonArrayConst srcPair = points[i].as<JsonArrayConst>();
@@ -540,7 +723,12 @@ static bool sendHerdingPlanChunked(uint32_t deviceId, const JsonVariantConst pay
       StaticJsonDocument<384> chunkDoc;
       chunkDoc["chunked"] = true;
       const char* operationId = payload["operation_id"] | "";
+      const char* commandId = pickFirstText(payload["cmd_id"], payload["command_id"]);
+      const char* scopeId = pickFirstText(payload["scope_id"], payload["property_scope_id"]);
       if (operationId[0] != '\0') chunkDoc["operation_id"] = operationId;
+      if (commandId[0] != '\0') chunkDoc["cmd_id"] = commandId;
+      if (scopeId[0] != '\0') chunkDoc["scope_id"] = scopeId;
+      if (!payload["requested_at_ms"].isNull()) chunkDoc["requested_at_ms"] = payload["requested_at_ms"];
       chunkDoc["phase_index"] = phaseIdx;
       chunkDoc["phase_total"] = phaseTotal;
       chunkDoc["part"] = part;
@@ -659,6 +847,7 @@ void setup() {
 #endif
   WiFi.onEvent(onWifiEvent);
   restoreDownlinkSeq();
+  loadBindingConfig();
 
   Wire.begin(cfg::PIN_I2C_SDA, cfg::PIN_I2C_SCL);
   const bool displayOk = display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
@@ -719,44 +908,67 @@ void loop() {
 
   LoRaFrame rx;
   if (lora.receive(rx)) {
-    if (rx.msgType == MsgType::SET_PARAMS) {
-      StaticJsonDocument<256> params;
-      if (deserializeJson(params, rx.payload, rx.payloadLen) == DeserializationError::Ok) {
-        bool wifiEnabled = false;
-        const JsonVariantConst payload = params.as<JsonVariantConst>();
-        const bool hasWifiField = parseWifiOtaParam(payload, wifiEnabled);
-        const JsonVariantConst requestedByAdmin = payload["requested_by_admin"];
-        const rtcmd::ValidationCode setParamsCode = rtcmd::validateSetParamsPayload(
-            hasWifiField,
-            wifiEnabled,
-            requestedByAdmin.is<bool>() && requestedByAdmin.as<bool>(),
-            payload["requested_by_role"] | "",
-            payload["actor_role"] | "");
-        if (setParamsCode == rtcmd::ValidationCode::kOk && targetIncludesGateway(payload)) {
-          applyWifiOtaMode(wifiEnabled, "LoRa");
-        } else if (setParamsCode == rtcmd::ValidationCode::kAdminRequiredForLoraOnly) {
-          LOGW("SET_PARAMS LoRa rejeitado: admin requerido para LoRa-only");
+    if (!scopeMatchesBinding(rx.scopeId)) {
+      LOGW(
+          "scope_reject device=%lu msg=%u seq=%lu scope=%s ready=%d",
+          (unsigned long)rx.deviceId,
+          (unsigned)rx.msgType,
+          (unsigned long)rx.seq,
+          scopeIdToHex(rx.scopeId).c_str(),
+          bindingReady ? 1 : 0);
+    } else {
+      if (rx.msgType == MsgType::PING) {
+        sendCommandFeedback(rx, true, "pong", nullptr);
+      } else if (rx.msgType == MsgType::SET_PARAMS) {
+        StaticJsonDocument<256> params;
+        if (deserializeJson(params, rx.payload, rx.payloadLen) == DeserializationError::Ok) {
+          bool wifiEnabled = false;
+          const JsonVariantConst payload = params.as<JsonVariantConst>();
+          const char* commandId = pickFirstText(payload["cmd_id"], payload["command_id"]);
+          const bool hasWifiField = parseWifiOtaParam(payload, wifiEnabled);
+          const JsonVariantConst requestedByAdmin = payload["requested_by_admin"];
+          const rtcmd::ValidationCode setParamsCode = rtcmd::validateSetParamsPayload(
+              hasWifiField,
+              wifiEnabled,
+              requestedByAdmin.is<bool>() && requestedByAdmin.as<bool>(),
+              payload["requested_by_role"] | "",
+              payload["actor_role"] | "");
+          if (setParamsCode == rtcmd::ValidationCode::kOk &&
+              targetPayloadIncludesThisGateway(payload)) {
+            applyWifiOtaMode(wifiEnabled, "LoRa");
+            sendCommandFeedback(rx, true, nullptr, commandId);
+          } else if (setParamsCode == rtcmd::ValidationCode::kAdminRequiredForLoraOnly) {
+            LOGW("SET_PARAMS LoRa rejeitado: admin requerido para LoRa-only");
+            sendCommandFeedback(rx, false, "admin_required_for_lora_only", commandId);
+          } else if (!targetPayloadIncludesThisGateway(payload)) {
+            LOGI("SET_PARAMS ignorado: gateway fora do alvo");
+          } else {
+            sendCommandFeedback(rx, false, "missing_wifi_ota_enabled", commandId);
+          }
+        } else {
+          sendCommandFeedback(rx, false, "invalid_json", nullptr);
         }
       }
+
+      relayFrameToPeerGateways(rx);
+
+      StaticJsonDocument<576> packet;
+      packet["type"] = uplinkTypeLabel(rx.msgType);
+      packet["device_id"] = rx.deviceId;
+      packet["msg_type"] = (int)rx.msgType;
+      packet["seq"] = rx.seq;
+      packet["timestamp"] = rx.timestamp;
+      packet["scope_id"] = scopeIdToHex(rx.scopeId);
+      packet["gateway_id"] = gatewayNodeId();
+      packet["gateway_role"] = "gateway";
+      packet["gateway_wifi_ota_enabled"] = wifiOtaEnabled;
+      packet["payload"] = String((char*)rx.payload).substring(0, rx.payloadLen);
+      String out;
+      serializeJson(packet, out);
+      api.broadcastTelemetry(out);
+      sdlog.log(String("UL|") + out);
+      drawStatus("RX LoRa", out.substring(0, 16).c_str());
     }
-
-    relayFrameToPeerGateways(rx);
-
-    StaticJsonDocument<512> packet;
-    packet["type"] = uplinkTypeLabel(rx.msgType);
-    packet["device_id"] = rx.deviceId;
-    packet["msg_type"] = (int)rx.msgType;
-    packet["seq"] = rx.seq;
-    packet["timestamp"] = rx.timestamp;
-    packet["gateway_id"] = gatewayNodeId();
-    packet["gateway_role"] = "gateway";
-    packet["gateway_wifi_ota_enabled"] = wifiOtaEnabled;
-    packet["payload"] = String((char*)rx.payload).substring(0, rx.payloadLen);
-    String out;
-    serializeJson(packet, out);
-    api.broadcastTelemetry(out);
-    sdlog.log(String("UL|") + out);
-    drawStatus("RX LoRa", out.substring(0, 16).c_str());
   }
 
   if (api.hasPendingCommand()) {
@@ -764,6 +976,32 @@ void loop() {
     if (api.popCommand(cmd)) {
       const String command = cmd["command"] | "PING";
       const JsonVariantConst payload = cmd["payload"].as<JsonVariantConst>();
+      bool handledLocally = false;
+      if (command == "SET_BINDING") {
+        const char* failReason = nullptr;
+        const bool ok = persistBindingConfig(payload, &failReason);
+        StaticJsonDocument<256> res;
+        res["type"] = "command_result";
+        res["ok"] = ok;
+        res["command"] = command;
+        res["supports_scoped_lora"] = true;
+        res["binding_ready"] = bindingReady;
+        if (bindingPropertyId[0]) res["property_id"] = bindingPropertyId;
+        if (bindingPropertyScopeId[0]) res["property_scope_id"] = bindingPropertyScopeId;
+        if (bindingMatrixGatewayId[0]) res["matrix_gateway_id"] = bindingMatrixGatewayId;
+        res["binding_version"] = bindingVersion;
+        if (!ok && failReason) res["reason"] = failReason;
+        String out;
+        serializeJson(res, out);
+        api.broadcastTelemetry(out);
+        sdlog.log(String("CFG|") + out);
+        handledLocally = true;
+      }
+
+      if (handledLocally) {
+        delay(1);
+        return;
+      }
 
       bool localToggleRequested = false;
       bool localWifiEnabled = wifiOtaEnabled;
@@ -790,6 +1028,12 @@ void loop() {
       bool shouldRelayLoRa = !(command == "SET_PARAMS" && !targetIncludesCollars(payload));
       const bool setParamsRejected =
           command == "SET_PARAMS" && setParamsCode != rtcmd::ValidationCode::kOk;
+      const uint64_t commandScopeId = parseScopeIdHex(payload["scope_id"]);
+      if (!bindingReady) {
+        shouldRelayLoRa = false;
+      } else if (commandScopeId != 0 && !scopeMatchesBinding(commandScopeId)) {
+        shouldRelayLoRa = false;
+      }
       if (setParamsRejected) {
         shouldRelayLoRa = false;
         localToggleRequested = false;
@@ -804,6 +1048,12 @@ void loop() {
       if (setParamsRejected) {
         ok = false;
         failReason = rtcmd::validationCodeToReason(setParamsCode);
+      } else if (!bindingReady) {
+        ok = false;
+        failReason = "property_binding_missing";
+      } else if (commandScopeId != 0 && !scopeMatchesBinding(commandScopeId)) {
+        ok = false;
+        failReason = "property_scope_mismatch";
       } else if (shouldRelayLoRa) {
         if (command == "SET_FENCE") {
           ok = sendFenceCommandChunked(deviceId, payload, &failReason);
