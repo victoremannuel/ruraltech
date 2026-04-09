@@ -1,8 +1,8 @@
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'firebase_options.dart';
+import 'config/manual_settings.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/auth_service.dart';
@@ -18,8 +18,9 @@ Future<void> main() async {
   String? bootstrapError;
 
   try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
+    await Supabase.initialize(
+      url: ManualSettings.supabaseUrl,
+      anonKey: ManualSettings.supabaseAnonKey,
     );
   } catch (e) {
     bootstrapError = e.toString();
@@ -49,14 +50,14 @@ class RuralTechApp extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Falha ao iniciar Firebase.',
+                  'Falha ao iniciar o backend.',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 12),
                 Text(bootstrapError!),
                 const SizedBox(height: 12),
                 const Text(
-                  'Configure o Firebase para esta plataforma suportada (iOS, Android ou Web) e rode novamente.',
+                  'Configure o Supabase para esta plataforma suportada e rode novamente.',
                 ),
               ],
             ),

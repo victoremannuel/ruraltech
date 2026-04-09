@@ -556,8 +556,7 @@ class BluetoothDiscoveryService extends ChangeNotifier {
         return await device.discoverServices(timeout: operationTimeoutSeconds);
       } catch (e) {
         lastError = e;
-        final shouldRetry =
-            attempt == 0 && isRetryableBleDiscoverError(e);
+        final shouldRetry = attempt == 0 && isRetryableBleDiscoverError(e);
         if (!shouldRetry) break;
 
         try {

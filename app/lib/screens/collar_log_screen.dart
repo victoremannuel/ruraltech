@@ -291,7 +291,7 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
         child: Padding(
           padding: EdgeInsets.all(16),
           child: Text(
-            'Nenhuma mensagem da coleira foi encontrada no Firebase ainda.',
+            'Nenhuma mensagem da coleira foi encontrada no backend ainda.',
             textAlign: TextAlign.center,
           ),
         ),
@@ -317,7 +317,7 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'Payload recebido no Firebase',
+                  'Payload recebido no backend',
                   style: Theme.of(context).textTheme.labelLarge,
                 ),
               ),
@@ -377,7 +377,7 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Mensagens recebidas no Firebase para a coleira ${widget.device.networkId}.',
+                  'Mensagens recebidas no backend para a coleira ${widget.device.networkId}.',
                 ),
                 const SizedBox(height: 12),
                 Row(

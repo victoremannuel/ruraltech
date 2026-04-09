@@ -32,47 +32,46 @@ jobs:
       - name: Flutter test
         run: flutter test
 
-  firebase-rules:
-    name: Firebase Rules Tests
+  supabase-db:
+    name: Supabase Schema + RLS Tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: app/rules-tests
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
         with:
-          node-version: 20
+          version: latest
 
-      - name: Install dependencies
-        run: npm install
+      - name: Start local database
+        run: supabase db start
 
-      - name: Run rules tests
-        run: npm test
+      - name: Run pgTAP tests
+        run: supabase test db --local
+
+      - name: Stop local database
+        if: always()
+        run: supabase stop --no-backup
 
   backend-functions:
-    name: Backend Functions Tests
+    name: Supabase Functions Typecheck
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: app/functions
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
         with:
-          node-version: 20
+          deno-version: v2.x
 
-      - name: Install dependencies
-        run: npm install
-
-      - name: Run backend tests
-        run: npm test
+      - name: Typecheck edge functions
+        run: |
+          deno check supabase/functions/_shared/supabase.ts
+          deno check supabase/functions/queue-lora-command/index.ts
+          deno check supabase/functions/repair-firebase-mirrors/index.ts
+          deno check supabase/functions/matrix-cloud/index.ts
 
   firmware-contract-tests:
     name: Firmware Contract Tests

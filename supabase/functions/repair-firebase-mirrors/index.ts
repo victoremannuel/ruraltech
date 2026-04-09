@@ -1,30 +1,26 @@
 import {
   computePropertyScopeId,
   corsHeaders,
-  getFirestoreDocument,
+  createAdminClient,
+  getAuthContext,
   jsonResponse,
-  listFirestoreCollectionDocuments,
   matrixRuntimeIdFromGatewayData,
   normalizeId,
   normalizeIdList,
+  normalizeRole,
   normalizeScopeId,
-  normalizeText,
-  patchFirestoreDocument,
-  patchRtdbRoot,
-  resolveEntityScopeId,
-  sanitizeRtdbKey,
-  verifyFirebaseBearerToken,
-} from "../_shared/firebase.ts";
-
-type JsonMap = Record<string, unknown>;
+  type JsonMap,
+} from "../_shared/supabase.ts";
 
 function collectPropertyUserIds(propertyData: JsonMap): string[] {
   const userIds = new Set<string>();
-  const createdByUid = normalizeId(propertyData.createdByUid);
-  const ownerUid = normalizeId(propertyData.ownerUid);
+  const createdByUid = normalizeId(
+    propertyData.created_by_uid ?? propertyData.createdByUid,
+  );
+  const ownerUid = normalizeId(propertyData.owner_uid ?? propertyData.ownerUid);
   if (createdByUid) userIds.add(createdByUid);
   if (ownerUid) userIds.add(ownerUid);
-  for (const uid of normalizeIdList(propertyData.userUids)) {
+  for (const uid of normalizeIdList(propertyData.user_uids ?? propertyData.userUids)) {
     userIds.add(uid);
   }
   return [...userIds].sort();
@@ -39,12 +35,9 @@ Deno.serve(async (request) => {
   }
 
   try {
-    const { uid } = await verifyFirebaseBearerToken(
-      request.headers.get("authorization"),
-    );
-    const user = await getFirestoreDocument(`users/${uid}`);
-    const userRole = normalizeText(user?.role).toLowerCase();
-    if (userRole != "adm" && userRole != "admin") {
+    const admin = createAdminClient();
+    const auth = await getAuthContext(request, admin);
+    if (!["adm", "admin"].includes(normalizeRole(auth.role))) {
       return jsonResponse(403, { ok: false, reason: "admin_required" });
     }
 
@@ -53,15 +46,25 @@ Deno.serve(async (request) => {
     const propertyFilter = normalizeId(body.propertyId);
     const gatewayFilter = normalizeId(body.gatewayId);
 
-    const propertyDocs = propertyFilter
-      ? [await getFirestoreDocument(`ruralProperties/${propertyFilter}`)].filter(Boolean) as JsonMap[]
-      : await listFirestoreCollectionDocuments("ruralProperties");
-    const gatewayDocs = gatewayFilter
-      ? [await getFirestoreDocument(`gateways/${gatewayFilter}`)].filter(Boolean) as JsonMap[]
-      : await listFirestoreCollectionDocuments("gateways");
-    const collarDocs = await listFirestoreCollectionDocuments("collars");
+    const propertiesQuery = admin.from("rural_properties").select("*");
+    const gatewaysQuery = admin.from("gateways").select("*");
+    const collarsQuery = admin.from("collars").select("*");
 
-    const rtdbPatch: Record<string, boolean | JsonMap> = {};
+    const propertyResult = propertyFilter
+      ? await propertiesQuery.eq("id", propertyFilter)
+      : await propertiesQuery;
+    const gatewayResult = gatewayFilter
+      ? await gatewaysQuery.eq("id", gatewayFilter)
+      : await gatewaysQuery;
+    const collarResult = await collarsQuery;
+    if (propertyResult.error) throw new Error(propertyResult.error.message);
+    if (gatewayResult.error) throw new Error(gatewayResult.error.message);
+    if (collarResult.error) throw new Error(collarResult.error.message);
+
+    const propertyDocs = (propertyResult.data ?? []) as JsonMap[];
+    const gatewayDocs = (gatewayResult.data ?? []) as JsonMap[];
+    const collarDocs = (collarResult.data ?? []) as JsonMap[];
+
     const propertyResults: JsonMap[] = [];
     const gatewayResults: JsonMap[] = [];
     const collarResults: JsonMap[] = [];
@@ -71,23 +74,18 @@ Deno.serve(async (request) => {
       const propertyId = normalizeId(property.id);
       if (!propertyId) continue;
       const expectedScopeId = await computePropertyScopeId(propertyId);
-      const currentScopeId = normalizeScopeId(property.propertyScopeId);
+      const currentScopeId = normalizeScopeId(
+        property.property_scope_id ?? property.propertyScopeId,
+      );
       const userIds = collectPropertyUserIds(property);
-      const propertyAccess: Record<string, boolean> = {};
-      for (const userId of userIds) {
-        propertyAccess[sanitizeRtdbKey(userId)] = true;
+      if (apply) {
+        const update = await admin.from("rural_properties").update({
+          property_scope_id: expectedScopeId,
+          user_uids: userIds,
+        }).eq("id", propertyId);
+        if (update.error) throw new Error(update.error.message);
       }
-
-      if (apply && expectedScopeId && currentScopeId != expectedScopeId) {
-        await patchFirestoreDocument(`ruralProperties/${propertyId}`, {
-          propertyScopeId: expectedScopeId,
-        });
-      }
-
-      rtdbPatch[`propertyAccess/${sanitizeRtdbKey(propertyId)}`] = propertyAccess;
-      if (expectedScopeId) {
-        scopeToPropertyId.set(expectedScopeId, propertyId);
-      }
+      if (expectedScopeId) scopeToPropertyId.set(expectedScopeId, propertyId);
       propertyResults.push({
         propertyId,
         expectedScopeId,
@@ -98,78 +96,95 @@ Deno.serve(async (request) => {
 
     for (const gateway of gatewayDocs) {
       const gatewayId = normalizeId(gateway.id);
-      if (!gatewayId || gateway.is_matrix !== true) continue;
-      const runtimeScopeId = resolveEntityScopeId(gateway);
-      const propertyId = normalizeId(gateway.propertyId) ||
-        normalizeId((gateway.runtimeStatus as JsonMap | undefined)?.propertyId) ||
-        scopeToPropertyId.get(runtimeScopeId) ||
-        "";
+      if (!gatewayId) continue;
+      if (gateway.is_matrix !== true && gateway.isMatrix !== true) continue;
+      const propertyId = normalizeId(gateway.property_id ?? gateway.propertyId);
       if (!propertyId) continue;
       const expectedScopeId = await computePropertyScopeId(propertyId);
       const runtimeId = matrixRuntimeIdFromGatewayData(gatewayId, gateway);
-      const runtimeStatus = gateway.runtimeStatus &&
-          typeof gateway.runtimeStatus === "object"
+      const runtimeStatus = gateway.runtime_status && typeof gateway.runtime_status === "object"
+        ? gateway.runtime_status as JsonMap
+        : gateway.runtimeStatus && typeof gateway.runtimeStatus === "object"
         ? gateway.runtimeStatus as JsonMap
         : {};
-      const supportsScopedLora = gateway.supportsScopedLora === true ||
+      const supportsScopedLora = gateway.supports_scoped_lora === true ||
+        gateway.supportsScopedLora === true ||
+        runtimeStatus.supports_scoped_lora === true ||
         runtimeStatus.supportsScopedLora === true;
-      const bindingReady = gateway.bindingReady === true ||
+      const bindingReady = gateway.binding_ready === true ||
+        gateway.bindingReady === true ||
+        runtimeStatus.binding_ready === true ||
         runtimeStatus.bindingReady === true ||
-        (supportsScopedLora && runtimeScopeId === expectedScopeId);
+        (supportsScopedLora &&
+          normalizeScopeId(
+            gateway.property_scope_id ?? gateway.propertyScopeId ??
+              runtimeStatus.property_scope_id ?? runtimeStatus.propertyScopeId,
+          ) === expectedScopeId);
       if (apply) {
-        await patchFirestoreDocument(`gateways/${gatewayId}`, {
-          propertyId,
-          propertyScopeId: expectedScopeId,
-          bindingReady,
-          supportsScopedLora,
+        const gatewayUpdate = await admin.from("gateways").update({
+          property_scope_id: expectedScopeId,
+          binding_ready: bindingReady,
+          supports_scoped_lora: supportsScopedLora,
+        }).eq("id", gatewayId);
+        if (gatewayUpdate.error) throw new Error(gatewayUpdate.error.message);
+        const bindingUpsert = await admin.from("matrix_bindings").upsert({
+          runtime_id: runtimeId,
+          property_id: propertyId,
+          property_scope_id: expectedScopeId,
+          matrix_gateway_id: gatewayId,
+          enabled: Boolean(propertyId && expectedScopeId && bindingReady && supportsScopedLora),
+          updated_at_ms: Date.now(),
+          raw: {
+            propertyId,
+            propertyScopeId: expectedScopeId,
+            matrixGatewayId: gatewayId,
+            matrixRuntimeId: runtimeId,
+            enabled: Boolean(propertyId && expectedScopeId && bindingReady && supportsScopedLora),
+            updatedAtMs: Date.now(),
+          },
         });
+        if (bindingUpsert.error) throw new Error(bindingUpsert.error.message);
       }
-      const matrixBinding = {
-        propertyId,
-        propertyScopeId: expectedScopeId,
-        matrixGatewayId: gatewayId,
-        matrixRuntimeId: runtimeId,
-        enabled: Boolean(propertyId && expectedScopeId && bindingReady && supportsScopedLora),
-        updatedAtMs: Date.now(),
-      };
-
-      rtdbPatch[`matrixBindings/${runtimeId}`] = matrixBinding;
-      rtdbPatch[`matrixBindings/${sanitizeRtdbKey(gatewayId)}`] = matrixBinding;
       gatewayResults.push({
         gatewayId,
         matrixRuntimeId: runtimeId,
         propertyId,
         propertyScopeId: expectedScopeId,
-        enabled: matrixBinding.enabled,
+        enabled: Boolean(propertyId && expectedScopeId && bindingReady && supportsScopedLora),
       });
     }
 
     for (const collar of collarDocs) {
       const collarId = normalizeId(collar.id);
       if (!collarId) continue;
-      const runtimeScopeId = resolveEntityScopeId(collar);
-      const propertyId = normalizeId(collar.propertyId) ||
-        normalizeId((collar.runtimeStatus as JsonMap | undefined)?.propertyId) ||
-        scopeToPropertyId.get(runtimeScopeId) ||
-        "";
+      const propertyId = normalizeId(collar.property_id ?? collar.propertyId);
       if (!propertyId) continue;
       const expectedScopeId = await computePropertyScopeId(propertyId);
-      const runtimeStatus = collar.runtimeStatus &&
-          typeof collar.runtimeStatus === "object"
+      const runtimeStatus = collar.runtime_status && typeof collar.runtime_status === "object"
+        ? collar.runtime_status as JsonMap
+        : collar.runtimeStatus && typeof collar.runtimeStatus === "object"
         ? collar.runtimeStatus as JsonMap
         : {};
-      const supportsScopedLora = collar.supportsScopedLora === true ||
+      const supportsScopedLora = collar.supports_scoped_lora === true ||
+        collar.supportsScopedLora === true ||
+        runtimeStatus.supports_scoped_lora === true ||
         runtimeStatus.supportsScopedLora === true;
-      const bindingReady = collar.bindingReady === true ||
+      const bindingReady = collar.binding_ready === true ||
+        collar.bindingReady === true ||
+        runtimeStatus.binding_ready === true ||
         runtimeStatus.bindingReady === true ||
-        (supportsScopedLora && runtimeScopeId === expectedScopeId);
+        (supportsScopedLora &&
+          normalizeScopeId(
+            collar.property_scope_id ?? collar.propertyScopeId ??
+              runtimeStatus.property_scope_id ?? runtimeStatus.propertyScopeId,
+          ) === expectedScopeId);
       if (apply) {
-        await patchFirestoreDocument(`collars/${collarId}`, {
-          propertyId,
-          propertyScopeId: expectedScopeId,
-          bindingReady,
-          supportsScopedLora,
-        });
+        const collarUpdate = await admin.from("collars").update({
+          property_scope_id: expectedScopeId,
+          binding_ready: bindingReady,
+          supports_scoped_lora: supportsScopedLora,
+        }).eq("id", collarId);
+        if (collarUpdate.error) throw new Error(collarUpdate.error.message);
       }
       collarResults.push({
         collarId,
@@ -178,10 +193,6 @@ Deno.serve(async (request) => {
         bindingReady,
         supportsScopedLora,
       });
-    }
-
-    if (apply && Object.keys(rtdbPatch).length) {
-      await patchRtdbRoot(rtdbPatch);
     }
 
     return jsonResponse(200, {
@@ -193,11 +204,12 @@ Deno.serve(async (request) => {
       properties: propertyResults,
       gateways: gatewayResults,
       collars: collarResults,
-      rtdbPatchCount: Object.keys(rtdbPatch).length,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown_error";
-    const status = message === "admin_required" ? 403 : 500;
-    return jsonResponse(status, { ok: false, reason: message });
+    return jsonResponse(message === "admin_required" ? 403 : 500, {
+      ok: false,
+      reason: message,
+    });
   }
 });

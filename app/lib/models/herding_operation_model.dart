@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import '../utils/legacy_firebase_compat.dart';
 
 enum HerdingOperationStatus {
   submitted,
@@ -134,18 +134,19 @@ class HerdingOperationModel {
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
-  int get assembledCount =>
-      deviceStatuses.values
-          .where((status) => status.status == 'assembled' || status.status == 'completed')
-          .length;
+  int get assembledCount => deviceStatuses.values
+      .where((status) =>
+          status.status == 'assembled' || status.status == 'completed')
+      .length;
 
-  int get completedCount =>
-      deviceStatuses.values.where((status) => status.status == 'completed').length;
+  int get completedCount => deviceStatuses.values
+      .where((status) => status.status == 'completed')
+      .length;
 
-  factory HerdingOperationModel.fromDoc(
-    DocumentSnapshot<Map<String, dynamic>> doc,
+  factory HerdingOperationModel.fromMap(
+    String id,
+    Map<String, dynamic> data,
   ) {
-    final data = doc.data() ?? const <String, dynamic>{};
     final rawTarget = data['targetPolygon'];
     final targetPolygon = <List<double>>[];
     if (rawTarget is List) {
@@ -175,6 +176,13 @@ class HerdingOperationModel {
 
     DateTime? asDateTime(dynamic value) {
       if (value is Timestamp) return value.toDate();
+      if (value is DateTime) return value;
+      if (value is String && value.trim().isNotEmpty) {
+        return DateTime.tryParse(value.trim())?.toLocal();
+      }
+      if (value is num) {
+        return DateTime.fromMillisecondsSinceEpoch(value.toInt());
+      }
       return null;
     }
 
@@ -184,14 +192,19 @@ class HerdingOperationModel {
         final raw = value.trim();
         if (raw.isEmpty) return '';
         if (!raw.contains('/')) return raw;
-        final parts = raw.split('/').where((entry) => entry.isNotEmpty).toList();
+        final parts =
+            raw.split('/').where((entry) => entry.isNotEmpty).toList();
         return parts.isEmpty ? raw : parts.last;
+      }
+      if (value is Map) {
+        if (value['id'] != null) return idFrom(value['id']);
+        if (value['path'] != null) return idFrom(value['path']);
       }
       return '';
     }
 
     return HerdingOperationModel(
-      id: doc.id,
+      id: id,
       propertyId: idFrom(data['propertyId']),
       ownerUid: idFrom(data['ownerUid']),
       requestedByUid: idFrom(data['requestedByUid']),
@@ -210,8 +223,9 @@ class HerdingOperationModel {
       matrixGatewayId: idFrom(data['matrixGatewayId']).isEmpty
           ? null
           : idFrom(data['matrixGatewayId']),
-      createdAreaId:
-          idFrom(data['createdAreaId']).isEmpty ? null : idFrom(data['createdAreaId']),
+      createdAreaId: idFrom(data['createdAreaId']).isEmpty
+          ? null
+          : idFrom(data['createdAreaId']),
       createdAt: asDateTime(data['createdAt']),
       updatedAt: asDateTime(data['updatedAt']),
     );

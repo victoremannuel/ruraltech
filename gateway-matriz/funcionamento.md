@@ -8,7 +8,7 @@ O gateway matriz é o nó central da propriedade:
 3. Persistência local em microSD (log).
 4. Descoberta contínua por BLE para cadastro no app.
 
-Também concentra dados para envio posterior ao backend (ex.: Firebase), via app/serviço externo.
+Tambem concentra dados para envio posterior ao backend Supabase, via app/servico externo ou backhaul proprio.
 
 ## 2) Arquitetura de módulos
 
@@ -106,7 +106,7 @@ Fila de comandos WebSocket no firmware: 8 mensagens.
 ## 11) Papel na integração com backend
 
 O firmware atual entrega a camada local (LoRa + Wi-Fi local + log).  
-O envio de dados para Firebase pode ser feito por:
+O envio de dados para o Supabase pode ser feito por:
 
 1. App conectado ao WebSocket do gateway.
 2. Serviço externo no computador conectado ao gateway.

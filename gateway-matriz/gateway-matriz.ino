@@ -645,7 +645,7 @@ static bool cloudTelemetryConfigured() {
   const bool backhaulSsidOk = !isUnsetCloudValue(cfg::BACKHAUL_WIFI_SSID);
   const bool backhaulPassOk =
       cfg::BACKHAUL_WIFI_PASS[0] == '\0' || !isUnsetCloudValue(cfg::BACKHAUL_WIFI_PASS);
-  const bool hostOk = !isUnsetCloudValue(cfg::FIREBASE_RTDB_HOST);
+  const bool hostOk = !isUnsetCloudValue(cfg::SUPABASE_EDGE_HOST);
   const bool matrixIdOk =
       cfg::RTDB_MATRIX_ID[0] == '\0' || !isUnsetCloudValue(cfg::RTDB_MATRIX_ID);
   const bool writerKeyOk = !isUnsetCloudValue(cfg::RTDB_WRITER_KEY);
@@ -698,6 +698,26 @@ static String utcDayKey(uint32_t unixSec) {
   return String(out);
 }
 
+static String urlEncodeComponent(const String& input) {
+  String out;
+  out.reserve(input.length() * 3);
+  for (size_t i = 0; i < input.length(); ++i) {
+    const char ch = input.charAt(i);
+    const bool safe =
+        (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+        (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' ||
+        ch == '.' || ch == '~';
+    if (safe) {
+      out += ch;
+      continue;
+    }
+    char buf[4];
+    snprintf(buf, sizeof(buf), "%%%02X", (unsigned char)ch);
+    out += buf;
+  }
+  return out;
+}
+
 static bool rtdbRequest(
     const char* method,
     const String& path,
@@ -715,19 +735,23 @@ static bool rtdbRequest(
   WiFiClientSecure client;
   client.setInsecure();
   client.setTimeout(cfg::CLOUD_HTTP_TIMEOUT_MS);
-  if (!client.connect(cfg::FIREBASE_RTDB_HOST, 443)) {
+  if (!client.connect(cfg::SUPABASE_EDGE_HOST, 443)) {
     setLastCloudWriteError("connect", path);
     return false;
   }
 
-  const String reqPath = String("/") + path + ".json";
+  const String reqPath =
+      String("/functions/v1/matrix-cloud?path=") + urlEncodeComponent(path);
   const size_t bodyLen = body.length();
   client.print(method);
   client.print(" ");
   client.print(reqPath);
   client.print(" HTTP/1.1\r\nHost: ");
-  client.print(cfg::FIREBASE_RTDB_HOST);
-  client.print("\r\nUser-Agent: ruraltech-matrix\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: ");
+  client.print(cfg::SUPABASE_EDGE_HOST);
+  client.print(
+      "\r\nUser-Agent: ruraltech-matrix\r\nConnection: close\r\nAccept: application/json\r\nContent-Type: application/json\r\nx-matrix-writer-key: ");
+  client.print(cfg::RTDB_WRITER_KEY);
+  client.print("\r\nContent-Length: ");
   client.print((unsigned long)bodyLen);
   client.print("\r\n\r\n");
   if (bodyLen > 0) client.print(body);
@@ -810,9 +834,9 @@ static void requestImmediateQueueDispatch(const char* source) {
   queueDispatchRequested = true;
   queuePollAtMs = 0;
   if (source && source[0] != '\0') {
-    LOGI("Fila RTDB sinalizada via stream (%s)", source);
+    LOGI("Fila cloud sinalizada via stream (%s)", source);
   } else {
-    LOGI("Fila RTDB sinalizada via stream");
+    LOGI("Fila cloud sinalizada via stream");
   }
 }
 
@@ -1021,7 +1045,7 @@ static bool publishCloudLatestAndHistory(
   if (latestOk && historyOk) {
     cloudLastPublishAtMs = millis();
   } else {
-    LOGW("Falha upload RTDB %s device=%s latest=%d history=%d",
+    LOGW("Falha upload cloud %s device=%s latest=%d history=%d",
          logLabel, ctx.deviceId.c_str(), latestOk ? 1 : 0, historyOk ? 1 : 0);
   }
   return latestOk && historyOk;
@@ -1223,7 +1247,7 @@ static void publishEventToCloud(const LoRaFrame& rx) {
       String("propertyEvents/") + ctx.propertyId + "/" + utcDayKey(ctx.nowSec) +
       "/" + String(entryId);
   if (!rtdbWrite("PUT", eventPath, body)) {
-    LOGW("Falha upload RTDB event device=%s type=%s",
+    LOGW("Falha upload cloud event device=%s type=%s",
          ctx.deviceId.c_str(), eventType);
   }
 }
@@ -2373,94 +2397,14 @@ static String queueRootPath() {
 }
 
 static bool openQueueCommandStream() {
-  if (!queuePollingConfigured()) return false;
-  if (WiFi.status() != WL_CONNECTED) {
-    setQueueStreamError("wifi", "disconnected");
-    return false;
-  }
-  const uint64_t nowMs = unixNowMs(unixNowSec());
-  if (queueStreamReconnectAtUnixMs != 0 && nowMs < queueStreamReconnectAtUnixMs) {
-    return false;
-  }
-
-  if (queueStreamClient.connected()) {
-    queueStreamClient.stop();
-  }
-
-  queueStreamClient.setInsecure();
-  queueStreamClient.setTimeout(cfg::CLOUD_HTTP_TIMEOUT_MS);
-  if (!queueStreamClient.connect(cfg::FIREBASE_RTDB_HOST, 443)) {
-    setQueueStreamError("connect", queueRootPath());
-    queueStreamReconnectAtUnixMs =
-        nowMs + (uint64_t)cfg::CLOUD_BACKHAUL_RETRY_MS;
-    queueStreamRuntime.markDisconnect(
-        millis(), cfg::CLOUD_BACKHAUL_RETRY_MS, "connect");
-    return false;
-  }
-
-  const String reqPath = String("/") + queueRootPath() + ".json";
-  queueStreamClient.print("GET ");
-  queueStreamClient.print(reqPath);
-  queueStreamClient.print(" HTTP/1.1\r\nHost: ");
-  queueStreamClient.print(cfg::FIREBASE_RTDB_HOST);
-  queueStreamClient.print(
-      "\r\nUser-Agent: ruraltech-matrix\r\nAccept: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n");
-
-  const String statusLine = queueStreamClient.readStringUntil('\n');
-  if (!(statusLine.startsWith("HTTP/1.1 2") ||
-        statusLine.startsWith("HTTP/1.0 2"))) {
-    setQueueStreamError("http", statusLine);
-    queueStreamClient.stop();
-    queueStreamReconnectAtUnixMs =
-        nowMs + (uint64_t)cfg::CLOUD_BACKHAUL_RETRY_MS;
-    queueStreamRuntime.markDisconnect(
-        millis(), cfg::CLOUD_BACKHAUL_RETRY_MS, "http");
-    return false;
-  }
-
-  while (queueStreamClient.connected()) {
-    const String line = queueStreamClient.readStringUntil('\n');
-    if (line == "\r" || line.length() == 0) break;
-  }
-
-  queueStreamParser.reset();
-  queueStreamConnected = true;
+  queueStreamConnected = false;
   queueStreamReconnectAtUnixMs = 0;
   clearQueueStreamError();
-  queueStreamRuntime.markConnected();
-  LOGI("Stream RTDB da fila conectado");
-  return true;
+  return false;
 }
 
 static void pollQueueCommandStream() {
-  if (!queuePollingConfigured() || !cfg::FEATURE_CLOUD) {
-    if (queueStreamConnected) closeQueueCommandStream("disabled");
-    return;
-  }
-  if (WiFi.status() != WL_CONNECTED) {
-    if (queueStreamConnected) closeQueueCommandStream("wifi");
-    return;
-  }
-
-  if (!queueStreamConnected) {
-    if (!backhaulWindowOpen()) return;
-    if (!openQueueCommandStream()) return;
-  }
-
-  while (queueStreamClient.available()) {
-    const char ch = (char)queueStreamClient.read();
-    const rtmatrix::QueueStreamNotification notification =
-        queueStreamParser.push(ch);
-    if (!notification.completed) continue;
-    if (!notification.queueChanged) continue;
-    queueStreamLastEventAtUnixMs = unixNowMs(unixNowSec());
-    queueStreamRuntime.markEvent(millis());
-    requestImmediateQueueDispatch(notification.eventType);
-  }
-
-  if (!queueStreamClient.connected()) {
-    closeQueueCommandStream("closed");
-  }
+  if (queueStreamConnected) closeQueueCommandStream("poll_only");
 }
 
 static bool loadNextQueuedCommand(String& commandIdOut, DynamicJsonDocument& commandDocOut) {

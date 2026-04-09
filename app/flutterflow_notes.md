@@ -1,14 +1,14 @@
 # RuralTech - Notas para FlutterFlow
 
 ## Telas MVP
-1. LoginScreen (Firebase Email/Senha)
+1. LoginScreen (email/senha via Supabase Auth)
 2. DashboardScreen (lista devices)
 3. DeviceDetailsScreen
 4. GeofenceScreen (entrada manual lat/lon)
 5. HerdingScreen (gera fases simples)
 6. EventsScreen (stream websocket)
 
-## Coleções Firestore
+## Estruturas cloud
 - `/users/{uid}`: perfil básico
 - `/devices/{deviceId}`: estado atual, posição, metadata
 - `/fences/{deviceId}`: `points: [[lat,lon], ...]`
@@ -26,4 +26,4 @@
 ## Recriação no FlutterFlow
 - Definir App State: `gatewayHost`, `messages[]`
 - Criar API Call WebSocket custom action
-- Bind em ListView para mensagens e coleções Firestore
+- Bind em ListView para mensagens e tabelas cloud

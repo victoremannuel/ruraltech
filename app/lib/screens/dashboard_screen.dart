@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_compass/flutter_compass.dart';
@@ -17,6 +16,7 @@ import '../services/bluetooth_discovery_service.dart';
 import '../services/firebase_service.dart';
 import '../services/gateway_service.dart';
 import '../services/map_filter_service.dart';
+import '../utils/legacy_firebase_compat.dart';
 import '../utils/device_map_telemetry.dart';
 import '../utils/onboarding_gateway_utils.dart';
 import '../utils/polygon_metrics.dart';
@@ -323,16 +323,15 @@ class _HomeScreenState extends State<HomeScreen> {
   String _repairFirebaseMirrorsErrorMessage(Object error) {
     final raw = error.toString();
     if (raw.contains('admin_required')) {
-      return 'Falha ao reparar espelhos Firebase: somente administradores podem executar esse reparo.';
+      return 'Falha ao reparar o estado cloud: somente administradores podem executar esse reparo.';
     }
-    if (raw.contains('missing_firebase_id_token')) {
-      return 'Falha ao reparar espelhos Firebase: sessao Firebase invalida. Entre novamente no app.';
+    if (raw.contains('missing_supabase_access_token')) {
+      return 'Falha ao reparar o estado cloud: sessao do backend invalida. Entre novamente no app.';
     }
-    if (raw.contains('firestore_list_failed:') &&
-        (raw.contains(':429') || raw.contains('RESOURCE_EXHAUSTED'))) {
-      return 'Falha ao reparar espelhos Firebase: o Firestore recusou a varredura por limite de taxa/quota. Tente novamente em instantes.';
+    if (raw.contains(':429') || raw.contains('RESOURCE_EXHAUSTED')) {
+      return 'Falha ao reparar o estado cloud: o backend recusou a varredura por limite de taxa/quota. Tente novamente em instantes.';
     }
-    return 'Falha ao reparar espelhos Firebase: $error';
+    return 'Falha ao reparar o estado cloud: $error';
   }
 
   String _normalizeNumericDeviceId(String? raw) {
@@ -2947,7 +2946,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ListTile(
                 key: const Key('home_action_repair_firebase_mirrors'),
                 leading: const Icon(Icons.sync_problem),
-                title: const Text('Reparar espelhos Firebase'),
+                title: const Text('Reparar estado cloud'),
                 onTap: () async {
                   Navigator.pop(context);
                   try {
@@ -2956,7 +2955,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         .repairFirebaseMirrors(apply: true);
                     if (!context.mounted) return;
                     AppFeedback.success(
-                      'Espelhos reparados: propriedades=${result['propertyCount'] ?? 0}, gateways=${result['gatewayCount'] ?? 0}.',
+                      'Estado cloud reparado: propriedades=${result['propertyCount'] ?? 0}, gateways=${result['gatewayCount'] ?? 0}.',
                     );
                   } catch (e) {
                     if (!context.mounted) return;

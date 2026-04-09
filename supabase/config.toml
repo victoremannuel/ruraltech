@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.repair-firebase-mirrors]
 verify_jwt = false
+
+[functions.matrix-cloud]
+verify_jwt = false

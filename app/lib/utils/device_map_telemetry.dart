@@ -1,7 +1,7 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../models/device_model.dart';
+import 'legacy_firebase_compat.dart';
 
 class DeviceMapTelemetrySample {
   const DeviceMapTelemetrySample({
@@ -61,7 +61,7 @@ bool isValidMapCoordinatePair(double? lat, double? lon) {
 
 DeviceMapTelemetrySample? deviceMapTelemetrySampleFromDevice(
   DeviceModel device, {
-  String source = 'firebase',
+  String source = 'cloud',
 }) {
   final normalizedDeviceId = normalizeMapNumericDeviceId(
     device.loraDeviceId ?? device.deviceId ?? device.id,

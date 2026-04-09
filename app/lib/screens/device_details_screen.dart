@@ -115,9 +115,10 @@ class DeviceDetailsScreen extends StatelessWidget {
         final liveLat = live?['lat'] as double?;
         final liveLon = live?['lon'] as double?;
         final liveTimestampMs = live?['telemetryReceivedAtMs'] as int?;
-        final position = _formatPositionFromValues(liveLat, liveLon) == 'Sem posicao'
-            ? fallbackPosition
-            : _formatPositionFromValues(liveLat, liveLon);
+        final position =
+            _formatPositionFromValues(liveLat, liveLon) == 'Sem posicao'
+                ? fallbackPosition
+                : _formatPositionFromValues(liveLat, liveLon);
         final timestamp = liveTimestampMs == null || liveTimestampMs <= 0
             ? fallbackTimestamp
             : _formatTelemetryTimestampFromMs(liveTimestampMs);
@@ -237,7 +238,7 @@ class DeviceDetailsScreen extends StatelessWidget {
             title: const Text('Abrir log da coleira'),
             subtitle: canOpenLog
                 ? const Text(
-                    'Mensagens que chegaram ao Firebase pela matriz.',
+                    'Mensagens recebidas no backend pela matriz.',
                   )
                 : const Text(
                     'A coleira precisa ter propriedade vinculada e ID LoRa valido.',

@@ -1,5 +1,5 @@
 name: ruraltech_app
-description: App RuralTech Flutter + Firebase
+description: App RuralTech Flutter + Supabase
 publish_to: none
 version: 1.0.0+1
 
@@ -10,15 +10,11 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
-  firebase_core: ^3.6.0
-  firebase_auth: ^5.3.1
-  cloud_firestore: ^5.4.4
-  firebase_database: ^11.2.0
-  firebase_messaging: ^15.1.4
   provider: ^6.1.2
   web_socket_channel: ^3.0.1
   http: ^1.2.2
   crypto: ^3.0.6
+  supabase_flutter: ^2.8.0
   flutter_map: ^7.0.2
   latlong2: ^0.9.1
   geolocator: ^13.0.2

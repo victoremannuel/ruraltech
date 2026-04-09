@@ -30,7 +30,7 @@
 #define RT_CFG_OTA_PASSWORD "ruraltechota"
 #endif
 
-// Backhaul com internet (telemetria para Firebase RTDB)
+// Backhaul com internet (telemetria cloud via Supabase Edge Functions)
 // Valores "SET_*" sao placeholders e desativam cloud telemetry ate override local.
 #ifndef RT_CFG_BACKHAUL_WIFI_SSID
 #define RT_CFG_BACKHAUL_WIFI_SSID "SET_BACKHAUL_WIFI_SSID"
@@ -39,9 +39,16 @@
 #define RT_CFG_BACKHAUL_WIFI_PASS "SET_BACKHAUL_WIFI_PASS"
 #endif
 
-// Firebase RTDB (writer do gateway matriz para telemetria cloud)
+// Host cloud do projeto Supabase (sem protocolo)
+#ifndef RT_CFG_SUPABASE_EDGE_HOST
+#ifdef RT_CFG_FIREBASE_RTDB_HOST
+#define RT_CFG_SUPABASE_EDGE_HOST RT_CFG_FIREBASE_RTDB_HOST
+#else
+#define RT_CFG_SUPABASE_EDGE_HOST "SET_SUPABASE_PROJECT_HOST"
+#endif
+#endif
 #ifndef RT_CFG_FIREBASE_RTDB_HOST
-#define RT_CFG_FIREBASE_RTDB_HOST "ruraltech10-default-rtdb.firebaseio.com"
+#define RT_CFG_FIREBASE_RTDB_HOST RT_CFG_SUPABASE_EDGE_HOST
 #endif
 #ifndef RT_CFG_RTDB_MATRIX_ID
 #define RT_CFG_RTDB_MATRIX_ID "SET_RTDB_MATRIX_ID"
@@ -60,7 +67,7 @@ constexpr char OTA_HOSTNAME[] = RT_CFG_OTA_HOSTNAME;
 constexpr char OTA_PASSWORD[] = RT_CFG_OTA_PASSWORD;
 constexpr char BACKHAUL_WIFI_SSID[] = RT_CFG_BACKHAUL_WIFI_SSID;
 constexpr char BACKHAUL_WIFI_PASS[] = RT_CFG_BACKHAUL_WIFI_PASS;
-constexpr char FIREBASE_RTDB_HOST[] = RT_CFG_FIREBASE_RTDB_HOST;
+constexpr char SUPABASE_EDGE_HOST[] = RT_CFG_SUPABASE_EDGE_HOST;
 constexpr char RTDB_MATRIX_ID[] = RT_CFG_RTDB_MATRIX_ID;
 constexpr char RTDB_WRITER_KEY[] = RT_CFG_RTDB_WRITER_KEY;
 constexpr char RTDB_QUEUE_KEY[] = RT_CFG_RTDB_QUEUE_KEY;

@@ -1,13 +1,13 @@
-# RuralTech App (Flutter + Firebase)
+# RuralTech App (Flutter + Supabase)
 
-Aplicativo Flutter com Auth + Firestore + Telemetria WebSocket.
+Aplicativo Flutter com `Supabase Auth`, `Postgres`, `Realtime` e telemetria via WebSocket local do gateway.
 
 Plataformas suportadas neste projeto: `iOS`, `Android` e `Web`.
 
 ## Pré-requisitos
 - Flutter SDK instalado e no `PATH`
 - Xcode (iOS), Android Studio/SDK (Android), navegador (Web)
-- Firebase configurado no projeto
+- Projeto Supabase configurado
 
 ## Setup inicial (uma vez)
 ```bash
@@ -16,21 +16,22 @@ flutter doctor
 flutter pub get
 ```
 
-## Configuração Firebase (resumo)
-1. Crie/acesse o projeto Firebase.
-2. Ative Authentication (email/senha).
-3. Ative Cloud Firestore.
-4. Gere arquivos de configuração (`google-services.json` e `GoogleService-Info.plist`).
-5. Publique regras (Firestore + RTDB):
+## Configuração Supabase (resumo)
+1. Crie/acesse o projeto Supabase.
+2. Configure Auth por email/senha.
+3. Ajuste `SUPABASE_URL` e `SUPABASE_ANON_KEY` por `--dart-define` ou em `lib/config/manual_settings.dart`.
+4. Publique schema e functions:
 ```bash
-firebase deploy --only firestore:rules,database --project <seu_project_id>
+../app/scripts/deploy_supabase.sh --project-ref <seu_project_ref>
 ```
-6. Provisione a `writerKey` da matriz para liberar escrita sem auth no RTDB:
+5. Provisione a `writerKey` da matriz na fila cloud:
 ```bash
-./scripts/provision_matrix_writer_key.sh --project <seu_project_id>
+./scripts/provision_matrix_writer_key.sh \
+  --url https://<seu_project_ref>.supabase.co \
+  --service-role-key <service_role_key>
 ```
 Observação:
-- O script lê `RT_CFG_RTDB_MATRIX_ID` e `RT_CFG_RTDB_WRITER_KEY` de `../gateway-matriz/manual_settings.local.h`.
+- O script lê `RT_CFG_RTDB_MATRIX_ID`, `RT_CFG_RTDB_WRITER_KEY` e `RT_CFG_RTDB_QUEUE_KEY` de `../gateway-matriz/manual_settings.local.h`.
 - Se o arquivo local não existir, copie de `../gateway-matriz/manual_settings.local.example.h`.
 
 ## Executar em Debug
@@ -196,5 +197,7 @@ No Xcode:
 2. Selecione device
 3. `Cmd + R` para Run
 
-## Telemetria do gateway
-Ajuste o host em `lib/services/gateway_service.dart` (`gatewayHost`).
+## Backend do app
+- Bootstrap do Supabase: `lib/main.dart`
+- Configuração manual: `lib/config/manual_settings.dart`
+- Camada de acesso cloud: `lib/services/firebase_service.dart` (compatibilidade interna)

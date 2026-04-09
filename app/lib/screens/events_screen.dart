@@ -43,7 +43,7 @@ class EventsScreen extends StatelessWidget {
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Text(
-                  'Falha ao carregar eventos do Firestore:\n${snapshot.error}',
+                  'Falha ao carregar eventos do backend:\n${snapshot.error}',
                   textAlign: TextAlign.center,
                 ),
               ),

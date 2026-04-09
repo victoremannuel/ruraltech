@@ -1,4 +1,4 @@
-# Funcionamento do App (`Flutter + Firebase`)
+# Funcionamento do App (`Flutter + Supabase`)
 
 ## 1) Objetivo
 Aplicativo para operação do sistema RuralTech:
@@ -7,15 +7,15 @@ Aplicativo para operação do sistema RuralTech:
 2. Gestão de propriedades, áreas, coleiras e gateways.
 3. Visualização em mapa com filtros.
 4. Envio de comandos para coleiras via gateway.
-5. Registro de geofence e plano de condução no Firestore.
+5. Registro de geofence e plano de condução no Supabase.
 
 ## 2) Inicialização da aplicação
 
-1. Inicializa Firebase (`Firebase.initializeApp`).
+1. Inicializa Supabase (`Supabase.initialize`).
 2. Se falhar a inicialização, mostra tela de erro de bootstrap.
 3. Sobe providers globais:
    - `AuthService`
-   - `FirebaseService`
+   - `FirebaseService` (camada de compatibilidade interna, agora usando Supabase)
    - `GatewayService`
    - `BluetoothDiscoveryService`
    - `MapFilterService`
@@ -25,14 +25,14 @@ Aplicativo para operação do sistema RuralTech:
 
 ## 3) Autenticação e perfil
 
-1. Login e cadastro por email/senha (`Firebase Auth`).
-2. Documento de usuário em `/users/{uid}` é criado/carregado automaticamente.
+1. Login e cadastro por email/senha (`Supabase Auth`).
+2. Perfil do usuário é criado/carregado na tabela `profiles`.
 3. Papel (`role`) suportado:
    - `user`
    - `adm`
 4. Usuário admin pode alterar papel de outro usuário por email.
 
-## 4) Regras de acesso (Firestore)
+## 4) Regras de acesso (RLS / policies)
 
 As regras implementam controle por:
 
@@ -41,7 +41,7 @@ As regras implementam controle por:
 3. Lista de usuários vinculados (`userUids`).
 4. Referência de propriedade associada (para áreas e gateways).
 
-Coleções com regras aplicadas:
+Tabelas com regras aplicadas:
 
 1. `users`
 2. `collars`
@@ -108,14 +108,14 @@ Pelo app é possível:
 
 1. Usuário desenha polígono no mapa.
 2. Limite de pontos do app: `3..32`.
-3. Salva em Firestore (`/fences/{deviceId}`).
+3. Salva na tabela `fences`.
 4. Envia comando ao gateway:
    - `SET_FENCE` com payload `points`.
 
 ### Condução (`HerdingScreen`)
 
 1. Gera plano de 3 fases (modelo atual da tela).
-2. Salva em Firestore (`/herdingPlans/{deviceId}`).
+2. Salva na tabela `herding_plans`.
 3. Envia comando ao gateway:
    - `SET_HERDING_PLAN` com payload `phases`.
 
@@ -137,11 +137,11 @@ Pelo app é possível:
 
 `EventsScreen` exibe:
 
-1. Eventos criticos persistidos no Firestore (`events`) via stream em tempo real.
+1. Eventos criticos persistidos no Supabase (`events`) via Realtime.
 2. Falhas de leitura/persistencia no fluxo de eventos, quando houver.
 3. Feed para inspecao operacional com `deviceId`, tipo de evento e gateway.
 
-Os eventos chegam do gateway via WebSocket, sao persistidos pelo app e depois lidos pelo `EventsScreen` a partir do Firestore.
+Os eventos chegam do gateway via WebSocket, sao persistidos pelo app e depois lidos pelo `EventsScreen` a partir do Supabase.
 
 ## 10) Filtros de visualização
 
@@ -158,7 +158,7 @@ Os filtros são geridos por `MapFilterService` e aplicados em tempo real.
 
 1. App conecta no gateway por WebSocket.
 2. Usuário publica geofence/plano.
-3. App salva referência no Firestore.
+3. App salva referência no Supabase.
 4. App envia comando ao gateway.
 5. Gateway fragmenta se necessário e transmite por LoRa.
 6. Coleira aplica e responde `ACK/NACK`.

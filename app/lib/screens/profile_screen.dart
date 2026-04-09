@@ -1,4 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -6,6 +5,7 @@ import '../models/device_model.dart';
 import '../services/auth_service.dart';
 import '../services/firebase_service.dart';
 import '../services/map_filter_service.dart';
+import '../utils/legacy_firebase_compat.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});

@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import '../utils/legacy_firebase_compat.dart';
 
 class DeviceModel {
   static const int healthFlagWifiOtaEnabled = 1 << 0;

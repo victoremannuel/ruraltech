@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
@@ -12,6 +11,7 @@ import '../models/device_model.dart';
 import '../models/polygon_map_context.dart';
 import '../services/auth_service.dart';
 import '../services/firebase_service.dart';
+import '../utils/legacy_firebase_compat.dart';
 import '../utils/polygon_edit_session.dart';
 import '../utils/polygon_metrics.dart';
 import '../utils/top_feedback.dart';
@@ -718,7 +718,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
     } on FirebaseException catch (e) {
       if (!mounted) return;
       await _showMessage(
-        'Erro Firebase',
+        'Erro de backend',
         '${e.code}: ${e.message ?? 'Falha ao salvar a propriedade.'}',
       );
     } on TimeoutException catch (e) {
