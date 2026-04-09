@@ -1,0 +1,12 @@
+{
+  "type": "event",
+  "device_id": 101,
+  "scope_id": "DEADBEEF00000001",
+  "msg_type": 2,
+  "seq": 41826,
+  "timestamp": 1760000132,
+  "gateway_id": "RT-GW-001",
+  "gateway_role": "matrix",
+  "gateway_wifi_ota_enabled": true,
+  "payload": "{\"scope_id\":\"DEADBEEF00000001\",\"event_type\":\"polygon_apply_result\",\"status\":\"success\",\"command\":\"SET_FENCE\",\"polygon_kind\":\"area\",\"origin_doc_type\":\"area\",\"origin_doc_id\":\"area-9\",\"cmd_id\":\"auto-area-9-1234\",\"point_count\":4,\"phase_count\":0}"
+}

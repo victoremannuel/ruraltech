@@ -166,6 +166,71 @@ function extractQueueKey(raw) {
   return "";
 }
 
+function derivePolygonKind(command, originDocType, businessRef) {
+  if (command === "SET_HERDING_PLAN") return "herding";
+  if (command !== "SET_FENCE") return "";
+
+  const normalizedOriginDocType = normalizeText(originDocType);
+  const normalizedBusinessType = normalizeText(businessRef?.type);
+  if (normalizedOriginDocType === "area" || normalizedBusinessType === "area") {
+    return "area";
+  }
+  if (
+    normalizedOriginDocType === "ruralProperty" ||
+    normalizedBusinessType === "ruralProperty"
+  ) {
+    return "property";
+  }
+  return "";
+}
+
+function buildDispatchPayload(commandId, command, commandData) {
+  const sourcePayload =
+    commandData?.payload && typeof commandData.payload === "object"
+      ? commandData.payload
+      : {};
+  const payload = {
+    ...sourcePayload,
+    cmd_id: normalizeText(sourcePayload.cmd_id || sourcePayload.command_id) || commandId,
+    command_id:
+      normalizeText(sourcePayload.command_id || sourcePayload.cmd_id) || commandId,
+  };
+  const businessRef = normalizeBusinessRef(commandData?.businessRef);
+  const originDocType =
+    normalizeText(
+      commandData?.originDocType ||
+        sourcePayload.origin_doc_type ||
+        sourcePayload.originDocType ||
+        businessRef?.type,
+    ) || "";
+  const originDocId =
+    normalizeId(
+      commandData?.originDocId ||
+        sourcePayload.origin_doc_id ||
+        sourcePayload.originDocId ||
+        businessRef?.id ||
+        sourcePayload.operation_id,
+    ) || "";
+  const polygonKind =
+    normalizeText(
+      sourcePayload.polygon_kind ||
+        sourcePayload.polygonKind ||
+        derivePolygonKind(command, originDocType, businessRef),
+    ) || "";
+
+  if (polygonKind) payload.polygon_kind = polygonKind;
+  if (originDocType) payload.origin_doc_type = originDocType;
+  if (originDocId) payload.origin_doc_id = originDocId;
+
+  return {
+    payload,
+    polygonKind,
+    originDocType,
+    originDocId,
+    businessRef,
+  };
+}
+
 function commandExpiryMs(command, createdAtMs) {
   const ttl = COMMAND_TTL_MS[command] || 10 * 60 * 1000;
   return createdAtMs + ttl;
@@ -803,6 +868,8 @@ async function queueValidatedCommand(commandId, commandData) {
     return;
   }
 
+  const dispatchData = buildDispatchPayload(commandId, command, commandData);
+
   const queuePayload = {
     commandId,
     command,
@@ -812,15 +879,12 @@ async function queueValidatedCommand(commandId, commandData) {
     matrixRuntimeId,
     targetDeviceIds,
     targetGatewayIds,
-    payload:
-      commandData.payload && typeof commandData.payload === "object"
-        ? commandData.payload
-        : {},
+    payload: dispatchData.payload,
     requestedByUid,
     requestedByRole,
     createdAtMs,
     expiresAtMs,
-    businessRef: normalizeBusinessRef(commandData.businessRef),
+    businessRef: dispatchData.businessRef,
   };
 
   await appendCommandEvent(commandId, "validated", {
@@ -844,6 +908,9 @@ async function queueValidatedCommand(commandId, commandData) {
       targetGatewayIds,
       requestedByUid,
       requestedByRole,
+      polygonKind: dispatchData.polygonKind || null,
+      originDocType: dispatchData.originDocType || null,
+      originDocId: dispatchData.originDocId || null,
       status: "matrix_queued",
       resultReason: null,
       deviceResults: targetValidation.deviceResults,

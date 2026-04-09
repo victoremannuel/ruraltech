@@ -179,6 +179,11 @@ function buildAutoFenceCommand({
     targetDeviceIds: normalizedTargetDeviceIds,
     targetGatewayIds: [],
     payload: {
+      cmd_id: commandId,
+      command_id: commandId,
+      polygon_kind: originDocType === "area" ? "area" : "property",
+      origin_doc_type: normalizeText(originDocType),
+      origin_doc_id: normalizeId(originDocId),
       points: normalizedPoints,
     },
     requestedByUid: normalizeId(requestedByUid),

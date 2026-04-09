@@ -361,6 +361,9 @@ class _HerdingScreenState extends State<HerdingScreen> {
         targetDeviceIds: selectedDeviceIds,
         payload: <String, dynamic>{
           'operation_id': operationId,
+          'polygon_kind': 'herding',
+          'origin_doc_type': 'herdingOperation',
+          'origin_doc_id': operationId,
           'property_id': propertyId,
           'owner_uid': ownerUid,
           'matrix_gateway_id': matrixGatewayId,

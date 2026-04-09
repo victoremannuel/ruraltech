@@ -186,6 +186,11 @@ static String scopeIdToHex(uint64_t scopeId) {
   return String(out);
 }
 
+static uint64_t parseScopeIdHex(const char* raw) {
+  if (!raw || !raw[0]) return 0;
+  return strtoull(raw, nullptr, 16);
+}
+
 static const char* pickFirstText(
     const JsonVariantConst a,
     const JsonVariantConst b = JsonVariantConst(),
@@ -965,7 +970,7 @@ static bool applyFenceChunkJson(const JsonObject& doc, const char** err) {
         &fenceChunkRx_.audit,
         MsgType::SET_FENCE,
         parseScopeIdHex(pickFirstText(doc["scope_id"], doc["property_scope_id"])),
-        doc.as<JsonVariantConst>());
+        doc);
   }
 
   if (!fenceChunkRx_.active) {
@@ -1058,7 +1063,7 @@ static bool applyHerdChunkJson(const JsonObject& doc, const char** err) {
         &herdChunkRx_.audit,
         MsgType::SET_HERDING_PLAN,
         parseScopeIdHex(pickFirstText(doc["scope_id"], doc["property_scope_id"])),
-        doc.as<JsonVariantConst>());
+        doc);
     herdChunkRx_.phaseAccum.count = 0;
   }
 

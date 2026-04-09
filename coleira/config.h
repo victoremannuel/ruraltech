@@ -119,7 +119,7 @@ constexpr bool SMART_GPS_TEST_MODE = false;
 // Persistência
 constexpr uint16_t EEPROM_SIZE = 2048;
 constexpr uint16_t EEPROM_EVENT_START = 64;
-constexpr uint8_t EEPROM_EVENT_SLOTS = 11;
+constexpr uint8_t EEPROM_EVENT_SLOTS = 10;
 constexpr uint16_t EEPROM_LAST_GOOD_FIX_ADDR = 1792;
 
 // Geofence e condução

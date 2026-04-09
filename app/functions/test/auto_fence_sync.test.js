@@ -47,6 +47,11 @@ test("property polygon change creates one deterministic SET_FENCE for all proper
     [-16.1, -49],
     [-16.2, -49.1],
   ]);
+  assert.equal(createdCommands[0].commandDoc.payload.cmd_id, createdCommands[0].commandId);
+  assert.equal(createdCommands[0].commandDoc.payload.command_id, createdCommands[0].commandId);
+  assert.equal(createdCommands[0].commandDoc.payload.polygon_kind, "property");
+  assert.equal(createdCommands[0].commandDoc.payload.origin_doc_type, "ruralProperty");
+  assert.equal(createdCommands[0].commandDoc.payload.origin_doc_id, "property-1");
   assert.equal(createdCommands[0].commandDoc.requestedByUid, "user-7");
   assert.equal(createdCommands[0].commandDoc.requestedByRole, "adm");
   assert.match(createdCommands[0].commandId, /^auto-ruralProperty-property-1-/);
@@ -101,6 +106,9 @@ test("area perimeter edit with linked collars syncs active area and enqueues sel
   assert.equal(createdCommands.length, 1);
   assert.deepEqual(createdCommands[0].commandDoc.targetDeviceIds, ["2", "3"]);
   assert.equal(createdCommands[0].commandDoc.origin, "auto_area_polygon_sync");
+  assert.equal(createdCommands[0].commandDoc.payload.polygon_kind, "area");
+  assert.equal(createdCommands[0].commandDoc.payload.origin_doc_type, "area");
+  assert.equal(createdCommands[0].commandDoc.payload.origin_doc_id, "area-9");
 });
 
 test("metadata-only area update does not enqueue fence and does not rewrite links", async () => {
