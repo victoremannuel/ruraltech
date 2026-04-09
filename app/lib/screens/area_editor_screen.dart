@@ -8,6 +8,7 @@ import '../services/auth_service.dart';
 import '../services/firebase_service.dart';
 import '../services/gateway_service.dart';
 import '../utils/polygon_edit_session.dart';
+import '../utils/linked_device_selection.dart';
 import '../utils/polygon_metrics.dart';
 import '../utils/top_feedback.dart';
 import '../widgets/polygon_editing_map.dart';
@@ -28,6 +29,7 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
   static const int _maxAreaPoints = GatewayService.maxPolygonPoints;
 
   late final PolygonEditSessionController _draftController;
+  late final LinkedDeviceSelectionController _linkedDeviceController;
   String? _selectedPropertyId;
   bool _loadingProperties = true;
   bool _saving = false;
@@ -49,12 +51,17 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
     _draftController = PolygonEditSessionController(
       initialPoints: _decodePolygon(widget.initialArea?['perimeter']),
     );
+    _linkedDeviceController = LinkedDeviceSelectionController(
+      initialDeviceIds:
+          normalizeLinkedDeviceIds(widget.initialArea?['linkedDeviceIds']),
+    );
     _loadProperties();
   }
 
   @override
   void dispose() {
     _draftController.dispose();
+    _linkedDeviceController.dispose();
     super.dispose();
   }
 
@@ -179,6 +186,7 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
     }
     setState(() => _selectedPropertyId = normalized);
     _draftController.resetSession(const <LatLng>[]);
+    _linkedDeviceController.clear();
   }
 
   Future<void> _delete() async {
@@ -255,12 +263,19 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
         if (areaId == null || areaId.isEmpty) {
           throw Exception('id_da_area_invalido');
         }
-        await firebase.updateAreaPerimeter(id: areaId, perimeter: perimeter);
+        await firebase.updateAreaPerimeter(
+          id: areaId,
+          perimeter: perimeter,
+          linkedDeviceIds: _linkedDeviceController.selectedDeviceIds,
+          updatedByUid: uid,
+        );
       } else {
         await firebase.addArea(
           ownerUid: uid,
           ruralPropertyId: propertyId,
           perimeter: perimeter,
+          linkedDeviceIds: _linkedDeviceController.selectedDeviceIds,
+          updatedByUid: uid,
         );
       }
       if (!mounted) return;
@@ -328,7 +343,9 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
                       ),
           ),
           AnimatedBuilder(
-            animation: _draftController,
+            animation: Listenable.merge(
+              <Listenable>[_draftController, _linkedDeviceController],
+            ),
             builder: (context, _) {
               return Container(
                 width: double.infinity,
@@ -336,7 +353,8 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
                 color: Colors.green.withValues(alpha: 0.08),
                 child: Text(
                   'Toque no mapa para adicionar os primeiros pontos. Toque em um ponto para mover e no perimetro para inserir novos pontos. '
-                  'Pontos: ${_draftController.points.length}/$_maxAreaPoints',
+                  'Pontos: ${_draftController.points.length}/$_maxAreaPoints'
+                  ' | Coleiras vinculadas: ${_linkedDeviceController.selectedCount}',
                 ),
               );
             },
@@ -366,10 +384,19 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
                               .map((device) {
                                 final point = _devicePosition(device);
                                 if (point == null) return null;
+                                final overlayId =
+                                    device.loraDeviceId ?? device.id;
                                 return PolygonMapDeviceOverlay(
-                                  id: device.loraDeviceId ?? device.id,
+                                  id: overlayId,
                                   label: device.name,
                                   point: point,
+                                  selected: _linkedDeviceController
+                                      .isSelected(overlayId),
+                                  onTap: _saving || device.loraDeviceId == null
+                                      ? null
+                                      : () => _linkedDeviceController.toggle(
+                                            device.loraDeviceId,
+                                          ),
                                 );
                               })
                               .whereType<PolygonMapDeviceOverlay>()
@@ -438,7 +465,9 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
                   ),
           ),
           AnimatedBuilder(
-            animation: _draftController,
+            animation: Listenable.merge(
+              <Listenable>[_draftController, _linkedDeviceController],
+            ),
             builder: (context, _) {
               return Container(
                 width: double.infinity,
@@ -447,7 +476,8 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
                 color: Colors.green.withValues(alpha: 0.08),
                 child: Text(
                   'Area da edicao: ${PolygonMetrics.areaTextInline(_draftController.points)}'
-                  ' | Pontos: ${_draftController.points.length}/$_maxAreaPoints',
+                  ' | Pontos: ${_draftController.points.length}/$_maxAreaPoints'
+                  ' | Vinculos: ${_linkedDeviceController.selectedCount}',
                   textAlign: TextAlign.center,
                 ),
               );

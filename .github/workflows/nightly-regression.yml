@@ -52,6 +52,27 @@ jobs:
       - name: Run rules tests
         run: npm test
 
+  backend-functions-regression:
+    name: Backend Functions Regression
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app/functions
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run backend tests
+        run: npm test
+
   firmware-contract-regression:
     name: Firmware Contract Regression
     runs-on: ubuntu-latest
@@ -59,13 +80,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Run command contract tests
+      - name: Run firmware host-side tests
         run: |
           g++ -std=c++17 -Wall -Wextra -pedantic \
             firmware/shared/command_contract.cpp \
             firmware/tests/command_contract_test.cpp \
             -o /tmp/command_contract_test
           /tmp/command_contract_test
+          g++ -std=c++17 -Wall -Wextra -pedantic \
+            gateway-matriz/QueueStreamSupport.cpp \
+            firmware/tests/queue_stream_support_test.cpp \
+            -o /tmp/queue_stream_support_test
+          /tmp/queue_stream_support_test
 
   firmware-regression:
     name: Firmware Regression Compile

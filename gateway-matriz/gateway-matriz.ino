@@ -37,6 +37,7 @@
 #include "LoRaGateway.h"
 #include "SdLogger.h"
 #include "ApiServer.h"
+#include "QueueStreamSupport.h"
 #include "../firmware/shared/command_contract.h"
 
 LoRaGateway lora;
@@ -66,6 +67,14 @@ wifi_err_reason_t cloudBackhaulLastDisconnectReason = WIFI_REASON_UNSPECIFIED;
 uint32_t cloudBackhaulLastDiagScanAtMs = 0;
 uint32_t queuePollAtMs = 0;
 uint64_t lastQueuePollAtUnixMs = 0;
+bool queueStreamConnected = false;
+uint64_t queueStreamLastEventAtUnixMs = 0;
+uint64_t queueStreamReconnectAtUnixMs = 0;
+char queueStreamLastError[96]{};
+rtmatrix::QueueStreamParser queueStreamParser;
+rtmatrix::QueueStreamRuntimeState queueStreamRuntime;
+WiFiClientSecure queueStreamClient;
+bool queueDispatchRequested = false;
 uint32_t runtimeMirrorPublishAtMs = 0;
 char bindingPropertyId[48]{};
 char bindingPropertyScopeId[17]{};
@@ -181,6 +190,9 @@ struct ActiveSimpleCommandState {
   char propertyId[48]{};
   char propertyScopeId[17]{};
   char matrixGatewayId[32]{};
+  char polygonKind[16]{};
+  char originDocType[24]{};
+  char originDocId[48]{};
   char requestedByUid[48]{};
   char requestedByRole[16]{};
   char payloadJson[4096]{};
@@ -237,6 +249,7 @@ static void publishHerdingOperationSnapshot(
     const char* statusOverride = nullptr);
 static bool ensureCloudBackhaulConnected();
 static bool publishMatrixRuntimeMirrors(bool force = false);
+static void pollQueueCommandStream();
 static bool enqueueAcceptedUplink(const LoRaFrame& frame);
 static bool popAcceptedUplink(LoRaFrame& frame);
 static bool enqueueDeferredUplink(const LoRaFrame& frame);
@@ -253,6 +266,8 @@ static bool processPrioritySimpleCommandFeedbackWindow();
 static String payloadBytesToString(const uint8_t* data, size_t len);
 static void primeSpiChipSelectLines();
 static bool backhaulWindowOpen();
+static void requestImmediateQueueDispatch(const char* source);
+static void closeQueueCommandStream(const char* reason);
 
 static const char* otaErrorText(ota_error_t error) {
   switch (error) {
@@ -447,6 +462,35 @@ static const char* pickFirstText(
     if (text && text[0] != '\0') return text;
   }
   return "";
+}
+
+static void copyAuditMetadataFromPayload(
+    JsonObject dst,
+    const JsonVariantConst payload) {
+  const char* polygonKind = pickFirstText(
+      payload["polygon_kind"], payload["polygonKind"]);
+  const char* originDocType = pickFirstText(
+      payload["origin_doc_type"], payload["originDocType"]);
+  const char* originDocId = pickFirstText(
+      payload["origin_doc_id"], payload["originDocId"], payload["operation_id"]);
+  if (polygonKind[0] != '\0') dst["polygonKind"] = polygonKind;
+  if (originDocType[0] != '\0') dst["originDocType"] = originDocType;
+  if (originDocId[0] != '\0') dst["originDocId"] = originDocId;
+}
+
+static void copyTargetDeviceIdsFromActiveCommand(JsonObject dst) {
+  if (activeSimpleCommand.targetDeviceCommand) {
+    JsonArray targets = dst["targetDeviceIds"].to<JsonArray>();
+    for (uint8_t i = 0; i < activeSimpleCommand.targetCount; ++i) {
+      targets.add(activeSimpleCommand.targets[i].targetId);
+    }
+    return;
+  }
+
+  JsonArray targets = dst["targetGatewayIds"].to<JsonArray>();
+  for (uint8_t i = 0; i < activeSimpleCommand.targetCount; ++i) {
+    targets.add(activeSimpleCommand.targets[i].targetId);
+  }
 }
 
 static bool beginBindingPrefs() {
@@ -747,6 +791,47 @@ static void clearLastCloudWriteError() {
   lastCloudWriteError[0] = '\0';
 }
 
+static void setQueueStreamError(const char* stage, const String& detail) {
+  const char* safeStage = (stage && stage[0] != '\0') ? stage : "stream";
+  const String safeDetail = detail.isEmpty() ? String("-") : detail;
+  snprintf(
+      queueStreamLastError,
+      sizeof(queueStreamLastError),
+      "%s:%s",
+      safeStage,
+      safeDetail.substring(0, 72).c_str());
+}
+
+static void clearQueueStreamError() {
+  queueStreamLastError[0] = '\0';
+}
+
+static void requestImmediateQueueDispatch(const char* source) {
+  queueDispatchRequested = true;
+  queuePollAtMs = 0;
+  if (source && source[0] != '\0') {
+    LOGI("Fila RTDB sinalizada via stream (%s)", source);
+  } else {
+    LOGI("Fila RTDB sinalizada via stream");
+  }
+}
+
+static void closeQueueCommandStream(const char* reason) {
+  if (queueStreamClient.connected()) {
+    queueStreamClient.stop();
+  }
+  queueStreamParser.reset();
+  queueStreamConnected = false;
+  const uint64_t nowMs = unixNowMs(unixNowSec());
+  queueStreamReconnectAtUnixMs =
+      nowMs + (uint64_t)cfg::CLOUD_BACKHAUL_RETRY_MS;
+  queueStreamRuntime.markDisconnect(
+      millis(), cfg::CLOUD_BACKHAUL_RETRY_MS, reason);
+  if (reason && reason[0] != '\0') {
+    setQueueStreamError("stream", String(reason));
+  }
+}
+
 static bool appendPropertyCommandEvent(
     const char* propertyId,
     const char* commandId,
@@ -759,7 +844,7 @@ static bool appendPropertyCommandEvent(
     return false;
   }
 
-  DynamicJsonDocument doc(1024);
+  DynamicJsonDocument doc(1536);
   doc["type"] = status;
   doc["status"] = status;
   doc["matrixId"] = matrixCloudId();
@@ -768,6 +853,27 @@ static bool appendPropertyCommandEvent(
   doc["writer"] = "gateway_matrix";
   doc["writerKey"] = cfg::RTDB_WRITER_KEY;
   if (reason && reason[0]) doc["reason"] = reason;
+  if (sourceDoc && (*sourceDoc)["command"].is<const char*>()) {
+    doc["command"] = (*sourceDoc)["command"].as<const char*>();
+  }
+  if (sourceDoc && (*sourceDoc)["propertyScopeId"].is<const char*>()) {
+    doc["propertyScopeId"] = (*sourceDoc)["propertyScopeId"].as<const char*>();
+  }
+  if (sourceDoc && (*sourceDoc)["requestedByUid"].is<const char*>()) {
+    doc["requestedByUid"] = (*sourceDoc)["requestedByUid"].as<const char*>();
+  }
+  if (sourceDoc && (*sourceDoc)["requestedByRole"].is<const char*>()) {
+    doc["requestedByRole"] = (*sourceDoc)["requestedByRole"].as<const char*>();
+  }
+  if (sourceDoc) {
+    copyAuditMetadataFromPayload(doc.as<JsonObject>(), sourceDoc->as<JsonVariantConst>());
+  }
+  if (sourceDoc && (*sourceDoc)["targetDeviceIds"].is<JsonArrayConst>()) {
+    doc["targetDeviceIds"] = (*sourceDoc)["targetDeviceIds"].as<JsonArrayConst>();
+  }
+  if (sourceDoc && (*sourceDoc)["targetGatewayIds"].is<JsonArrayConst>()) {
+    doc["targetGatewayIds"] = (*sourceDoc)["targetGatewayIds"].as<JsonArrayConst>();
+  }
   if (sourceDoc && (*sourceDoc)["deviceResults"].is<JsonObjectConst>()) {
     doc["deviceResults"] = (*sourceDoc)["deviceResults"].as<JsonObjectConst>();
   }
@@ -1078,12 +1184,33 @@ static void publishEventToCloud(const LoRaFrame& rx) {
   if (!eventType[0]) eventType = "event";
   payload["eventType"] = eventType;
   payload["type"] = eventType;
+  const char* polygonStatus = eventPayload["status"] | "";
+  if (polygonStatus[0] != '\0') payload["status"] = polygonStatus;
+  const char* polygonKind = pickFirstText(
+      eventPayload["polygon_kind"], eventPayload["polygonKind"]);
+  if (polygonKind[0] != '\0') payload["polygonKind"] = polygonKind;
+  const char* originDocType = pickFirstText(
+      eventPayload["origin_doc_type"], eventPayload["originDocType"]);
+  if (originDocType[0] != '\0') payload["originDocType"] = originDocType;
+  const char* originDocId = pickFirstText(
+      eventPayload["origin_doc_id"], eventPayload["originDocId"]);
+  if (originDocId[0] != '\0') payload["originDocId"] = originDocId;
   if (eventPayload["operation_id"].is<const char*>()) {
     payload["operationId"] = eventPayload["operation_id"].as<const char*>();
   }
   if (eventPayload["cmd_id"].is<const char*>()) {
     payload["cmd_id"] = eventPayload["cmd_id"].as<const char*>();
   }
+  if (!eventPayload["point_count"].isNull()) {
+    payload["pointCount"] = eventPayload["point_count"];
+  }
+  if (!eventPayload["phase_count"].isNull()) {
+    payload["phaseCount"] = eventPayload["phase_count"];
+  }
+  const char* errorCode = eventPayload["error_code"] | "";
+  if (errorCode[0] != '\0') payload["errorCode"] = errorCode;
+  const char* errorStage = eventPayload["error_stage"] | "";
+  if (errorStage[0] != '\0') payload["errorStage"] = errorStage;
   payload["payload"] = eventPayload.as<JsonVariantConst>();
   populateCommonCloudFields(payload.as<JsonObject>(), ctx, rx);
 
@@ -1201,6 +1328,16 @@ static bool publishSimpleCommandResult(const char* status, const char* reason = 
   doc["requestedByRole"] = activeSimpleCommand.requestedByRole;
   doc["writer"] = "gateway_matrix";
   doc["writerKey"] = cfg::RTDB_WRITER_KEY;
+  if (activeSimpleCommand.polygonKind[0] != '\0') {
+    doc["polygonKind"] = activeSimpleCommand.polygonKind;
+  }
+  if (activeSimpleCommand.originDocType[0] != '\0') {
+    doc["originDocType"] = activeSimpleCommand.originDocType;
+  }
+  if (activeSimpleCommand.originDocId[0] != '\0') {
+    doc["originDocId"] = activeSimpleCommand.originDocId;
+  }
+  copyTargetDeviceIdsFromActiveCommand(doc.as<JsonObject>());
   if (reason && reason[0]) doc["reason"] = reason;
 
   JsonObject deviceResults = doc["deviceResults"].to<JsonObject>();
@@ -1358,10 +1495,13 @@ static bool publishImmediateMatrixCommandResult(
     uint64_t createdAtMs,
     uint64_t expiresAtMs,
     const char* status,
-    const char* reason) {
+    const char* reason,
+    const JsonVariantConst payload = JsonVariantConst(),
+    const JsonArrayConst targetDeviceIds = JsonArrayConst(),
+    const JsonArrayConst targetGatewayIds = JsonArrayConst()) {
   if (!cfg::FEATURE_CLOUD) return false;
   if (!commandId || !commandId[0]) return false;
-  DynamicJsonDocument doc(1024);
+  DynamicJsonDocument doc(2048);
   doc["commandId"] = commandId;
   if (command && command[0]) doc["command"] = command;
   doc["status"] = status;
@@ -1377,6 +1517,15 @@ static bool publishImmediateMatrixCommandResult(
   if (requestedByRole && requestedByRole[0]) doc["requestedByRole"] = requestedByRole;
   doc["writer"] = "gateway_matrix";
   doc["writerKey"] = cfg::RTDB_WRITER_KEY;
+  if (!payload.isNull()) {
+    copyAuditMetadataFromPayload(doc.as<JsonObject>(), payload);
+  }
+  if (!targetDeviceIds.isNull()) {
+    doc["targetDeviceIds"] = targetDeviceIds;
+  }
+  if (!targetGatewayIds.isNull()) {
+    doc["targetGatewayIds"] = targetGatewayIds;
+  }
   if (reason && reason[0]) doc["reason"] = reason;
 
   String body;
@@ -2126,9 +2275,15 @@ static bool sendFenceCommandChunked(uint32_t deviceId, const JsonVariantConst pa
     const char* commandId = pickFirstText(payload["cmd_id"], payload["command_id"]);
     const char* scopeId = pickFirstText(payload["scope_id"], payload["property_scope_id"]);
     const char* matrixGatewayId = pickFirstText(payload["matrix_gateway_id"]);
+    const char* polygonKind = pickFirstText(payload["polygon_kind"], payload["polygonKind"]);
+    const char* originDocType = pickFirstText(payload["origin_doc_type"], payload["originDocType"]);
+    const char* originDocId = pickFirstText(payload["origin_doc_id"], payload["originDocId"]);
     if (commandId[0] != '\0') chunkDoc["cmd_id"] = commandId;
     if (scopeId[0] != '\0') chunkDoc["scope_id"] = scopeId;
     if (matrixGatewayId[0] != '\0') chunkDoc["matrix_gateway_id"] = matrixGatewayId;
+    if (polygonKind[0] != '\0') chunkDoc["polygon_kind"] = polygonKind;
+    if (originDocType[0] != '\0') chunkDoc["origin_doc_type"] = originDocType;
+    if (originDocId[0] != '\0') chunkDoc["origin_doc_id"] = originDocId;
     if (!payload["requested_at_ms"].isNull()) {
       chunkDoc["requested_at_ms"] = payload["requested_at_ms"];
     }
@@ -2176,10 +2331,17 @@ static bool sendHerdingPlanChunked(uint32_t deviceId, const JsonVariantConst pay
       const char* commandId = pickFirstText(payload["cmd_id"], payload["command_id"]);
       const char* scopeId = pickFirstText(payload["scope_id"], payload["property_scope_id"]);
       const char* matrixGatewayId = pickFirstText(payload["matrix_gateway_id"]);
+      const char* polygonKind = pickFirstText(payload["polygon_kind"], payload["polygonKind"]);
+      const char* originDocType = pickFirstText(payload["origin_doc_type"], payload["originDocType"]);
+      const char* originDocId = pickFirstText(
+          payload["origin_doc_id"], payload["originDocId"], payload["operation_id"]);
       if (operationId[0] != '\0') chunkDoc["operation_id"] = operationId;
       if (commandId[0] != '\0') chunkDoc["cmd_id"] = commandId;
       if (scopeId[0] != '\0') chunkDoc["scope_id"] = scopeId;
       if (matrixGatewayId[0] != '\0') chunkDoc["matrix_gateway_id"] = matrixGatewayId;
+      if (polygonKind[0] != '\0') chunkDoc["polygon_kind"] = polygonKind;
+      if (originDocType[0] != '\0') chunkDoc["origin_doc_type"] = originDocType;
+      if (originDocId[0] != '\0') chunkDoc["origin_doc_id"] = originDocId;
       if (!payload["requested_at_ms"].isNull()) {
         chunkDoc["requested_at_ms"] = payload["requested_at_ms"];
       }
@@ -2208,6 +2370,97 @@ static bool queuePollingConfigured() {
 
 static String queueRootPath() {
   return String("matrixCommandQueues/") + matrixCloudId() + "/" + String(cfg::RTDB_QUEUE_KEY);
+}
+
+static bool openQueueCommandStream() {
+  if (!queuePollingConfigured()) return false;
+  if (WiFi.status() != WL_CONNECTED) {
+    setQueueStreamError("wifi", "disconnected");
+    return false;
+  }
+  const uint64_t nowMs = unixNowMs(unixNowSec());
+  if (queueStreamReconnectAtUnixMs != 0 && nowMs < queueStreamReconnectAtUnixMs) {
+    return false;
+  }
+
+  if (queueStreamClient.connected()) {
+    queueStreamClient.stop();
+  }
+
+  queueStreamClient.setInsecure();
+  queueStreamClient.setTimeout(cfg::CLOUD_HTTP_TIMEOUT_MS);
+  if (!queueStreamClient.connect(cfg::FIREBASE_RTDB_HOST, 443)) {
+    setQueueStreamError("connect", queueRootPath());
+    queueStreamReconnectAtUnixMs =
+        nowMs + (uint64_t)cfg::CLOUD_BACKHAUL_RETRY_MS;
+    queueStreamRuntime.markDisconnect(
+        millis(), cfg::CLOUD_BACKHAUL_RETRY_MS, "connect");
+    return false;
+  }
+
+  const String reqPath = String("/") + queueRootPath() + ".json";
+  queueStreamClient.print("GET ");
+  queueStreamClient.print(reqPath);
+  queueStreamClient.print(" HTTP/1.1\r\nHost: ");
+  queueStreamClient.print(cfg::FIREBASE_RTDB_HOST);
+  queueStreamClient.print(
+      "\r\nUser-Agent: ruraltech-matrix\r\nAccept: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n");
+
+  const String statusLine = queueStreamClient.readStringUntil('\n');
+  if (!(statusLine.startsWith("HTTP/1.1 2") ||
+        statusLine.startsWith("HTTP/1.0 2"))) {
+    setQueueStreamError("http", statusLine);
+    queueStreamClient.stop();
+    queueStreamReconnectAtUnixMs =
+        nowMs + (uint64_t)cfg::CLOUD_BACKHAUL_RETRY_MS;
+    queueStreamRuntime.markDisconnect(
+        millis(), cfg::CLOUD_BACKHAUL_RETRY_MS, "http");
+    return false;
+  }
+
+  while (queueStreamClient.connected()) {
+    const String line = queueStreamClient.readStringUntil('\n');
+    if (line == "\r" || line.length() == 0) break;
+  }
+
+  queueStreamParser.reset();
+  queueStreamConnected = true;
+  queueStreamReconnectAtUnixMs = 0;
+  clearQueueStreamError();
+  queueStreamRuntime.markConnected();
+  LOGI("Stream RTDB da fila conectado");
+  return true;
+}
+
+static void pollQueueCommandStream() {
+  if (!queuePollingConfigured() || !cfg::FEATURE_CLOUD) {
+    if (queueStreamConnected) closeQueueCommandStream("disabled");
+    return;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    if (queueStreamConnected) closeQueueCommandStream("wifi");
+    return;
+  }
+
+  if (!queueStreamConnected) {
+    if (!backhaulWindowOpen()) return;
+    if (!openQueueCommandStream()) return;
+  }
+
+  while (queueStreamClient.available()) {
+    const char ch = (char)queueStreamClient.read();
+    const rtmatrix::QueueStreamNotification notification =
+        queueStreamParser.push(ch);
+    if (!notification.completed) continue;
+    if (!notification.queueChanged) continue;
+    queueStreamLastEventAtUnixMs = unixNowMs(unixNowSec());
+    queueStreamRuntime.markEvent(millis());
+    requestImmediateQueueDispatch(notification.eventType);
+  }
+
+  if (!queueStreamClient.connected()) {
+    closeQueueCommandStream("closed");
+  }
 }
 
 static bool loadNextQueuedCommand(String& commandIdOut, DynamicJsonDocument& commandDocOut) {
@@ -2297,6 +2550,21 @@ static bool dispatchQueuedSimpleCommand(
       activeSimpleCommand.requestedByRole,
       sizeof(activeSimpleCommand.requestedByRole),
       commandDoc["requestedByRole"] | "user");
+  copyStringToBuffer(
+      activeSimpleCommand.polygonKind,
+      sizeof(activeSimpleCommand.polygonKind),
+      pickFirstText(payloadDoc["polygon_kind"], payloadDoc["polygonKind"]));
+  copyStringToBuffer(
+      activeSimpleCommand.originDocType,
+      sizeof(activeSimpleCommand.originDocType),
+      pickFirstText(payloadDoc["origin_doc_type"], payloadDoc["originDocType"]));
+  copyStringToBuffer(
+      activeSimpleCommand.originDocId,
+      sizeof(activeSimpleCommand.originDocId),
+      pickFirstText(
+          payloadDoc["origin_doc_id"],
+          payloadDoc["originDocId"],
+          payloadDoc["operation_id"]));
   if (!cacheActiveSimpleCommandPayload(payloadDoc.as<JsonVariantConst>(), reason)) {
     clearActiveSimpleCommand();
     return false;
@@ -2381,10 +2649,13 @@ static void processNextQueuedCommand() {
   if (!backhaulWindowOpen()) return;
   if (herdOp.active || activeSimpleCommand.active) return;
   const uint32_t nowMsTick = millis();
-  if (queuePollAtMs != 0 &&
+  const bool forceDispatch = queueDispatchRequested;
+  if (!forceDispatch &&
+      queuePollAtMs != 0 &&
       (uint32_t)(nowMsTick - queuePollAtMs) < 1000UL) {
     return;
   }
+  queueDispatchRequested = false;
   queuePollAtMs = nowMsTick;
   lastQueuePollAtUnixMs = unixNowMs(unixNowSec());
 
@@ -2434,7 +2705,10 @@ static void processNextQueuedCommand() {
         commandDoc["createdAtMs"] | 0ULL,
         commandDoc["expiresAtMs"] | 0ULL,
         failStatus,
-        failReason);
+        failReason,
+        commandDoc["payload"].as<JsonVariantConst>(),
+        commandDoc["targetDeviceIds"].as<JsonArrayConst>(),
+        commandDoc["targetGatewayIds"].as<JsonArrayConst>());
     deleteQueuedCommand(commandId);
     return;
   }
@@ -2465,7 +2739,10 @@ static void processNextQueuedCommand() {
           commandDoc["createdAtMs"] | 0ULL,
           commandDoc["expiresAtMs"] | 0ULL,
           "failed",
-          startReason ? startReason : "invalid_operation_payload");
+          startReason ? startReason : "invalid_operation_payload",
+          payloadDoc.as<JsonVariantConst>(),
+          commandDoc["targetDeviceIds"].as<JsonArrayConst>(),
+          commandDoc["targetGatewayIds"].as<JsonArrayConst>());
     } else {
       copyStringToBuffer(herdOp.loraCommandId, sizeof(herdOp.loraCommandId), commandId.c_str());
       copyStringToBuffer(
@@ -2492,7 +2769,10 @@ static void processNextQueuedCommand() {
         commandDoc["createdAtMs"] | 0ULL,
         commandDoc["expiresAtMs"] | 0ULL,
         "rejected",
-        "unsupported_command");
+        "unsupported_command",
+        commandDoc["payload"].as<JsonVariantConst>(),
+        commandDoc["targetDeviceIds"].as<JsonArrayConst>(),
+        commandDoc["targetGatewayIds"].as<JsonArrayConst>());
     deleteQueuedCommand(commandId);
     return;
   }
@@ -2509,7 +2789,10 @@ static void processNextQueuedCommand() {
         commandDoc["createdAtMs"] | 0ULL,
         commandDoc["expiresAtMs"] | 0ULL,
         "failed",
-        failReason ? failReason : "lora_send_failed");
+        failReason ? failReason : "lora_send_failed",
+        commandDoc["payload"].as<JsonVariantConst>(),
+        commandDoc["targetDeviceIds"].as<JsonArrayConst>(),
+        commandDoc["targetGatewayIds"].as<JsonArrayConst>());
   }
   deleteQueuedCommand(commandId);
 }
@@ -2614,6 +2897,9 @@ static void publishHerdingOperationSnapshot(
   doc["matrixGatewayId"] = herdOp.matrixGatewayId;
   if (herdOp.propertyScopeId[0] != '\0') doc["propertyScopeId"] = herdOp.propertyScopeId;
   if (herdOp.loraCommandId[0] != '\0') doc["loraCommandId"] = herdOp.loraCommandId;
+  doc["polygonKind"] = "herding";
+  doc["originDocType"] = "herdingOperation";
+  doc["originDocId"] = herdOp.operationId;
   doc["updatedAt"] = nowMs;
   doc["writer"] = "gateway_matrix";
   doc["matrixId"] = matrixCloudId();
@@ -2674,7 +2960,14 @@ static void publishHerdingOperationSnapshot(
     resultDoc["requestedByRole"] = herdOp.requestedByRole;
     resultDoc["writer"] = "gateway_matrix";
     resultDoc["writerKey"] = cfg::RTDB_WRITER_KEY;
+    resultDoc["polygonKind"] = "herding";
+    resultDoc["originDocType"] = "herdingOperation";
+    resultDoc["originDocId"] = herdOp.operationId;
     if (herdOp.failureReason[0] != '\0') resultDoc["reason"] = herdOp.failureReason;
+    JsonArray resultTargets = resultDoc["targetDeviceIds"].to<JsonArray>();
+    for (uint8_t i = 0; i < herdOp.deviceCount; ++i) {
+      resultTargets.add(String(herdOp.devices[i].deviceId));
+    }
     JsonObject resultStatuses = resultDoc["deviceResults"].to<JsonObject>();
     for (uint8_t i = 0; i < herdOp.deviceCount; ++i) {
       const HerdingOperationDeviceState& device = herdOp.devices[i];
@@ -2729,6 +3022,15 @@ static bool sendHerdingOperationToDevice(
     const char** reason) {
   StaticJsonDocument<1024> payload;
   payload["operation_id"] = herdOp.operationId;
+  payload["cmd_id"] = herdOp.loraCommandId;
+  payload["command_id"] = herdOp.loraCommandId;
+  payload["scope_id"] = herdOp.propertyScopeId;
+  payload["property_scope_id"] = herdOp.propertyScopeId;
+  payload["matrix_gateway_id"] = herdOp.matrixGatewayId;
+  payload["polygon_kind"] = "herding";
+  payload["origin_doc_type"] = "herdingOperation";
+  payload["origin_doc_id"] = herdOp.operationId;
+  payload["requested_at_ms"] = herdOp.createdAtMs;
   JsonArray phases = payload["phases"].to<JsonArray>();
   JsonArray phase = phases.createNestedArray();
   for (uint8_t i = 0; i < herdOp.pointCount; ++i) {
@@ -3241,6 +3543,9 @@ void loop() {
   }
   if (cfg::FEATURE_CLOUD && backhaulWindowOpen()) {
     publishMatrixRuntimeMirrors(false);
+  }
+  if (cfg::FEATURE_CLOUD) {
+    pollQueueCommandStream();
   }
   feedWatchdogIfEnabled();
   const bool apClientConnected = wifiApClientConnected();

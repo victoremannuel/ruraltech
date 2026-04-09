@@ -1,4 +1,5 @@
 const crypto = require("node:crypto");
+const autoFenceSync = require("./auto_fence_sync");
 
 const admin = require("firebase-admin");
 const {
@@ -165,6 +166,71 @@ function extractQueueKey(raw) {
   return "";
 }
 
+function derivePolygonKind(command, originDocType, businessRef) {
+  if (command === "SET_HERDING_PLAN") return "herding";
+  if (command !== "SET_FENCE") return "";
+
+  const normalizedOriginDocType = normalizeText(originDocType);
+  const normalizedBusinessType = normalizeText(businessRef?.type);
+  if (normalizedOriginDocType === "area" || normalizedBusinessType === "area") {
+    return "area";
+  }
+  if (
+    normalizedOriginDocType === "ruralProperty" ||
+    normalizedBusinessType === "ruralProperty"
+  ) {
+    return "property";
+  }
+  return "";
+}
+
+function buildDispatchPayload(commandId, command, commandData) {
+  const sourcePayload =
+    commandData?.payload && typeof commandData.payload === "object"
+      ? commandData.payload
+      : {};
+  const payload = {
+    ...sourcePayload,
+    cmd_id: normalizeText(sourcePayload.cmd_id || sourcePayload.command_id) || commandId,
+    command_id:
+      normalizeText(sourcePayload.command_id || sourcePayload.cmd_id) || commandId,
+  };
+  const businessRef = normalizeBusinessRef(commandData?.businessRef);
+  const originDocType =
+    normalizeText(
+      commandData?.originDocType ||
+        sourcePayload.origin_doc_type ||
+        sourcePayload.originDocType ||
+        businessRef?.type,
+    ) || "";
+  const originDocId =
+    normalizeId(
+      commandData?.originDocId ||
+        sourcePayload.origin_doc_id ||
+        sourcePayload.originDocId ||
+        businessRef?.id ||
+        sourcePayload.operation_id,
+    ) || "";
+  const polygonKind =
+    normalizeText(
+      sourcePayload.polygon_kind ||
+        sourcePayload.polygonKind ||
+        derivePolygonKind(command, originDocType, businessRef),
+    ) || "";
+
+  if (polygonKind) payload.polygon_kind = polygonKind;
+  if (originDocType) payload.origin_doc_type = originDocType;
+  if (originDocId) payload.origin_doc_id = originDocId;
+
+  return {
+    payload,
+    polygonKind,
+    originDocType,
+    originDocId,
+    businessRef,
+  };
+}
+
 function commandExpiryMs(command, createdAtMs) {
   const ttl = COMMAND_TTL_MS[command] || 10 * 60 * 1000;
   return createdAtMs + ttl;
@@ -268,6 +334,207 @@ async function resolvePropertyScopeMeta(propertyId) {
     propertyScopeId,
     propertySnap,
     propertyData,
+  };
+}
+
+function propertyRefCandidates(propertyId) {
+  const normalizedPropertyId = normalizeId(propertyId);
+  if (!normalizedPropertyId) return [];
+  return [
+    firestore.collection("ruralProperties").doc(normalizedPropertyId),
+    normalizedPropertyId,
+    `/ruralProperties/${normalizedPropertyId}`,
+  ];
+}
+
+function entityMatchesProperty(data, expectedPropertyId, expectedScopeId) {
+  if (!data || typeof data !== "object") return false;
+  if (normalizeId(data.propertyId) === expectedPropertyId) return true;
+  const runtimeStatus = data.runtimeStatus && typeof data.runtimeStatus === "object"
+    ? data.runtimeStatus
+    : {};
+  if (normalizeId(runtimeStatus.propertyId) === expectedPropertyId) return true;
+  const directScopeId = normalizeScopeId(
+    data.propertyScopeId || runtimeStatus.propertyScopeId,
+  );
+  return Boolean(expectedScopeId && directScopeId === expectedScopeId);
+}
+
+async function findMatrixGatewayDocForProperty(propertyId, expectedScopeId = "") {
+  const normalizedPropertyId = normalizeId(propertyId);
+  if (!normalizedPropertyId) return null;
+
+  const byId = new Map();
+  for (const candidate of propertyRefCandidates(normalizedPropertyId)) {
+    const snap = await firestore
+      .collection("gateways")
+      .where("propertyId", "==", candidate)
+      .where("is_matrix", "==", true)
+      .limit(5)
+      .get();
+    for (const doc of snap.docs) {
+      byId.set(doc.id, doc);
+    }
+  }
+
+  if (byId.size === 0 && expectedScopeId) {
+    const snap = await firestore
+      .collection("gateways")
+      .where("is_matrix", "==", true)
+      .limit(50)
+      .get();
+    for (const doc of snap.docs) {
+      if (entityMatchesProperty(doc.data() || {}, normalizedPropertyId, expectedScopeId)) {
+        byId.set(doc.id, doc);
+      }
+    }
+  }
+
+  if (!byId.size) return null;
+  return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id))[0];
+}
+
+async function listPropertyTargetDeviceIds(propertyId, propertyScopeId) {
+  const normalizedPropertyId = normalizeId(propertyId);
+  if (!normalizedPropertyId) return [];
+
+  const byId = new Map();
+  for (const candidate of propertyRefCandidates(normalizedPropertyId)) {
+    const snap = await firestore
+      .collection("collars")
+      .where("propertyId", "==", candidate)
+      .limit(250)
+      .get();
+    for (const doc of snap.docs) {
+      byId.set(doc.id, doc);
+    }
+  }
+
+  if (byId.size === 0 && propertyScopeId) {
+    const snap = await firestore.collection("collars").limit(250).get();
+    for (const doc of snap.docs) {
+      if (entityMatchesProperty(doc.data() || {}, normalizedPropertyId, propertyScopeId)) {
+        byId.set(doc.id, doc);
+      }
+    }
+  }
+
+  return [...byId.values()]
+    .map((doc) => normalizeId(doc.get("deviceId")) || normalizeId(doc.id))
+    .filter((deviceId) => /^[1-9][0-9]*$/.test(deviceId))
+    .sort();
+}
+
+async function resolveRequesterInfo(uid) {
+  const normalizedUid = normalizeId(uid);
+  if (!normalizedUid) {
+    return { uid: "", role: "user" };
+  }
+  const snap = await firestore.collection("users").doc(normalizedUid).get();
+  return {
+    uid: normalizedUid,
+    role: normalizeRole(snap.get("role")),
+  };
+}
+
+async function enqueueAutoCommand(commandId, commandDoc) {
+  const normalizedCommandId = normalizeId(commandId);
+  if (!normalizedCommandId) return false;
+  const docRef = firestore.collection("loraCommands").doc(normalizedCommandId);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  try {
+    await docRef.create({
+      ...commandDoc,
+      commandId: normalizedCommandId,
+      createdAt: now,
+      updatedAt: now,
+      expiresAt: admin.firestore.Timestamp.fromMillis(commandDoc.expiresAtMs),
+    });
+    return true;
+  } catch (error) {
+    const code = normalizeText(error?.code || error?.details);
+    if (code === "6" || code === "already-exists" || code === "ALREADY_EXISTS") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function syncAreaLinks(linkPlan) {
+  const areaId = normalizeId(linkPlan?.areaId);
+  if (!areaId) return;
+
+  const assignIds = autoFenceSync.normalizeDeviceIdList(linkPlan?.assignIds);
+  const clearIds = autoFenceSync.normalizeDeviceIdList(linkPlan?.clearIds);
+  const clearAreaByDeviceId = {};
+  if (clearIds.length) {
+    const clearSnaps = await Promise.all(
+      clearIds.map((deviceId) => firestore.collection("collars").doc(deviceId).get()),
+    );
+    for (const snap of clearSnaps) {
+      if (!snap.exists) continue;
+      clearAreaByDeviceId[snap.id] = normalizeId(snap.get("activeAreaId"));
+    }
+  }
+  const mutations = autoFenceSync.buildAreaLinkMutations({
+    areaId,
+    beforeLinkedDeviceIds: clearIds,
+    afterLinkedDeviceIds: assignIds,
+    activeAreaByDeviceId: clearAreaByDeviceId,
+  });
+  const batch = firestore.batch();
+  let opCount = 0;
+
+  for (const mutation of mutations.upserts) {
+    const deviceId = mutation.deviceId;
+    const collarRef = firestore.collection("collars").doc(deviceId);
+    batch.set(
+      collarRef,
+      {
+        ...mutation.patch,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    opCount++;
+  }
+
+  for (const mutation of mutations.clears) {
+    batch.set(
+      firestore.collection("collars").doc(mutation.deviceId),
+      {
+        activeAreaId: admin.firestore.FieldValue.delete(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    opCount++;
+  }
+
+  if (opCount > 0) {
+    await batch.commit();
+  }
+}
+
+async function resolveAutoFencePropertyMeta(propertyId) {
+  const propertyMeta = await resolvePropertyScopeMeta(propertyId);
+  if (!propertyMeta.propertyData || !propertyMeta.propertyScopeId) {
+    return {
+      propertyId: normalizeId(propertyId),
+      propertyScopeId: "",
+      matrixGatewayId: "",
+      propertyData: propertyMeta.propertyData,
+    };
+  }
+  const matrixDoc = await findMatrixGatewayDocForProperty(
+    propertyMeta.propertyId,
+    propertyMeta.propertyScopeId,
+  );
+  return {
+    propertyId: propertyMeta.propertyId,
+    propertyScopeId: propertyMeta.propertyScopeId,
+    matrixGatewayId: matrixDoc ? matrixDoc.id : "",
+    propertyData: propertyMeta.propertyData,
   };
 }
 
@@ -601,6 +868,8 @@ async function queueValidatedCommand(commandId, commandData) {
     return;
   }
 
+  const dispatchData = buildDispatchPayload(commandId, command, commandData);
+
   const queuePayload = {
     commandId,
     command,
@@ -610,15 +879,12 @@ async function queueValidatedCommand(commandId, commandData) {
     matrixRuntimeId,
     targetDeviceIds,
     targetGatewayIds,
-    payload:
-      commandData.payload && typeof commandData.payload === "object"
-        ? commandData.payload
-        : {},
+    payload: dispatchData.payload,
     requestedByUid,
     requestedByRole,
     createdAtMs,
     expiresAtMs,
-    businessRef: normalizeBusinessRef(commandData.businessRef),
+    businessRef: dispatchData.businessRef,
   };
 
   await appendCommandEvent(commandId, "validated", {
@@ -642,6 +908,9 @@ async function queueValidatedCommand(commandId, commandData) {
       targetGatewayIds,
       requestedByUid,
       requestedByRole,
+      polygonKind: dispatchData.polygonKind || null,
+      originDocType: dispatchData.originDocType || null,
+      originDocId: dispatchData.originDocId || null,
       status: "matrix_queued",
       resultReason: null,
       deviceResults: targetValidation.deviceResults,
@@ -769,6 +1038,58 @@ exports.syncCollarPropertyScope = onDocumentWritten(
     const collarId = normalizeId(event.params.collarId);
     const after = event.data.after.exists ? event.data.after.data() || {} : null;
     await syncCollarBindingMetadata(collarId, after);
+  },
+);
+
+exports.autoSyncPropertyFence = onDocumentWritten(
+  "ruralProperties/{propertyId}",
+  async (event) => {
+    const propertyId = normalizeId(event.params.propertyId);
+    const before = event.data.before.exists ? event.data.before.data() || {} : null;
+    const after = event.data.after.exists ? event.data.after.data() || {} : null;
+    if (!propertyId || !after) return;
+
+    const result = await autoFenceSync.runPropertyPolygonAutoSync({
+      propertyId,
+      beforeData: before,
+      afterData: after,
+      deps: {
+        resolvePropertyMeta: resolveAutoFencePropertyMeta,
+        listPropertyTargetDeviceIds,
+        resolveRequester: resolveRequesterInfo,
+        enqueueAutoCommand,
+      },
+    });
+    logger.info("autoSyncPropertyFence", {
+      propertyId,
+      ...result,
+    });
+  },
+);
+
+exports.autoSyncAreaFence = onDocumentWritten(
+  "areas/{areaId}",
+  async (event) => {
+    const areaId = normalizeId(event.params.areaId);
+    const before = event.data.before.exists ? event.data.before.data() || {} : null;
+    const after = event.data.after.exists ? event.data.after.data() || {} : null;
+    if (!areaId || !after) return;
+
+    const result = await autoFenceSync.runAreaPolygonAutoSync({
+      areaId,
+      beforeData: before,
+      afterData: after,
+      deps: {
+        resolvePropertyMeta: resolveAutoFencePropertyMeta,
+        resolveRequester: resolveRequesterInfo,
+        enqueueAutoCommand,
+        syncAreaLinks,
+      },
+    });
+    logger.info("autoSyncAreaFence", {
+      areaId,
+      ...result,
+    });
   },
 );
 

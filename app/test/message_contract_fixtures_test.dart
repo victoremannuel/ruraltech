@@ -93,6 +93,25 @@ void main() {
       expect(payload['hf'], isA<int>());
     });
 
+    test('polygon apply result event fixture', () {
+      final event =
+          _readFixture(fixturesDir, 'polygon_apply_result_event.json');
+      expect(event['type'], 'event');
+      expect(event['device_id'], isA<int>());
+      expect(event['scope_id'], isA<String>());
+      expect(event['seq'], isA<int>());
+
+      final payload = _decodePayloadMap(event);
+      expect(payload['scope_id'], isA<String>());
+      expect(payload['event_type'], 'polygon_apply_result');
+      expect(payload['status'], anyOf('success', 'failure'));
+      expect(payload['command'], anyOf('SET_FENCE', 'SET_HERDING_PLAN'));
+      expect(payload['polygon_kind'], anyOf('property', 'area', 'herding'));
+      expect(payload['origin_doc_type'], isA<String>());
+      expect(payload['origin_doc_id'], isA<String>());
+      expect(payload['cmd_id'], isA<String>());
+    });
+
     test('ack and nack fixtures', () {
       final ack = _readFixture(fixturesDir, 'ack.json');
       final nack = _readFixture(fixturesDir, 'nack.json');

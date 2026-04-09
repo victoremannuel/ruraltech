@@ -29,6 +29,63 @@ function eventIdFor(commandId: string, status: string): string {
   return `${Date.now()}_${status}_${crypto.randomUUID().slice(0, 8)}_${commandId}`;
 }
 
+function derivePolygonKind(
+  command: string,
+  originDocType: string,
+  businessRef: { type: string; id: string } | null,
+): string {
+  if (command === "SET_HERDING_PLAN") return "herding";
+  if (command !== "SET_FENCE") return "";
+  if (originDocType === "area" || businessRef?.type === "area") return "area";
+  if (
+    originDocType === "ruralProperty" || businessRef?.type === "ruralProperty"
+  ) {
+    return "property";
+  }
+  return "";
+}
+
+function buildDispatchPayload(
+  commandId: string,
+  command: string,
+  sourcePayload: JsonMap,
+  businessRef: { type: string; id: string } | null,
+): { payload: JsonMap; polygonKind: string; originDocType: string; originDocId: string } {
+  const originDocType = normalizeText(
+    sourcePayload.origin_doc_type ??
+      sourcePayload.originDocType ??
+      businessRef?.type,
+  );
+  const originDocId = normalizeId(
+    sourcePayload.origin_doc_id ??
+      sourcePayload.originDocId ??
+      businessRef?.id ??
+      sourcePayload.operation_id,
+  );
+  const polygonKind = normalizeText(
+    sourcePayload.polygon_kind ??
+      sourcePayload.polygonKind ??
+      derivePolygonKind(command, originDocType, businessRef),
+  );
+
+  const payload: JsonMap = {
+    ...sourcePayload,
+    cmd_id: normalizeText(sourcePayload.cmd_id ?? sourcePayload.command_id) || commandId,
+    command_id:
+      normalizeText(sourcePayload.command_id ?? sourcePayload.cmd_id) || commandId,
+  };
+  if (polygonKind) payload.polygon_kind = polygonKind;
+  if (originDocType) payload.origin_doc_type = originDocType;
+  if (originDocId) payload.origin_doc_id = originDocId;
+
+  return {
+    payload,
+    polygonKind,
+    originDocType,
+    originDocId,
+  };
+}
+
 async function resolveMatrixGateway(
   explicitMatrixGatewayId: string,
   propertyId: string,
@@ -228,9 +285,15 @@ Deno.serve(async (request) => {
     const propertyKey = normalizeText(propertyId).replace(/[.#$\[\]/]/g, "_");
     const queuedEventId = eventIdFor(commandId, "queued");
     const businessRef = normalizeBusinessRef(body.businessRef);
-    const payload = body.payload && typeof body.payload === "object"
+    const sourcePayload = body.payload && typeof body.payload === "object"
       ? body.payload as JsonMap
       : {};
+    const dispatchPayload = buildDispatchPayload(
+      commandId,
+      normalizedCommand,
+      sourcePayload,
+      businessRef,
+    );
 
     const commandSummary = {
       commandId,
@@ -250,6 +313,9 @@ Deno.serve(async (request) => {
       updatedAtMs: nowMs,
       expiresAtMs,
       completedAtMs: null,
+      polygonKind: dispatchPayload.polygonKind || null,
+      originDocType: dispatchPayload.originDocType || null,
+      originDocId: dispatchPayload.originDocId || null,
       ...(businessRef ? { businessRef } : {}),
     };
 
@@ -270,7 +336,7 @@ Deno.serve(async (request) => {
       matrixRuntimeId,
       targetDeviceIds,
       targetGatewayIds,
-      payload,
+      payload: dispatchPayload.payload,
       requestedByUid: uid,
       requestedByRole,
       createdAtMs: nowMs,

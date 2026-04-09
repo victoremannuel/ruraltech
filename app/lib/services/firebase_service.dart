@@ -7,10 +7,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart' as rtdb;
 import 'package:http/http.dart' as http;
+import 'package:latlong2/latlong.dart';
 import '../config/manual_settings.dart';
 import '../models/device_model.dart';
 import '../models/herding_operation_model.dart';
 import '../utils/device_map_telemetry.dart';
+import '../utils/polygon_log_preview.dart';
 
 class FirebaseService {
   static const String _defaultRtdbUrl = ManualSettings.firebaseRtdbUrl;
@@ -120,6 +122,12 @@ class FirebaseService {
       return null;
     }
     return parsed.toString();
+  }
+
+  List<String> _normalizeLoraDeviceIds(dynamic raw) {
+    if (raw is! Iterable) return const <String>[];
+    return raw.map(_normalizeLoraDeviceId).whereType<String>().toSet().toList()
+      ..sort();
   }
 
   String? _normalizeWsHost(String? raw) {
@@ -987,15 +995,73 @@ class FirebaseService {
 
         final rawMap = _normalizeJsonLike(value);
         if (rawMap is! Map<String, dynamic>) continue;
+        final payloadMap =
+            _decodeJsonMap(rawMap['payload']) ?? const <String, dynamic>{};
+        final isPolygonAudit = eventType == 'polygon_apply_result';
+        final command = _normalizeTextValue(
+          payloadMap['command'] ?? rawMap['command'],
+        ).toUpperCase();
+        final status = _normalizeTextValue(
+          payloadMap['status'] ?? rawMap['status'],
+        ).toLowerCase();
         items.add({
           'id': 'event:$dayKey:$entryId',
           'entryId': entryId,
           'dayKey': dayKey,
           'deviceId': normalizedDeviceId,
           'propertyId': propertyId,
-          'kind': eventType.isEmpty ? 'event' : eventType,
+          'kind': isPolygonAudit
+              ? (status == 'success'
+                  ? 'polygon_apply_result_success'
+                  : 'polygon_apply_result_failure')
+              : (eventType.isEmpty ? 'event' : eventType),
           'type': 'event',
           'eventType': eventType,
+          'status': status,
+          'command': command,
+          'cmdId': _normalizeTextValue(
+            payloadMap['cmd_id'] ?? payloadMap['cmdId'] ?? rawMap['cmd_id'],
+          ),
+          'polygonKind': _normalizeTextValue(
+            payloadMap['polygon_kind'] ??
+                payloadMap['polygonKind'] ??
+                rawMap['polygonKind'],
+          ),
+          'originDocType': _normalizeTextValue(
+            payloadMap['origin_doc_type'] ??
+                payloadMap['originDocType'] ??
+                rawMap['originDocType'],
+          ),
+          'originDocId': _normalizeTextValue(
+            payloadMap['origin_doc_id'] ??
+                payloadMap['originDocId'] ??
+                rawMap['originDocId'],
+          ),
+          'operationId': _normalizeTextValue(
+            payloadMap['operation_id'] ??
+                payloadMap['operationId'] ??
+                rawMap['operationId'],
+          ),
+          'pointCount': _toIntValue(
+            payloadMap['point_count'] ??
+                payloadMap['pointCount'] ??
+                rawMap['pointCount'],
+          ),
+          'phaseCount': _toIntValue(
+            payloadMap['phase_count'] ??
+                payloadMap['phaseCount'] ??
+                rawMap['phaseCount'],
+          ),
+          'errorCode': _normalizeTextValue(
+            payloadMap['error_code'] ??
+                payloadMap['errorCode'] ??
+                rawMap['errorCode'],
+          ),
+          'errorStage': _normalizeTextValue(
+            payloadMap['error_stage'] ??
+                payloadMap['errorStage'] ??
+                rawMap['errorStage'],
+          ),
           'receivedAtMs': _coerceTimestampMs(
             value['receivedAtMs'] ??
                 value['receivedAt'] ??
@@ -1011,6 +1077,82 @@ class FirebaseService {
     return items;
   }
 
+  List<Map<String, dynamic>> _decodePropertyCommandEventsForDevice(
+    dynamic raw, {
+    required String propertyId,
+    required String normalizedDeviceId,
+  }) {
+    if (raw is! Map) return const <Map<String, dynamic>>[];
+    final items = <Map<String, dynamic>>[];
+    for (final commandEntry in raw.entries) {
+      final commandId = commandEntry.key?.toString().trim() ?? '';
+      final eventMap = commandEntry.value;
+      if (commandId.isEmpty || eventMap is! Map) continue;
+      for (final eventEntry in eventMap.entries) {
+        final eventId = eventEntry.key?.toString().trim() ?? '';
+        final value = eventEntry.value;
+        if (eventId.isEmpty || value is! Map) continue;
+
+        final rawMap = _normalizeJsonLike(value);
+        if (rawMap is! Map<String, dynamic>) continue;
+        final command = _normalizeTextValue(rawMap['command']).toUpperCase();
+        if (command != 'SET_FENCE' && command != 'SET_HERDING_PLAN') continue;
+        if (!_commandEventTargetsDevice(rawMap, normalizedDeviceId)) continue;
+
+        final status = _normalizeTextValue(
+          rawMap['status'] ?? rawMap['type'],
+        ).toLowerCase();
+        if (!const {'failed', 'rejected', 'expired', 'nacked'}
+            .contains(status)) {
+          continue;
+        }
+
+        final reason = _normalizeTextValue(
+          rawMap['reason'] ?? rawMap['resultReason'],
+        );
+        final originDocType = _firstTextFromMap(rawMap, const [
+          'originDocType',
+          'origin_doc_type',
+        ]);
+        final polygonKind = _firstTextFromMap(rawMap, const [
+          'polygonKind',
+          'polygon_kind',
+        ]);
+        items.add({
+          'id': 'command_event:$commandId:$eventId',
+          'entryId': eventId,
+          'dayKey': '',
+          'deviceId': normalizedDeviceId,
+          'propertyId': propertyId,
+          'kind': 'polygon_apply_result_failure',
+          'type': 'command_event',
+          'eventType': 'polygon_apply_result',
+          'status': 'failure',
+          'command': command,
+          'cmdId': commandId,
+          'polygonKind': polygonKind,
+          'originDocType': originDocType,
+          'originDocId': _firstTextFromMap(rawMap, const [
+            'originDocId',
+            'origin_doc_id',
+          ]),
+          'operationId': _firstTextFromMap(rawMap, const ['operationId']),
+          'errorCode': reason,
+          'errorStage': _inferPolygonErrorStage(reason),
+          'fallbackFromCommandTrail': true,
+          'receivedAtMs': _coerceTimestampMs(
+            rawMap['createdAtMs'] ?? rawMap['updatedAtMs'],
+            fallbackId: eventId,
+          ),
+          'gatewayId': rawMap['matrixGatewayId'],
+          'gatewayRole': 'matrix',
+          'raw': rawMap,
+        });
+      }
+    }
+    return items;
+  }
+
   List<Map<String, dynamic>> _mergeCollarFirebaseLogItems({
     required String propertyId,
     required String normalizedDeviceId,
@@ -1018,6 +1160,7 @@ class FirebaseService {
     dynamic telemetryHistoryRaw,
     dynamic healthHistoryRaw,
     dynamic eventsRaw,
+    dynamic commandEventsRaw,
   }) {
     final items = <Map<String, dynamic>>[
       ..._decodeTelemetryHistorySnapshot(
@@ -1032,6 +1175,11 @@ class FirebaseService {
       ),
       ..._decodePropertyEventsForDevice(
         eventsRaw,
+        propertyId: propertyId,
+        normalizedDeviceId: normalizedDeviceId,
+      ),
+      ..._decodePropertyCommandEventsForDevice(
+        commandEventsRaw,
         propertyId: propertyId,
         normalizedDeviceId: normalizedDeviceId,
       ),
@@ -1053,6 +1201,20 @@ class FirebaseService {
         items.add(latestTelemetry);
       }
     }
+    final auditedCommandKeys = items
+        .where(
+          (item) =>
+              item['type'] == 'event' &&
+              item['eventType'] == 'polygon_apply_result',
+        )
+        .map(_polygonAuditDedupKey)
+        .whereType<String>()
+        .toSet();
+    items.removeWhere((item) {
+      if (item['fallbackFromCommandTrail'] != true) return false;
+      final key = _polygonAuditDedupKey(item);
+      return key != null && auditedCommandKeys.contains(key);
+    });
     items.sort((a, b) => _eventSortKeyMs(b).compareTo(_eventSortKeyMs(a)));
     return items;
   }
@@ -1146,6 +1308,137 @@ class FirebaseService {
       return fallback > 1000000000000 ? fallback : fallback * 1000;
     }
     return 0;
+  }
+
+  String _normalizeTextValue(dynamic value) {
+    if (value == null) return '';
+    return value.toString().trim();
+  }
+
+  String _firstTextFromMap(Map<String, dynamic> raw, List<String> keys) {
+    for (final key in keys) {
+      final value = _normalizeTextValue(raw[key]);
+      if (value.isNotEmpty) return value;
+    }
+    return '';
+  }
+
+  bool _commandEventTargetsDevice(
+    Map<String, dynamic> raw,
+    String normalizedDeviceId,
+  ) {
+    if (_normalizeLoraDeviceIds(raw['targetDeviceIds'])
+        .contains(normalizedDeviceId)) {
+      return true;
+    }
+    if (_normalizeLoraDeviceId(raw['deviceId']) == normalizedDeviceId) {
+      return true;
+    }
+    final deviceResults = raw['deviceResults'];
+    if (deviceResults is Map) {
+      return deviceResults.keys.any(
+        (key) => _normalizeLoraDeviceId(key) == normalizedDeviceId,
+      );
+    }
+    return false;
+  }
+
+  String _inferPolygonErrorStage(String reason) {
+    final normalized = reason.trim().toLowerCase();
+    if (normalized.isEmpty) return '';
+    if (normalized.contains('parse') || normalized.contains('json')) {
+      return 'parse';
+    }
+    if (normalized.contains('assemble') || normalized.contains('chunk')) {
+      return 'assemble';
+    }
+    if (normalized.contains('persist')) {
+      return 'persist';
+    }
+    if (normalized.contains('activate')) {
+      return 'activate';
+    }
+    if (normalized.contains('binding')) {
+      return 'binding';
+    }
+    if (normalized.contains('scope')) {
+      return 'scope';
+    }
+    return '';
+  }
+
+  String? _polygonAuditDedupKey(Map<String, dynamic> entry) {
+    final deviceId = _normalizeLoraDeviceId(entry['deviceId']);
+    final cmdId = _normalizeTextValue(
+        entry['cmdId'] ?? entry['cmd_id'] ?? entry['commandId']);
+    if (deviceId == null || cmdId.isEmpty) return null;
+    return '$deviceId::$cmdId';
+  }
+
+  LatLng? _latLngFromPair(List<double> pair) {
+    if (pair.length < 2) return null;
+    final lat = pair[0];
+    final lon = pair[1];
+    if (!lat.isFinite || !lon.isFinite) return null;
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+    return LatLng(lat, lon);
+  }
+
+  List<LatLng> _latLngsFromPoints(dynamic raw) {
+    return _decodeLatLonPoints(raw)
+        .map(_latLngFromPair)
+        .whereType<LatLng>()
+        .toList();
+  }
+
+  LatLng? _positionFromTelemetryMap(dynamic raw) {
+    if (raw is! Map) return null;
+    final lat = _toFiniteCoord(raw['lat']);
+    final lon = _toFiniteCoord(raw['lon']);
+    if (lat == null || lon == null) return null;
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+    return LatLng(lat, lon);
+  }
+
+  LatLng? _positionFromDevice(DeviceModel device) {
+    final lat = device.lat;
+    final lon = device.lon;
+    if (lat == null || lon == null) return null;
+    if (!lat.isFinite || !lon.isFinite) return null;
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+    return LatLng(lat, lon);
+  }
+
+  LatLng? _findHistoricalTelemetryPosition(
+    dynamic raw, {
+    required int targetReceivedAtMs,
+  }) {
+    if (raw is! Map) return null;
+
+    LatLng? bestPosition;
+    var bestReceivedAtMs = -1;
+
+    for (final dayEntry in raw.entries) {
+      final dayMap = dayEntry.value;
+      if (dayMap is! Map) continue;
+      for (final entry in dayMap.entries) {
+        final value = entry.value;
+        if (value is! Map) continue;
+        final receivedAtMs = _coerceTimestampMs(
+          value['receivedAtMs'] ?? value['receivedAt'],
+          fallbackId: entry.key,
+        );
+        if (receivedAtMs <= 0 || receivedAtMs > targetReceivedAtMs) continue;
+        final position = _positionFromTelemetryMap(value);
+        if (position == null) continue;
+        if (receivedAtMs >= bestReceivedAtMs) {
+          bestReceivedAtMs = receivedAtMs;
+          bestPosition = position;
+        }
+      }
+    }
+
+    return bestPosition;
   }
 
   Map<String, Map<String, dynamic>> _decodeLatestEventPositionSnapshot(
@@ -1736,6 +2029,8 @@ class FirebaseService {
     final healthSnap =
         await _rtdb.ref('propertyHealthHistory/$propertyKey/$deviceKey').get();
     final eventsSnap = await _rtdb.ref('propertyEvents/$propertyKey').get();
+    final commandEventsSnap =
+        await _rtdb.ref('propertyCommandEvents/$propertyKey').get();
 
     return _mergeCollarFirebaseLogItems(
       propertyId: propertyId,
@@ -1744,6 +2039,7 @@ class FirebaseService {
       telemetryHistoryRaw: telemetrySnap.value,
       healthHistoryRaw: healthSnap.value,
       eventsRaw: eventsSnap.value,
+      commandEventsRaw: commandEventsSnap.value,
     );
   }
 
@@ -1764,6 +2060,7 @@ class FirebaseService {
       dynamic telemetryHistoryRaw;
       dynamic healthHistoryRaw;
       dynamic eventsRaw;
+      dynamic commandEventsRaw;
 
       void emit() {
         controller.add(
@@ -1774,6 +2071,7 @@ class FirebaseService {
             telemetryHistoryRaw: telemetryHistoryRaw,
             healthHistoryRaw: healthHistoryRaw,
             eventsRaw: eventsRaw,
+            commandEventsRaw: commandEventsRaw,
           ),
         );
       }
@@ -1815,14 +2113,123 @@ class FirebaseService {
         },
         onError: controller.addError,
       );
+      final commandEventsSub =
+          _rtdb.ref('propertyCommandEvents/$propertyKey').onValue.listen(
+        (event) {
+          commandEventsRaw = event.snapshot.value;
+          emit();
+        },
+        onError: controller.addError,
+      );
 
       controller.onCancel = () async {
         await latestTelemetrySub.cancel();
         await telemetrySub.cancel();
         await healthSub.cancel();
         await eventsSub.cancel();
+        await commandEventsSub.cancel();
       };
     });
+  }
+
+  Future<PolygonLogPreviewResolution> resolvePolygonLogPreview({
+    required String propertyId,
+    required DeviceModel device,
+    required Map<String, dynamic> entry,
+  }) async {
+    final status = _normalizeTextValue(entry['status']).toLowerCase();
+    if (entry['eventType'] != 'polygon_apply_result' || status != 'success') {
+      return const PolygonLogPreviewResolution.error(
+        'Esse item do log nao possui preview de poligono disponivel.',
+      );
+    }
+
+    final originDocType = _normalizeTextValue(entry['originDocType']);
+    final originDocId = _idFromRefOrPath(
+      entry['originDocId'] ?? entry['operationId'],
+    );
+    if (originDocType.isEmpty || originDocId.isEmpty) {
+      return const PolygonLogPreviewResolution.error(
+        'Nao foi possivel identificar o documento de origem do poligono.',
+      );
+    }
+
+    List<LatLng> polygonPoints;
+    switch (originDocType) {
+      case 'ruralProperty':
+        final snap =
+            await _db.collection('ruralProperties').doc(originDocId).get();
+        if (!snap.exists) {
+          return const PolygonLogPreviewResolution.error(
+            'A fazenda vinculada a esse evento nao existe mais no banco.',
+          );
+        }
+        polygonPoints = _latLngsFromPoints(snap.data()?['points']);
+        break;
+      case 'area':
+        final snap = await _db.collection('areas').doc(originDocId).get();
+        if (!snap.exists) {
+          return const PolygonLogPreviewResolution.error(
+            'O piquete vinculado a esse evento nao existe mais no banco.',
+          );
+        }
+        polygonPoints = _latLngsFromPoints(snap.data()?['perimeter']);
+        break;
+      case 'herdingOperation':
+        final snap =
+            await _db.collection('herdingOperations').doc(originDocId).get();
+        if (!snap.exists) {
+          return const PolygonLogPreviewResolution.error(
+            'A conducao vinculada a esse evento nao existe mais no banco.',
+          );
+        }
+        polygonPoints = _latLngsFromPoints(snap.data()?['targetPolygon']);
+        break;
+      default:
+        return PolygonLogPreviewResolution.error(
+          'Tipo de origem nao suportado para preview: $originDocType',
+        );
+    }
+
+    if (polygonPoints.length < 3) {
+      return const PolygonLogPreviewResolution.error(
+        'O documento atual do poligono nao possui pontos suficientes para montar o mapa.',
+      );
+    }
+
+    final propertyKey = _sanitizeRtdbKey(propertyId);
+    final deviceKey = _sanitizeRtdbKey(device.loraDeviceId ?? device.networkId);
+    final targetReceivedAtMs = _toIntValue(entry['receivedAtMs']) ??
+        DateTime.now().millisecondsSinceEpoch;
+
+    LatLng? collarPosition;
+    if (propertyKey.isNotEmpty && deviceKey.isNotEmpty) {
+      final historySnap = await _rtdb
+          .ref('propertyTelemetryHistory/$propertyKey/$deviceKey')
+          .get();
+      collarPosition = _findHistoricalTelemetryPosition(
+        historySnap.value,
+        targetReceivedAtMs: targetReceivedAtMs,
+      );
+      collarPosition ??= _positionFromTelemetryMap(
+        (await _rtdb
+                .ref('propertyTelemetryLatest/$propertyKey/$deviceKey')
+                .get())
+            .value,
+      );
+    }
+    collarPosition ??= _positionFromDevice(device);
+
+    return PolygonLogPreviewResolution.success(
+      PolygonLogPreviewData(
+        polygonKind: _normalizeTextValue(entry['polygonKind']),
+        originDocType: originDocType,
+        originDocId: originDocId,
+        eventReceivedAtMs: _toIntValue(entry['receivedAtMs']),
+        polygonPoints: polygonPoints,
+        collarPosition: collarPosition,
+      ),
+    );
   }
 
   Stream<List<Map<String, dynamic>>> streamRuralProperties(
@@ -2309,6 +2716,11 @@ class FirebaseService {
       'userUids': linkedUsers.toList(),
       'ownerUid': _userRef(normalizedOwnerUid),
       'createdByUid': _userRef(normalizedOwnerUid),
+      'updatedByUid': _userRef(
+        normalizedCreatorUid.isNotEmpty
+            ? normalizedCreatorUid
+            : normalizedOwnerUid,
+      ),
       'propertyScopeId': propertyScopeId,
       'updatedAt': FieldValue.serverTimestamp(),
     });
@@ -2337,6 +2749,11 @@ class FirebaseService {
       'points': _encodeLatLonPoints(points),
       'ownerUid': _userRef(normalizedOwnerUid),
       'createdByUid': _userRef(normalizedOwnerUid),
+      'updatedByUid': _userRef(
+        _idFromRefOrPath(editorUid).isNotEmpty
+            ? _idFromRefOrPath(editorUid)
+            : normalizedOwnerUid,
+      ),
       'propertyScopeId': _computePropertyScopeId(id),
       'updatedAt': FieldValue.serverTimestamp(),
     };
@@ -2389,13 +2806,23 @@ class FirebaseService {
     required String ownerUid,
     required String ruralPropertyId,
     required List<List<double>> perimeter,
+    String? updatedByUid,
+    List<String> linkedDeviceIds = const <String>[],
   }) async {
     final linkedUsers = await _linkedUsersForProperty(ruralPropertyId);
+    final normalizedOwnerUid = _idFromRefOrPath(ownerUid);
+    final normalizedUpdatedByUid = _idFromRefOrPath(updatedByUid);
     await _db.collection('areas').add({
-      'ownerUid': _userRef(ownerUid),
+      'ownerUid': _userRef(normalizedOwnerUid),
       'ruralPropertiesID': _propertyRefOrNull(ruralPropertyId),
       'userUids': linkedUsers,
       'perimeter': _encodeLatLonPoints(perimeter),
+      'linkedDeviceIds': _normalizeLoraDeviceIds(linkedDeviceIds),
+      'updatedByUid': _userRef(
+        normalizedUpdatedByUid.isNotEmpty
+            ? normalizedUpdatedByUid
+            : normalizedOwnerUid,
+      ),
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
@@ -2673,9 +3100,13 @@ class FirebaseService {
   Future<void> updateRuralPropertyPolygon({
     required String id,
     required List<List<double>> points,
+    String? updatedByUid,
   }) async {
+    final normalizedUpdatedByUid = _idFromRefOrPath(updatedByUid);
     await _db.collection('ruralProperties').doc(id).set({
       'points': _encodeLatLonPoints(points),
+      if (normalizedUpdatedByUid.isNotEmpty)
+        'updatedByUid': _userRef(normalizedUpdatedByUid),
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
@@ -2683,9 +3114,15 @@ class FirebaseService {
   Future<void> updateAreaPerimeter({
     required String id,
     required List<List<double>> perimeter,
+    String? updatedByUid,
+    List<String> linkedDeviceIds = const <String>[],
   }) async {
+    final normalizedUpdatedByUid = _idFromRefOrPath(updatedByUid);
     await _db.collection('areas').doc(id).set({
       'perimeter': _encodeLatLonPoints(perimeter),
+      'linkedDeviceIds': _normalizeLoraDeviceIds(linkedDeviceIds),
+      if (normalizedUpdatedByUid.isNotEmpty)
+        'updatedByUid': _userRef(normalizedUpdatedByUid),
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }

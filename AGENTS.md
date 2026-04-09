@@ -225,3 +225,9 @@ group('GatewayService business rules', () {
 - Nao bypassar validacoes de seguranca/admin para comandos criticos.
 - Nao desativar gates de CI (`flutter analyze`, `flutter test`, `rules tests`, `firmware compile`).
 - Nao criar artefatos temporarios locais fora de `temp/` sem necessidade tecnica.
+- NÃO DEVE NARRAR O QUE ESTIVER FAZENDO
+- NÃO DEVE DAR RESUMOS LONGOS
+
+## 11. O que o agente DEVE fazer
+
+- DEVE AO FINAL COLOCAR UM RESUMO CURTO DO QUE FOI FEITO, COM FRASES OBJETIVAS E DIRETAS.

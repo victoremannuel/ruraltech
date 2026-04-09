@@ -13,7 +13,8 @@ class StorageQueue {
   bool popEvent(EventRecord& ev);
 
  private:
-  uint16_t headAddr_ = 0;
-  uint16_t tailAddr_ = 2;
+  void resetQueue();
+  uint16_t headAddr_ = 6;
+  uint16_t tailAddr_ = 8;
   uint16_t slotAddr(uint8_t idx) const;
 };

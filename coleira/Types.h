@@ -22,7 +22,8 @@ enum class EventType : uint8_t {
   GPS_INVALID_FIX = 10,
   GPS_OUTLIER = 11,
   GPS_LOCKED = 12,
-  GPS_UNLOCKED = 13
+  GPS_UNLOCKED = 13,
+  POLYGON_APPLY_RESULT = 14
 };
 enum class MsgType : uint8_t {
   TELEMETRY = 1,
@@ -36,6 +37,36 @@ enum class MsgType : uint8_t {
   TIME_SYNC = 15,
   ACK = 16,
   NACK = 17
+};
+
+enum class PolygonApplyStatus : uint8_t {
+  NONE = 0,
+  SUCCESS = 1,
+  FAILURE = 2,
+};
+
+enum class PolygonKind : uint8_t {
+  NONE = 0,
+  PROPERTY = 1,
+  AREA = 2,
+  HERDING = 3,
+};
+
+enum class OriginDocType : uint8_t {
+  NONE = 0,
+  RURAL_PROPERTY = 1,
+  AREA = 2,
+  HERDING_OPERATION = 3,
+};
+
+enum class PolygonErrorStage : uint8_t {
+  NONE = 0,
+  PARSE = 1,
+  ASSEMBLE = 2,
+  PERSIST = 3,
+  ACTIVATE = 4,
+  SCOPE = 5,
+  BINDING = 6,
 };
 
 struct GpsData {
@@ -79,10 +110,28 @@ struct HerdingPlan {
   Polygon phases[cfg::MAX_HERD_PHASES]{};
 };
 
+struct PolygonAuditPayload {
+  char commandId[cfg::EVENT_COMMAND_ID_MAX_LEN]{};
+  char originDocId[cfg::EVENT_ORIGIN_DOC_ID_MAX_LEN]{};
+  char errorCode[cfg::EVENT_ERROR_CODE_MAX_LEN]{};
+};
+
+union EventPayloadData {
+  char operationId[cfg::OPERATION_ID_MAX_LEN];
+  PolygonAuditPayload audit;
+
+  EventPayloadData() { memset(this, 0, sizeof(*this)); }
+};
+
 struct EventRecord {
   uint32_t ts = 0;
-  EventType type = EventType::GPS_FAIL;
   int32_t d1 = 0;
   int32_t d2 = 0;
-  char operationId[cfg::OPERATION_ID_MAX_LEN]{};
+  uint64_t scopeId = 0;
+  EventType type = EventType::GPS_FAIL;
+  PolygonApplyStatus auditStatus = PolygonApplyStatus::NONE;
+  PolygonKind polygonKind = PolygonKind::NONE;
+  OriginDocType originDocType = OriginDocType::NONE;
+  PolygonErrorStage errorStage = PolygonErrorStage::NONE;
+  EventPayloadData payload{};
 };

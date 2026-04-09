@@ -6,7 +6,8 @@
   },
   "main": "src/index.js",
   "scripts": {
-    "lint": "node -e \"console.log('No lint configured')\""
+    "lint": "node -e \"console.log('No lint configured')\"",
+    "test": "node --test"
   },
   "dependencies": {
     "firebase-admin": "^12.7.0",
