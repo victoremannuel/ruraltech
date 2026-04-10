@@ -124,20 +124,20 @@ begin
 
   insert into public.areas (
     id,
+    owner_uid,
     property_id,
-    name,
-    created_by_uid
+    updated_by_uid
   )
   values (
     'area-owner',
+    'owner-legacy',
     'prop-owner',
-    'Area 1',
     'owner-legacy'
   )
   on conflict (id) do update
-  set property_id = excluded.property_id,
-      name = excluded.name,
-      created_by_uid = excluded.created_by_uid;
+  set owner_uid = excluded.owner_uid,
+      property_id = excluded.property_id,
+      updated_by_uid = excluded.updated_by_uid;
 
   insert into public.property_telemetry_latest (
     property_id,

@@ -320,7 +320,7 @@ class _HomeScreenState extends State<HomeScreen> {
         'para receber telemetria ao vivo.';
   }
 
-  String _repairFirebaseMirrorsErrorMessage(Object error) {
+  String _repairCloudStateErrorMessage(Object error) {
     final raw = error.toString();
     if (raw.contains('admin_required')) {
       return 'Falha ao reparar o estado cloud: somente administradores podem executar esse reparo.';
@@ -2944,7 +2944,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             if (auth.isAdmin)
               ListTile(
-                key: const Key('home_action_repair_firebase_mirrors'),
+                key: const Key('home_action_repair_cloud_state'),
                 leading: const Icon(Icons.sync_problem),
                 title: const Text('Reparar estado cloud'),
                 onTap: () async {
@@ -2952,14 +2952,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   try {
                     final result = await context
                         .read<FirebaseService>()
-                        .repairFirebaseMirrors(apply: true);
+                        .repairCloudState(apply: true);
                     if (!context.mounted) return;
                     AppFeedback.success(
                       'Estado cloud reparado: propriedades=${result['propertyCount'] ?? 0}, gateways=${result['gatewayCount'] ?? 0}.',
                     );
                   } catch (e) {
                     if (!context.mounted) return;
-                    AppFeedback.error(_repairFirebaseMirrorsErrorMessage(e));
+                    AppFeedback.error(_repairCloudStateErrorMessage(e));
                   }
                 },
               ),

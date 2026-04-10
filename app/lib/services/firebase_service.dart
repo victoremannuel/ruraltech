@@ -748,25 +748,26 @@ class FirebaseService {
   Future<void> registerPushToken({
     required String uid,
     required String token,
+    required String platform,
   }) async {
     final normalizedUid = _idFromRefOrPath(uid);
     final normalizedToken = token.trim();
     if (normalizedUid.isEmpty || normalizedToken.isEmpty) return;
     await _client.from('user_push_tokens').upsert({
       'legacy_uid': normalizedUid,
-      'platform': 'mobile',
+      'platform': platform,
       'token': normalizedToken,
       'metadata': const <String, dynamic>{},
     });
   }
 
-  Future<Map<String, dynamic>> repairFirebaseMirrors({
+  Future<Map<String, dynamic>> repairCloudState({
     bool apply = true,
     String? propertyId,
     String? gatewayId,
   }) {
     return _postSupabaseFunction(
-      'repair-firebase-mirrors',
+      'admin-repair-cloud-state',
       body: <String, dynamic>{
         'apply': apply,
         if (propertyId != null && propertyId.trim().isNotEmpty)
@@ -1652,7 +1653,7 @@ class FirebaseService {
       'property_scope_id': _computePropertyScopeId(propertyId),
     });
     try {
-      await repairFirebaseMirrors(apply: true, propertyId: propertyId);
+      await repairCloudState(apply: true, propertyId: propertyId);
     } catch (_) {}
   }
 
@@ -1692,7 +1693,7 @@ class FirebaseService {
         .update(update)
         .eq('id', normalizedId);
     try {
-      await repairFirebaseMirrors(apply: true, propertyId: normalizedId);
+      await repairCloudState(apply: true, propertyId: normalizedId);
     } catch (_) {}
   }
 

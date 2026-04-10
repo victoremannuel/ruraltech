@@ -9,7 +9,7 @@ Uso:
 Opcoes:
   --project-ref <id>   Project ref do Supabase. Se omitido, usa `supabase/config.toml`.
   --functions <lista>  Funcoes separadas por virgula. Padrao:
-                       queue-lora-command,repair-firebase-mirrors,matrix-cloud
+                       queue-lora-command,admin-repair-cloud-state,matrix-cloud,send-push
   --skip-db            Nao executa `supabase db push`.
   --skip-functions     Nao executa deploy das Edge Functions.
   --dry-run            Apenas imprime os comandos.
@@ -23,7 +23,7 @@ REPO_DIR="$(cd "${APP_DIR}/.." && pwd)"
 SUPABASE_DIR="${REPO_DIR}/supabase"
 
 project_ref=""
-functions_csv="queue-lora-command,repair-firebase-mirrors,matrix-cloud"
+functions_csv="queue-lora-command,admin-repair-cloud-state,matrix-cloud,send-push"
 skip_db=0
 skip_functions=0
 dry_run=0
