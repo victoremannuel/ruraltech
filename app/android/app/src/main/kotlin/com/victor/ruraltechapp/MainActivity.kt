@@ -1,11 +1,10 @@
 package com.victor.ruraltechapp
 
-import com.google.firebase.FirebaseApp
-import com.google.firebase.FirebaseOptions
-import com.google.firebase.messaging.FirebaseMessaging
+import android.content.Context
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.util.UUID
 
 class MainActivity : FlutterActivity() {
     companion object {
@@ -16,40 +15,21 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        ensureFirebaseInit()
-
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         channel!!.setMethodCallHandler { call, result ->
             when (call.method) {
-                "getToken" -> {
-                    FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-                        if (task.isSuccessful) {
-                            val token = task.result
-                            RuralTechMessagingService.latestToken = token
-                            result.success(token)
-                        } else {
-                            result.success(RuralTechMessagingService.latestToken)
-                        }
-                    }
-                }
+                "getToken" -> result.success(getOrCreateDeviceId())
                 else -> result.notImplemented()
             }
         }
     }
 
-    private fun ensureFirebaseInit() {
-        if (FirebaseApp.getApps(this).isNotEmpty()) return
-        val res = resources
-        val projectId = res.getString(R.string.fcm_project_id)
-        if (projectId.startsWith("PREENCHER")) return
-        FirebaseApp.initializeApp(
-            this,
-            FirebaseOptions.Builder()
-                .setProjectId(projectId)
-                .setApplicationId(res.getString(R.string.fcm_application_id))
-                .setApiKey(res.getString(R.string.fcm_api_key))
-                .setGcmSenderId(res.getString(R.string.fcm_sender_id))
-                .build()
-        )
+    private fun getOrCreateDeviceId(): String {
+        val prefs = getSharedPreferences("ruraltech_push", Context.MODE_PRIVATE)
+        val existing = prefs.getString("device_id", null)
+        if (existing != null) return existing
+        val newId = UUID.randomUUID().toString()
+        prefs.edit().putString("device_id", newId).apply()
+        return newId
     }
 }

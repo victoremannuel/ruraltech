@@ -4,7 +4,6 @@ import {
   getAuthContext,
   getJsonBody,
   jsonResponse,
-  normalizeId,
   normalizeIdList,
   normalizeText,
   type JsonMap,
@@ -47,88 +46,70 @@ Deno.serve(async (request) => {
     return jsonResponse(400, { error: "missing_payload" });
   }
 
+  // Buscar tokens iOS para APNs direto
   const { data: tokens, error: tokensError } = await admin
     .from("user_push_tokens")
     .select("legacy_uid, platform, token")
-    .in_("legacy_uid", userIds);
+    .in("legacy_uid", userIds)
+    .eq("platform", "ios");
 
   if (tokensError) {
     return jsonResponse(500, { error: tokensError.message });
   }
 
-  const pushTokens = (tokens ?? []) as PushToken[];
-  if (pushTokens.length === 0) {
-    return jsonResponse(200, { sent: 0, skipped: userIds.length, errors: [] });
-  }
-
-  const fcmServerKey = normalizeText(Deno.env.get("FCM_SERVER_KEY"));
   const apnsKeyId = normalizeText(Deno.env.get("APNS_KEY_ID"));
   const apnsTeamId = normalizeText(Deno.env.get("APNS_TEAM_ID"));
   const apnsBundleId = normalizeText(Deno.env.get("APNS_BUNDLE_ID"));
   const apnsPrivateKey = normalizeText(Deno.env.get("APNS_PRIVATE_KEY"));
 
-  let sent = 0;
+  let sentApns = 0;
   const errors: string[] = [];
 
-  for (const pt of pushTokens) {
+  // Enviar APNs para tokens iOS
+  for (const pt of ((tokens ?? []) as PushToken[])) {
+    if (pt.platform !== "ios") continue;
     try {
-      if (pt.platform === "ios" && apnsPrivateKey && apnsKeyId && apnsTeamId) {
+      if (apnsPrivateKey && apnsKeyId && apnsTeamId) {
         const ok = await sendApns(pt.token, { title, message, data }, {
           keyId: apnsKeyId,
           teamId: apnsTeamId,
           bundleId: apnsBundleId,
           privateKey: apnsPrivateKey,
         });
-        if (ok) sent++;
+        if (ok) sentApns++;
         else errors.push(`apns_fail:${pt.legacy_uid}`);
-      } else if (fcmServerKey) {
-        const ok = await sendFcm(pt.token, { title, message, data }, fcmServerKey);
-        if (ok) sent++;
-        else errors.push(`fcm_fail:${pt.legacy_uid}`);
       } else {
-        errors.push(`no_transport:${pt.platform}:${pt.legacy_uid}`);
+        errors.push(`apns_not_configured:${pt.legacy_uid}`);
       }
     } catch (e) {
-      errors.push(`exception:${pt.legacy_uid}:${(e as Error).message}`);
+      errors.push(`apns_exception:${pt.legacy_uid}:${(e as Error).message}`);
     }
   }
 
+  // Enfileirar pending_notifications para TODOS os user_ids (Android foreground/background + iOS fallback)
+  const pendingRows = userIds.map((uid) => ({
+    legacy_uid: uid,
+    title: title || null,
+    body: message || null,
+    data,
+    delivered: false,
+  }));
+
+  const { error: insertError } = await admin
+    .from("pending_notifications")
+    .insert(pendingRows);
+
+  const queued = insertError ? 0 : pendingRows.length;
+  if (insertError) {
+    errors.push(`pending_insert_error:${insertError.message}`);
+  }
+
   return jsonResponse(200, {
-    sent,
-    skipped: pushTokens.length - sent,
+    sent_apns: sentApns,
+    queued,
     errors,
   });
 });
-
-async function sendFcm(
-  token: string,
-  payload: { title: string; message: string; data: JsonMap },
-  serverKey: string,
-): Promise<boolean> {
-  const body: JsonMap = {
-    to: token,
-    data: payload.data,
-  };
-  if (payload.title || payload.message) {
-    body.notification = {
-      title: payload.title || undefined,
-      body: payload.message || undefined,
-    };
-  }
-
-  const response = await fetch("https://fcm.googleapis.com/fcm/send", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `key=${serverKey}`,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) return false;
-  const result = await response.json();
-  return result.success === 1;
-}
 
 async function sendApns(
   deviceToken: string,

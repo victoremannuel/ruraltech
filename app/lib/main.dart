@@ -176,7 +176,7 @@ class _AuthenticatedHomeState extends State<_AuthenticatedHome> {
     if (uid == null || uid == _initializedUid) return;
     _initializedUid = uid;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      notifications.initialize(uid: uid, firebase: firebase);
+      notifications.initialize(uid: uid, cloud: firebase);
     });
   }
 
