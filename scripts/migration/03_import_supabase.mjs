@@ -84,9 +84,23 @@ async function importAuthAndProfiles() {
   const profileRows = readJsonl('profiles.jsonl');
   const uidMap = readJsonFile('uid_map.json') ?? {};
 
+  // Pre-load all existing Supabase Auth users to handle "already exists" case
+  const client = getSupabaseAdmin();
+  const existingByEmail = new Map();
+  let page = 1;
+  while (true) {
+    const { data, error } = await client.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error || !data?.users?.length) break;
+    for (const u of data.users) {
+      if (u.email) existingByEmail.set(u.email.toLowerCase(), u);
+    }
+    if (data.users.length < 1000) break;
+    page++;
+  }
+  log(`  Found ${existingByEmail.size} existing Supabase Auth users`);
+
   const resetLinks = [['email', 'legacy_uid', 'reset_link']];
   const profilesWithAuthId = [];
-  const errors = [];
 
   for (const row of profileRows) {
     const fbUid = row.legacy_uid;
@@ -97,41 +111,43 @@ async function importAuthAndProfiles() {
       continue;
     }
 
-    try {
-      const authUser = await createAuthUser({
-        email,
-        password: randomPassword(),
-        userMetadata: { legacy_uid: fbUid },
-      });
+    const emailLower = email.toLowerCase();
+    let supabaseUuid;
 
-      // Update uid_map with real Supabase UUID
-      if (uidMap[fbUid]) uidMap[fbUid].supabaseUuid = authUser.id;
-
-      profilesWithAuthId.push({
-        auth_user_id: authUser.id,
-        legacy_uid: fbUid,
-        email,
-        role: row.role ?? 'user',
-      });
-
-      // Generate recovery link
+    if (existingByEmail.has(emailLower)) {
+      // User already exists — use their existing UUID
+      supabaseUuid = existingByEmail.get(emailLower).id;
+      log(`  Reuse existing: ${email} (${fbUid} → ${supabaseUuid})`);
+    } else {
       try {
-        const link = await generateRecoveryLink(email);
-        resetLinks.push([email, fbUid, link]);
-      } catch (linkErr) {
-        log(`  WARN: recovery link for ${email}: ${linkErr.message}`);
-        resetLinks.push([email, fbUid, 'FAILED']);
-      }
+        const authUser = await createAuthUser({
+          email,
+          password: randomPassword(),
+          userMetadata: { legacy_uid: fbUid },
+        });
+        supabaseUuid = authUser.id;
+        log(`  Created: ${email} (${fbUid} → ${supabaseUuid})`);
 
-      log(`  Created auth user: ${email} (${fbUid} → ${authUser.id})`);
-    } catch (err) {
-      if (err.message?.includes('already been registered') || err.message?.includes('already exists')) {
-        log(`  SKIP (already exists): ${email}`);
-      } else {
+        try {
+          const link = await generateRecoveryLink(email);
+          resetLinks.push([email, fbUid, link]);
+        } catch (linkErr) {
+          log(`  WARN: recovery link for ${email}: ${linkErr.message}`);
+          resetLinks.push([email, fbUid, 'FAILED']);
+        }
+      } catch (err) {
         log(`  ERROR: ${email}: ${err.message}`);
-        errors.push({ email, fbUid, error: err.message });
+        continue;
       }
     }
+
+    if (uidMap[fbUid]) uidMap[fbUid].supabaseUuid = supabaseUuid;
+    profilesWithAuthId.push({
+      auth_user_id: supabaseUuid,
+      legacy_uid: fbUid,
+      email,
+      role: row.role ?? 'user',
+    });
   }
 
   // Upsert profiles
@@ -143,14 +159,10 @@ async function importAuthAndProfiles() {
   // Save reset links CSV
   const csvPath = join(LOG_DIR, 'reset_links.csv');
   writeFileSync(csvPath, resetLinks.map(r => r.join(',')).join('\n'));
-  log(`  reset_links.csv saved: ${resetLinks.length - 1} users`);
+  log(`  reset_links.csv saved: ${resetLinks.length - 1} new users`);
 
   // Save updated uid_map
   writeFileSync(join(TRANSFORMED_DIR, 'uid_map.json'), JSON.stringify(uidMap, null, 2));
-
-  if (errors.length > 0) {
-    log(`  ${errors.length} auth creation errors — see import.log`);
-  }
 }
 
 // ─── Generic upsert steps ────────────────────────────────────────────────────
