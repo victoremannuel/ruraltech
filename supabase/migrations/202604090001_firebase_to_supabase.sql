@@ -1,5 +1,3 @@
-create extension if not exists pgcrypto;
-
 create or replace function public.touch_updated_at()
 returns trigger
 language plpgsql
@@ -15,7 +13,7 @@ returns text
 language sql
 immutable
 as $$
-  select upper(substr(encode(digest(lower(trim(coalesce(property_id, ''))), 'sha256'), 'hex'), 1, 16));
+  select upper(substr(encode(sha256(lower(trim(coalesce(property_id, '')))::bytea), 'hex'), 1, 16));
 $$;
 
 create table if not exists public.profiles (
