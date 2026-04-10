@@ -81,13 +81,13 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
       );
       return;
     }
-    final firebase = context.read<CloudService>();
+    final cloud = context.read<CloudService>();
 
     final points =
         _polygonPoints.map((p) => <double>[p.latitude, p.longitude]).toList();
-    await firebase.saveFence(widget.deviceId, uid, points);
+    await cloud.saveFence(widget.deviceId, uid, points);
     try {
-      await firebase.enqueueScopedCommand(
+      await cloud.enqueueScopedCommand(
         command: 'SET_FENCE',
         propertyId: propertyId,
         requestedByUid: uid,

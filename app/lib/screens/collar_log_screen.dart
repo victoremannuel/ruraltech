@@ -43,7 +43,7 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
     if (propertyId == null || deviceId == null) {
       return Future.value(const <Map<String, dynamic>>[]);
     }
-    return context.read<CloudService>().getCollarFirebaseLog(
+    return context.read<CloudService>().getCollarLog(
           propertyId: propertyId,
           deviceId: deviceId,
         );
@@ -421,7 +421,7 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
                     ? StreamBuilder<List<Map<String, dynamic>>>(
                         stream: context
                             .read<CloudService>()
-                            .streamCollarFirebaseLog(
+                            .streamCollarLog(
                               propertyId: propertyId,
                               deviceId: deviceId,
                             ),

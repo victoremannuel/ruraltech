@@ -74,11 +74,11 @@ class DeviceDetailsScreen extends StatelessWidget {
   Widget _buildLatestPositionTile(BuildContext context) {
     final propertyId = device.propertyId?.trim();
     final deviceId = device.loraDeviceId;
-    CloudService? firebase;
+    CloudService? cloud;
     try {
-      firebase = context.read<CloudService>();
+      cloud = context.read<CloudService>();
     } catch (_) {
-      firebase = null;
+      cloud = null;
     }
     final fallbackPosition = _formatPosition();
     final fallbackTimestamp = _formatTelemetryTimestamp();
@@ -86,7 +86,7 @@ class DeviceDetailsScreen extends StatelessWidget {
     if (propertyId == null ||
         propertyId.isEmpty ||
         deviceId == null ||
-        firebase == null) {
+        cloud == null) {
       return ListTile(
         title: const Text('Última posição'),
         subtitle: Row(
@@ -106,7 +106,7 @@ class DeviceDetailsScreen extends StatelessWidget {
     }
 
     return StreamBuilder<Map<String, dynamic>?>(
-      stream: firebase.streamLatestTelemetryEntryForDevice(
+      stream: cloud.streamLatestTelemetryEntryForDevice(
         propertyId: propertyId,
         deviceId: deviceId,
       ),

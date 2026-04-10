@@ -170,13 +170,13 @@ class _AuthenticatedHomeState extends State<_AuthenticatedHome> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     final auth = context.read<AuthService>();
-    final firebase = context.read<CloudService>();
+    final cloud = context.read<CloudService>();
     final notifications = context.read<NotificationService>();
     final uid = auth.user?.uid;
     if (uid == null || uid == _initializedUid) return;
     _initializedUid = uid;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      notifications.initialize(uid: uid, cloud: firebase);
+      notifications.initialize(uid: uid, cloud: cloud);
     });
   }
 

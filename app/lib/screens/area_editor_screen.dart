@@ -257,20 +257,20 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
         .toList();
 
     try {
-      final firebase = context.read<CloudService>();
+      final cloud = context.read<CloudService>();
       if (_isEditMode) {
         final areaId = _editingAreaId;
         if (areaId == null || areaId.isEmpty) {
           throw Exception('id_da_area_invalido');
         }
-        await firebase.updateAreaPerimeter(
+        await cloud.updateAreaPerimeter(
           id: areaId,
           perimeter: perimeter,
           linkedDeviceIds: _linkedDeviceController.selectedDeviceIds,
           updatedByUid: uid,
         );
       } else {
-        await firebase.addArea(
+        await cloud.addArea(
           ownerUid: uid,
           ruralPropertyId: propertyId,
           perimeter: perimeter,

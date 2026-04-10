@@ -1107,7 +1107,7 @@ class CloudService {
     return out;
   }
 
-  Future<List<Map<String, dynamic>>> getCollarFirebaseLog({
+  Future<List<Map<String, dynamic>>> getCollarLog({
     required String propertyId,
     required String deviceId,
   }) async {
@@ -1205,7 +1205,7 @@ class CloudService {
     );
   }
 
-  Stream<List<Map<String, dynamic>>> streamCollarFirebaseLog({
+  Stream<List<Map<String, dynamic>>> streamCollarLog({
     required String propertyId,
     required String deviceId,
   }) {
