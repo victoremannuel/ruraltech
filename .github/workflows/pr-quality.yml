@@ -70,8 +70,10 @@ jobs:
         run: |
           deno check supabase/functions/_shared/supabase.ts
           deno check supabase/functions/queue-lora-command/index.ts
-          deno check supabase/functions/repair-firebase-mirrors/index.ts
+          deno check supabase/functions/admin-repair-cloud-state/index.ts
           deno check supabase/functions/matrix-cloud/index.ts
+          deno check supabase/functions/send-push/index.ts
+          deno check supabase/functions/poll-notifications/index.ts
 
   firmware-contract-tests:
     name: Firmware Contract Tests

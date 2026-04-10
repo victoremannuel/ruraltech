@@ -1,6 +1,10 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:workmanager/workmanager.dart';
 
 import 'config/manual_settings.dart';
 import 'screens/dashboard_screen.dart';
@@ -12,6 +16,66 @@ import 'services/gateway_service.dart';
 import 'services/map_filter_service.dart';
 import 'services/notification_service.dart';
 import 'utils/top_feedback.dart';
+
+const _kPollTaskName = 'poll_notifications';
+
+/// Callback dispatcher executado em isolate separado pelo WorkManager (Android).
+/// Re-inicializa Supabase, busca pending_notifications não entregues e exibe
+/// via flutter_local_notifications. Ignora silenciosamente se não houver sessão.
+@pragma('vm:entry-point')
+void callbackDispatcher() {
+  Workmanager().executeTask((task, _) async {
+    if (task != _kPollTaskName) return true;
+    try {
+      WidgetsFlutterBinding.ensureInitialized();
+      DartPluginRegistrant.ensureInitialized();
+
+      await Supabase.initialize(
+        url: ManualSettings.supabaseUrl,
+        anonKey: ManualSettings.supabaseAnonKey,
+      );
+
+      final session = Supabase.instance.client.auth.currentSession;
+      if (session == null) return true;
+
+      final response = await Supabase.instance.client.functions
+          .invoke('poll-notifications', body: <String, dynamic>{});
+
+      final rows = response.data as List?;
+      if (rows == null || rows.isEmpty) return true;
+
+      final plugin = FlutterLocalNotificationsPlugin();
+      await plugin.initialize(
+        const InitializationSettings(
+          android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        ),
+      );
+
+      for (final raw in rows) {
+        final row = raw as Map<String, dynamic>;
+        await plugin.show(
+          DateTime.now().millisecondsSinceEpoch.remainder(100000),
+          (row['title'] as String?)?.isNotEmpty == true
+              ? row['title'] as String
+              : 'RuralTech',
+          row['body'] as String?,
+          const NotificationDetails(
+            android: AndroidNotificationDetails(
+              'ruraltech_push',
+              'RuralTech',
+              channelDescription: 'Notificações do RuralTech',
+              importance: Importance.high,
+              priority: Priority.high,
+            ),
+          ),
+        );
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  });
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -25,6 +89,17 @@ Future<void> main() async {
   } catch (e) {
     bootstrapError = e.toString();
   }
+
+  // Registra tarefa periódica WorkManager para polling de notificações em background
+  // (Android). A tarefa verifica a sessão internamente e é no-op se não autenticado.
+  await Workmanager().initialize(callbackDispatcher);
+  await Workmanager().registerPeriodicTask(
+    _kPollTaskName,
+    _kPollTaskName,
+    frequency: const Duration(minutes: 15),
+    constraints: Constraints(networkType: NetworkType.connected),
+    existingWorkPolicy: ExistingWorkPolicy.keep,
+  );
 
   runApp(RuralTechApp(bootstrapError: bootstrapError));
 }
