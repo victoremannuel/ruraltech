@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../config/manual_settings.dart';
 import '../services/auth_service.dart';
-import '../services/firebase_service.dart';
+import '../services/cloud_service.dart';
 import '../utils/top_feedback.dart';
 
 class GeofenceScreen extends StatefulWidget {
@@ -44,7 +44,7 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
   Future<void> _loadSavedFence() async {
     try {
       final savedPoints =
-          await context.read<FirebaseService>().getFence(widget.deviceId);
+          await context.read<CloudService>().getFence(widget.deviceId);
       if (!mounted) return;
       if (_polygonPoints.isEmpty && savedPoints.isNotEmpty) {
         final loaded = savedPoints
@@ -81,7 +81,7 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
       );
       return;
     }
-    final firebase = context.read<FirebaseService>();
+    final firebase = context.read<CloudService>();
 
     final points =
         _polygonPoints.map((p) => <double>[p.latitude, p.longitude]).toList();

@@ -9,11 +9,11 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/manual_settings.dart';
 import '../models/device_model.dart';
 import '../models/herding_operation_model.dart';
-import '../utils/legacy_firebase_compat.dart';
+import '../utils/cloud_compat.dart';
 import '../utils/polygon_log_preview.dart';
 
-class FirebaseService {
-  FirebaseService({SupabaseClient? client})
+class CloudService {
+  CloudService({SupabaseClient? client})
       : _client = client ?? Supabase.instance.client;
 
   static const String _supabaseUrl = ManualSettings.supabaseUrl;

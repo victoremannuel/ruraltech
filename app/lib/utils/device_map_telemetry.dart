@@ -1,7 +1,7 @@
 import 'package:latlong2/latlong.dart';
 
 import '../models/device_model.dart';
-import 'legacy_firebase_compat.dart';
+import 'cloud_compat.dart';
 
 class DeviceMapTelemetrySample {
   const DeviceMapTelemetrySample({

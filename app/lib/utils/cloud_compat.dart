@@ -1,5 +1,5 @@
-class FirebaseException implements Exception {
-  FirebaseException({
+class CloudException implements Exception {
+  CloudException({
     required this.plugin,
     required this.code,
     this.message,
@@ -15,11 +15,11 @@ class FirebaseException implements Exception {
       : '$plugin/$code: $message';
 }
 
-class FirebaseAuthException extends FirebaseException {
-  FirebaseAuthException({
+class CloudAuthException extends CloudException {
+  CloudAuthException({
     required super.code,
     super.message,
-  }) : super(plugin: 'firebase_auth');
+  }) : super(plugin: 'supabase_auth');
 }
 
 class DocumentReference<T> {

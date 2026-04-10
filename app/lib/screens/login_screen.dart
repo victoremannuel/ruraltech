@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
-import '../utils/legacy_firebase_compat.dart';
+import '../utils/cloud_compat.dart';
 import '../utils/top_feedback.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -17,7 +17,7 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _loading = false;
 
   String _authErrorMessage(Object e) {
-    if (e is FirebaseAuthException) {
+    if (e is CloudAuthException) {
       switch (e.code) {
         case 'invalid-email':
           return 'Email invalido.';

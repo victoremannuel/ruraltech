@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../models/device_model.dart';
-import '../services/firebase_service.dart';
+import '../services/cloud_service.dart';
 import '../utils/polygon_log_preview.dart';
 
 class CollarLogScreen extends StatefulWidget {
@@ -43,7 +43,7 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
     if (propertyId == null || deviceId == null) {
       return Future.value(const <Map<String, dynamic>>[]);
     }
-    return context.read<FirebaseService>().getCollarFirebaseLog(
+    return context.read<CloudService>().getCollarFirebaseLog(
           propertyId: propertyId,
           deviceId: deviceId,
         );
@@ -193,7 +193,7 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
     final entryId = (entry['id'] ?? '').toString();
     return _previewFutures.putIfAbsent(
       entryId,
-      () => context.read<FirebaseService>().resolvePolygonLogPreview(
+      () => context.read<CloudService>().resolvePolygonLogPreview(
             propertyId: _propertyId!,
             device: widget.device,
             entry: entry,
@@ -420,7 +420,7 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
                 : _autoRefresh
                     ? StreamBuilder<List<Map<String, dynamic>>>(
                         stream: context
-                            .read<FirebaseService>()
+                            .read<CloudService>()
                             .streamCollarFirebaseLog(
                               propertyId: propertyId,
                               deviceId: deviceId,

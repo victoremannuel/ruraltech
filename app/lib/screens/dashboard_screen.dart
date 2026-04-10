@@ -13,10 +13,10 @@ import '../config/manual_settings.dart';
 import '../models/device_model.dart';
 import '../services/auth_service.dart';
 import '../services/bluetooth_discovery_service.dart';
-import '../services/firebase_service.dart';
+import '../services/cloud_service.dart';
 import '../services/gateway_service.dart';
 import '../services/map_filter_service.dart';
-import '../utils/legacy_firebase_compat.dart';
+import '../utils/cloud_compat.dart';
 import '../utils/device_map_telemetry.dart';
 import '../utils/onboarding_gateway_utils.dart';
 import '../utils/polygon_metrics.dart';
@@ -515,7 +515,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (ids.isEmpty) return;
 
     unawaited(
-      context.read<FirebaseService>().cleanupTelemetryRetentionForDevices(ids),
+      context.read<CloudService>().cleanupTelemetryRetentionForDevices(ids),
     );
   }
 
@@ -579,7 +579,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _openSelectedPolygonEditor(BuildContext context) async {
     final auth = context.read<AuthService>();
-    final fb = context.read<FirebaseService>();
+    final fb = context.read<CloudService>();
     final uid = auth.user?.uid;
     if (uid == null) return;
     final areaId = _selectedAreaId;
@@ -647,7 +647,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _showEditDeviceDialog(
       BuildContext context, DeviceModel device) async {
     final auth = context.read<AuthService>();
-    final fb = context.read<FirebaseService>();
+    final fb = context.read<CloudService>();
     final uid = auth.user?.uid;
     if (uid == null) return;
 
@@ -1023,7 +1023,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _showEditGatewayDialog(
       BuildContext context, Map<String, dynamic> gateway) async {
     final auth = context.read<AuthService>();
-    final fb = context.read<FirebaseService>();
+    final fb = context.read<CloudService>();
     final uid = auth.user?.uid;
     if (uid == null) return;
 
@@ -1321,7 +1321,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _showAddDeviceDialog(BuildContext context) async {
     final auth = context.read<AuthService>();
-    final fb = context.read<FirebaseService>();
+    final fb = context.read<CloudService>();
     final gatewayService = context.read<GatewayService>();
     final bleService = context.read<BluetoothDiscoveryService>();
     final uid = auth.user?.uid;
@@ -2304,7 +2304,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _showAddGatewayDialog(BuildContext context) async {
     final auth = context.read<AuthService>();
-    final fb = context.read<FirebaseService>();
+    final fb = context.read<CloudService>();
     final gatewayService = context.read<GatewayService>();
     final bleService = context.read<BluetoothDiscoveryService>();
     final uid = auth.user?.uid;
@@ -2951,7 +2951,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   Navigator.pop(context);
                   try {
                     final result = await context
-                        .read<FirebaseService>()
+                        .read<CloudService>()
                         .repairCloudState(apply: true);
                     if (!context.mounted) return;
                     AppFeedback.success(
@@ -2999,7 +2999,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final auth = context.watch<AuthService>();
     final gateway = context.watch<GatewayService>();
     final filters = context.watch<MapFilterService>();
-    final fb = context.read<FirebaseService>();
+    final fb = context.read<CloudService>();
     final uid = auth.user?.uid;
 
     if (uid == null || auth.isProfileLoading) {

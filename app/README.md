@@ -200,4 +200,4 @@ No Xcode:
 ## Backend do app
 - Bootstrap do Supabase: `lib/main.dart`
 - Configuração manual: `lib/config/manual_settings.dart`
-- Camada de acesso cloud: `lib/services/firebase_service.dart` (compatibilidade interna)
+- Camada de acesso cloud: `lib/services/cloud_service.dart`

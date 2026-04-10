@@ -10,8 +10,8 @@ import 'package:provider/provider.dart';
 import '../models/device_model.dart';
 import '../models/polygon_map_context.dart';
 import '../services/auth_service.dart';
-import '../services/firebase_service.dart';
-import '../utils/legacy_firebase_compat.dart';
+import '../services/cloud_service.dart';
+import '../utils/cloud_compat.dart';
 import '../utils/polygon_edit_session.dart';
 import '../utils/polygon_metrics.dart';
 import '../utils/top_feedback.dart';
@@ -160,7 +160,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
 
     setState(() => _isLoadingUsers = true);
     try {
-      final users = await context.read<FirebaseService>().getUserOptions();
+      final users = await context.read<CloudService>().getUserOptions();
       if (!mounted) return;
       final validUids = users
           .map((user) => (user['uid'] ?? '').trim())
@@ -444,7 +444,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
 
     setState(() => _isSaving = true);
     try {
-      await context.read<FirebaseService>().deleteRuralProperty(id: id);
+      await context.read<CloudService>().deleteRuralProperty(id: id);
       if (!mounted) return;
       Navigator.pop(context, true);
     } catch (e) {
@@ -676,7 +676,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
         );
       });
 
-      final firebase = context.read<FirebaseService>();
+      final firebase = context.read<CloudService>();
       if (_isEditMode) {
         final id = _editingPropertyId;
         if (id == null || id.isEmpty) {
@@ -715,7 +715,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
             : 'Propriedade rural salva com sucesso.',
       );
       if (mounted) Navigator.pop(context, true);
-    } on FirebaseException catch (e) {
+    } on CloudException catch (e) {
       if (!mounted) return;
       await _showMessage(
         'Erro de backend',
@@ -762,7 +762,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
             ownerOptions.any((user) => (user['uid'] ?? '').trim() == ownerUid)
         ? ownerUid
         : null;
-    final firebase = context.read<FirebaseService>();
+    final firebase = context.read<CloudService>();
 
     return Scaffold(
       appBar: AppBar(

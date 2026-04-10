@@ -6,7 +6,7 @@ import '../models/device_model.dart';
 import '../models/herding_operation_model.dart';
 import '../models/polygon_map_context.dart';
 import '../services/auth_service.dart';
-import '../services/firebase_service.dart';
+import '../services/cloud_service.dart';
 import '../utils/polygon_edit_session.dart';
 import '../utils/top_feedback.dart';
 import '../widgets/polygon_editing_map.dart';
@@ -280,7 +280,7 @@ class _HerdingScreenState extends State<HerdingScreen> {
     Map<String, dynamic> property,
     List<DeviceModel> propertyDevices,
     AuthService auth,
-    FirebaseService firebase,
+    CloudService firebase,
   ) async {
     if (_isSubmitting) return;
     final propertyId = _selectedPropertyId?.trim();
@@ -450,7 +450,7 @@ class _HerdingScreenState extends State<HerdingScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
-    final firebase = context.read<FirebaseService>();
+    final firebase = context.read<CloudService>();
     final uid = auth.user?.uid;
     if (uid == null || uid.trim().isEmpty) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));

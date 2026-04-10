@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '../utils/legacy_firebase_compat.dart';
+import '../utils/cloud_compat.dart';
 
 class AuthUser {
   const AuthUser({
@@ -87,7 +87,7 @@ class AuthService extends ChangeNotifier {
       _role =
           resolvedRole == null || resolvedRole.isEmpty ? 'user' : resolvedRole;
     } on AuthException catch (error) {
-      throw FirebaseAuthException(
+      throw CloudAuthException(
         code: error.statusCode?.toString() ?? 'auth_error',
         message: error.message,
       );
@@ -103,56 +103,56 @@ class AuthService extends ChangeNotifier {
     }
   }
 
-  FirebaseAuthException _mapAuthException(Object error) {
-    if (error is FirebaseAuthException) {
+  CloudAuthException _mapAuthException(Object error) {
+    if (error is CloudAuthException) {
       return error;
     }
     if (error is AuthException) {
       final message = error.message.toLowerCase();
       if (message.contains('invalid login credentials')) {
-        return FirebaseAuthException(
+        return CloudAuthException(
           code: 'invalid-credential',
           message: error.message,
         );
       }
       if (message.contains('email not confirmed')) {
-        return FirebaseAuthException(
+        return CloudAuthException(
           code: 'email-not-confirmed',
           message: error.message,
         );
       }
       if (message.contains('password should be at least')) {
-        return FirebaseAuthException(
+        return CloudAuthException(
           code: 'weak-password',
           message: error.message,
         );
       }
       if (message.contains('already registered') ||
           message.contains('user already registered')) {
-        return FirebaseAuthException(
+        return CloudAuthException(
           code: 'email-already-in-use',
           message: error.message,
         );
       }
       if (message.contains('invalid email')) {
-        return FirebaseAuthException(
+        return CloudAuthException(
           code: 'invalid-email',
           message: error.message,
         );
       }
       if (message.contains('over_email_send_rate_limit') ||
           message.contains('rate limit')) {
-        return FirebaseAuthException(
+        return CloudAuthException(
           code: 'too-many-requests',
           message: error.message,
         );
       }
-      return FirebaseAuthException(
+      return CloudAuthException(
         code: error.statusCode?.toString() ?? 'auth_error',
         message: error.message,
       );
     }
-    return FirebaseAuthException(
+    return CloudAuthException(
       code: 'auth_error',
       message: error.toString(),
     );
@@ -185,7 +185,7 @@ class AuthService extends ChangeNotifier {
   Future<void> updateRole(String uid, String role) async {
     final normalizedUid = uid.trim();
     if (normalizedUid.isEmpty) {
-      throw FirebaseException(
+      throw CloudException(
         plugin: 'supabase',
         code: 'invalid_uid',
         message: 'UID invalido.',
@@ -207,7 +207,7 @@ class AuthService extends ChangeNotifier {
         .eq('email', normalizedEmail)
         .maybeSingle();
     if (profile == null) {
-      throw FirebaseException(
+      throw CloudException(
         plugin: 'supabase',
         code: 'user_not_found',
         message: 'Usuario com esse email nao foi encontrado.',

@@ -4,7 +4,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'firebase_service.dart';
+import 'cloud_service.dart';
 
 class RemoteMessage {
   const RemoteMessage({
@@ -24,7 +24,7 @@ class NotificationService extends ChangeNotifier {
 
   Future<void> initialize({
     required String uid,
-    required FirebaseService firebase,
+    required CloudService firebase,
   }) async {
     if (uid.isEmpty) return;
 
@@ -62,7 +62,7 @@ class NotificationService extends ChangeNotifier {
   Future<void> _registerToken({
     required String uid,
     required String token,
-    required FirebaseService firebase,
+    required CloudService firebase,
   }) async {
     try {
       final platform = Platform.isIOS ? 'ios' : 'android';

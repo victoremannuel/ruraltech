@@ -7,7 +7,7 @@ import 'screens/dashboard_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/auth_service.dart';
 import 'services/bluetooth_discovery_service.dart';
-import 'services/firebase_service.dart';
+import 'services/cloud_service.dart';
 import 'services/gateway_service.dart';
 import 'services/map_filter_service.dart';
 import 'services/notification_service.dart';
@@ -69,7 +69,7 @@ class RuralTechApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthService()),
-        Provider(create: (_) => FirebaseService()),
+        Provider(create: (_) => CloudService()),
         ChangeNotifierProvider(create: (_) => GatewayService()),
         ChangeNotifierProvider(create: (_) => BluetoothDiscoveryService()),
         ChangeNotifierProvider(create: (_) => MapFilterService()),
@@ -170,7 +170,7 @@ class _AuthenticatedHomeState extends State<_AuthenticatedHome> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     final auth = context.read<AuthService>();
-    final firebase = context.read<FirebaseService>();
+    final firebase = context.read<CloudService>();
     final notifications = context.read<NotificationService>();
     final uid = auth.user?.uid;
     if (uid == null || uid == _initializedUid) return;

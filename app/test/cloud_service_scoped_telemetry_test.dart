@@ -3,7 +3,7 @@ import 'package:ruraltech_app/models/device_model.dart';
 import 'package:ruraltech_app/utils/device_map_telemetry.dart';
 
 void main() {
-  group('FirebaseService scoped cloud telemetry merge', () {
+  group('CloudService scoped cloud telemetry merge', () {
     test('keeps duplicate LoRa ids isolated by property', () {
       final devices = <DeviceModel>[
         DeviceModel(
