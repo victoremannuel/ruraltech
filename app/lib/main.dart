@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -90,16 +91,22 @@ Future<void> main() async {
     bootstrapError = e.toString();
   }
 
-  // Registra tarefa periódica WorkManager para polling de notificações em background
-  // (Android). A tarefa verifica a sessão internamente e é no-op se não autenticado.
-  await Workmanager().initialize(callbackDispatcher);
-  await Workmanager().registerPeriodicTask(
-    _kPollTaskName,
-    _kPollTaskName,
-    frequency: const Duration(minutes: 15),
-    constraints: Constraints(networkType: NetworkType.connected),
-    existingWorkPolicy: ExistingWorkPolicy.keep,
-  );
+  // WorkManager é exclusivo do Android. Guard de plataforma + try-catch evitam
+  // que uma PlatformException impeça o runApp() de ser chamado.
+  if (Platform.isAndroid) {
+    try {
+      await Workmanager().initialize(callbackDispatcher);
+      await Workmanager().registerPeriodicTask(
+        _kPollTaskName,
+        _kPollTaskName,
+        frequency: const Duration(minutes: 15),
+        constraints: Constraints(networkType: NetworkType.connected),
+        existingWorkPolicy: ExistingWorkPolicy.keep,
+      );
+    } catch (e) {
+      debugPrint('WorkManager init failed: $e');
+    }
+  }
 
   runApp(RuralTechApp(bootstrapError: bootstrapError));
 }
