@@ -672,7 +672,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
         setState(() => _isSaving = false);
         await _showMessage(
           'Tempo limite',
-          'A gravacao nao respondeu. Verifique internet/firestore e tente novamente.',
+          'A gravacao nao respondeu. Verifique a conexao com a internet e tente novamente.',
         );
       });
 

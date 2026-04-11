@@ -50,10 +50,9 @@ ruraltech10-firebase-adminsdk-fbsvc-66b85a4f95.json
 /app/android/key.properties
 graphify-out
 .build_*/
-.*
+
 /temp/*
 !/temp/.gitkeep
 **/node_modules
-/.claude
 /scripts/migration/.env
 /scripts/migration/package-lock.json

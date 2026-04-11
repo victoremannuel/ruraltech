@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
@@ -1141,7 +1142,8 @@ class CloudService {
     final commandEventRows = await _client
         .from('property_command_events')
         .select('*')
-        .eq('property_id', normalizedPropertyId);
+        .eq('property_id', normalizedPropertyId)
+        .or('device_id.eq.$normalizedDeviceId,device_id.is.null');
 
     final telemetry = ((telemetryRows as List?) ?? const []).map((raw) {
       final row = Map<String, dynamic>.from(raw);
@@ -2093,10 +2095,8 @@ class UuidValue {
   const UuidValue();
 
   String value() {
-    final nowMicros = DateTime.now().microsecondsSinceEpoch;
-    final bytes = List<int>.generate(16, (index) => nowMicros ^ index);
-    final digest = sha256.convert(bytes).bytes;
-    final b = digest.take(16).toList();
+    final rng = Random.secure();
+    final b = List<int>.generate(16, (_) => rng.nextInt(256));
     b[6] = (b[6] & 0x0f) | 0x40;
     b[8] = (b[8] & 0x3f) | 0x80;
     String hex(int value) => value.toRadixString(16).padLeft(2, '0');
