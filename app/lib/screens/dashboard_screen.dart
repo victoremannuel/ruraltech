@@ -18,6 +18,8 @@ import '../services/gateway_service.dart';
 import '../services/map_filter_service.dart';
 import '../utils/cloud_compat.dart';
 import '../utils/device_map_telemetry.dart';
+import '../utils/home_session_state.dart';
+import '../utils/map_coordinates.dart';
 import '../utils/onboarding_gateway_utils.dart';
 import '../utils/polygon_metrics.dart';
 import '../utils/top_feedback.dart';
@@ -46,11 +48,9 @@ class _HomeScreenState extends State<HomeScreen> {
   GatewayService? _boundGatewayService;
   LatLng? _userPosition;
   double _userHeading = 0;
-  bool _initialCountryViewApplied = false;
   int _lastAppliedFilterRevision = -1;
   int _lastAppliedFilterSignature = 0;
-  String? _lastAuthKey;
-  bool _ranLegacyBackfill = false;
+  String? _lastReadyAuthKey;
   String? _lastTelemetryRetentionCleanupDayKey;
   String? _selectedAreaId;
   String? _selectedAreaPropertyId;
@@ -209,7 +209,6 @@ class _HomeScreenState extends State<HomeScreen> {
           _userHeading = _normalizeHeading(current.heading);
         }
       });
-      _applyInitialCountryViewportIfPossible();
     } catch (_) {}
 
     _positionSub?.cancel();
@@ -227,7 +226,6 @@ class _HomeScreenState extends State<HomeScreen> {
         // Fallback when compass stream is unavailable on device.
         _applyHeading(pos.heading);
       }
-      _applyInitialCountryViewportIfPossible();
     });
     _startCompassTracking();
   }
@@ -239,38 +237,18 @@ class _HomeScreenState extends State<HomeScreen> {
     return 2.9;
   }
 
-  void _applyInitialCountryViewportIfPossible() {
-    if (_initialCountryViewApplied) return;
-    final user = _userPosition;
-    if (user == null) return;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _initialCountryViewApplied) return;
-      final hasFilters = context.read<MapFilterService>().hasAnyFilter;
-      if (hasFilters) return;
-      try {
-        _mapController.move(user, _countryOverviewZoom(user.latitude));
-        _initialCountryViewApplied = true;
-      } catch (_) {}
-    });
-  }
-
   LatLng? _toLatLng(dynamic value) {
     if (value is GeoPoint) return LatLng(value.latitude, value.longitude);
-    if (value is List && value.length >= 2) {
-      final a = value[0];
-      final b = value[1];
-      if (a is num && b is num) return LatLng(a.toDouble(), b.toDouble());
-      if (a is GeoPoint) return LatLng(a.latitude, a.longitude);
+    if (value is List && value.length >= 2 && value[0] is GeoPoint) {
+      final point = value[0] as GeoPoint;
+      return tryMapLatLngFromPair(point.latitude, point.longitude);
     }
-    if (value is Map) {
-      final lat = value['lat'] ?? value['latitude'];
-      final lng = value['lng'] ?? value['lon'] ?? value['longitude'];
-      if (lat is num && lng is num) {
-        return LatLng(lat.toDouble(), lng.toDouble());
-      }
-    }
-    return null;
+    return tryMapLatLng(value);
+  }
+
+  LatLng? _gatewayMarkerPoint(Map<String, dynamic> gateway) {
+    return tryMapLatLngFromPair(gateway['lat'], gateway['lon']) ??
+        tryMapLatLng(gateway['position']);
   }
 
   List<LatLng> _polygonFromProperty(Map<String, dynamic>? p) {
@@ -489,6 +467,18 @@ class _HomeScreenState extends State<HomeScreen> {
   void _refreshFromDatabase() {
     setState(() => _refreshTick++);
     AppFeedback.warning('Atualizando dados da Home...');
+  }
+
+  void _syncAuthenticatedSession({
+    required String authKey,
+  }) {
+    if (_lastReadyAuthKey != authKey) {
+      _lastReadyAuthKey = authKey;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        context.read<MapFilterService>().clearAll();
+      });
+    }
   }
 
   String _utcDayKeyNow() {
@@ -3001,36 +2991,31 @@ class _HomeScreenState extends State<HomeScreen> {
     final filters = context.watch<MapFilterService>();
     final fb = context.read<CloudService>();
     final uid = auth.user?.uid;
+    final authKey = resolveHomeAuthKey(uid: uid, role: auth.role);
 
-    if (uid == null || auth.isProfileLoading) {
+    if (shouldShowBlockingHomeLoader(
+      uid: uid,
+      isProfileLoading: auth.isProfileLoading,
+      lastReadyAuthKey: _lastReadyAuthKey,
+    )) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-
-    final authKey = '$uid-${auth.role}';
-    if (_lastAuthKey != authKey) {
-      _lastAuthKey = authKey;
-      _ranLegacyBackfill = false;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        context.read<MapFilterService>().clearAll();
-      });
+    if (authKey == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
+    final currentUid = uid!;
 
-    if (auth.isAdmin && !_ranLegacyBackfill) {
-      _ranLegacyBackfill = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        if (!mounted) return;
-        try {
-          await fb.backfillLegacyAccessForAreasAndGateways();
-        } catch (_) {
-          // Best effort migration for legacy documents.
-        }
-      });
-    }
+    _syncAuthenticatedSession(authKey: authKey);
 
     return Scaffold(
       appBar: AppBar(
         title: Text('Home (${auth.isAdmin ? 'adm' : 'user'})'),
+        bottom: auth.isProfileLoading
+            ? const PreferredSize(
+                preferredSize: Size.fromHeight(4),
+                child: LinearProgressIndicator(minHeight: 4),
+              )
+            : null,
         actions: [
           IconButton(
             key: const Key('home_connect_gateway_button'),
@@ -3054,53 +3039,31 @@ class _HomeScreenState extends State<HomeScreen> {
         key: ValueKey('props-$uid-${auth.role}-$_refreshTick'),
         stream: fb.streamRuralProperties(uid: uid, isAdmin: auth.isAdmin),
         builder: (context, propsSnap) {
-          if (propsSnap.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child:
-                    Text('Erro ao carregar propriedades: ${propsSnap.error}'),
-              ),
-            );
-          }
+          final propertiesError = propsSnap.error;
           return StreamBuilder<List<Map<String, dynamic>>>(
             key: ValueKey('areas-$uid-${auth.role}-$_refreshTick'),
             stream: fb.streamAreas(uid: uid, isAdmin: auth.isAdmin),
             builder: (context, areasSnap) {
-              if (areasSnap.hasError) {
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Text('Erro ao carregar areas: ${areasSnap.error}'),
-                  ),
-                );
-              }
+              final areasError = areasSnap.error;
               return StreamBuilder<List<DeviceModel>>(
                 key: ValueKey('devices-$uid-${auth.role}-$_refreshTick'),
                 stream: fb.streamDevices(uid: uid, isAdmin: auth.isAdmin),
                 builder: (context, devicesSnap) {
-                  if (devicesSnap.hasError) {
-                    return Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Text(
-                            'Erro ao carregar coleiras: ${devicesSnap.error}'),
-                      ),
-                    );
-                  }
+                  final devicesError = devicesSnap.error;
                   return StreamBuilder<List<Map<String, dynamic>>>(
-                    key: ValueKey('gws-$uid-${auth.role}-$_refreshTick'),
-                    stream: fb.streamGateways(uid: uid, isAdmin: auth.isAdmin),
+                    stream: fb.streamGateways(
+                      uid: currentUid,
+                      isAdmin: auth.isAdmin,
+                    ),
                     builder: (context, gatewaySnap) {
-                      if (gatewaySnap.hasError) {
-                        return Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Text(
-                                'Erro ao carregar gateways: ${gatewaySnap.error}'),
-                          ),
-                        );
-                      }
+                      final gatewaysError = gatewaySnap.error;
+                      final derivedHomeIssues = <String>[];
+                      final homeIssues = collectHomeLoadIssues(
+                        propertiesError: propertiesError,
+                        areasError: areasError,
+                        devicesError: devicesError,
+                        gatewaysError: gatewaysError,
+                      ).toList(growable: true);
                       final allProperties = propsSnap.data ?? const [];
                       final allAreas = areasSnap.data ?? const [];
                       final allDevices =
@@ -3208,152 +3171,160 @@ class _HomeScreenState extends State<HomeScreen> {
                               return selectedGatewayIds.contains(gatewayId);
                             }).toList();
 
-                      final markers = <Marker>[
-                        ...devices.map((d) {
-                          final position = _resolvedMarkerTelemetryForDevice(
-                            d,
-                            devices: allDevices,
-                          );
-                          if (position == null) {
-                            return null;
-                          }
-                          return Marker(
-                            point: position.point,
-                            width: 40,
-                            height: 40,
-                            child: GestureDetector(
-                              onTap: () => _openDeviceMarkerActions(context, d),
-                              child: const Icon(
-                                Icons.pets,
-                                color: Colors.red,
-                                size: 30,
-                              ),
-                            ),
-                          );
-                        }).whereType<Marker>(),
-                        ...gateways
-                            .where((g) => g['lat'] != null && g['lon'] != null)
-                            .map(
-                              (g) => Marker(
-                                point: LatLng(
-                                  (g['lat'] as num).toDouble(),
-                                  (g['lon'] as num).toDouble(),
-                                ),
-                                width: 40,
-                                height: 40,
-                                child: GestureDetector(
-                                  onTap: () =>
-                                      _openGatewayMarkerActions(context, g),
-                                  child: const Icon(
-                                    Icons.wifi,
-                                    color: Colors.blue,
-                                    size: 30,
-                                  ),
-                                ),
-                              ),
-                            ),
-                      ];
-
+                      final markers = <Marker>[];
                       final polygons = <Polygon>[];
                       final areaLabelMarkers = <Marker>[];
-                      for (final a in filteredAreas) {
-                        final raw = (a['perimeter'] as List?) ?? const [];
-                        final latLngs =
-                            raw.map(_toLatLng).whereType<LatLng>().toList();
-                        if (latLngs.length < 3) continue;
-                        polygons.add(
-                          Polygon(
-                            points: latLngs,
-                            color: Colors.teal.withValues(alpha: 0.22),
-                            borderColor: Colors.teal,
-                            borderStrokeWidth: 3,
-                          ),
+                      try {
+                        markers.addAll(
+                          devices.map((d) {
+                            final position = _resolvedMarkerTelemetryForDevice(
+                              d,
+                              devices: allDevices,
+                            );
+                            if (position == null) {
+                              return null;
+                            }
+                            return Marker(
+                              point: position.point,
+                              width: 40,
+                              height: 40,
+                              child: GestureDetector(
+                                onTap: () => _openDeviceMarkerActions(context, d),
+                                child: const Icon(
+                                  Icons.pets,
+                                  color: Colors.red,
+                                  size: 30,
+                                ),
+                              ),
+                            );
+                          }).whereType<Marker>(),
                         );
-                        final placement =
-                            PolygonMetrics.labelPlacement(latLngs);
-                        areaLabelMarkers.add(
-                          Marker(
-                            point: placement.anchor,
-                            width: 126,
-                            height: 48,
-                            child: IgnorePointer(
-                              child: Container(
-                                alignment: Alignment.center,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 3,
+
+                        for (final g in gateways) {
+                          final point = _gatewayMarkerPoint(g);
+                          if (point == null) continue;
+                          markers.add(
+                            Marker(
+                              point: point,
+                              width: 40,
+                              height: 40,
+                              child: GestureDetector(
+                                onTap: () =>
+                                    _openGatewayMarkerActions(context, g),
+                                child: const Icon(
+                                  Icons.wifi,
+                                  color: Colors.blue,
+                                  size: 30,
                                 ),
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.58),
-                                  borderRadius: BorderRadius.circular(6),
-                                  border: Border.all(
-                                    color: Colors.black12,
-                                    width: 0.6,
+                              ),
+                            ),
+                          );
+                        }
+
+                        for (final a in filteredAreas) {
+                          final raw = (a['perimeter'] as List?) ?? const [];
+                          final latLngs =
+                              raw.map(_toLatLng).whereType<LatLng>().toList();
+                          if (latLngs.length < 3) continue;
+                          polygons.add(
+                            Polygon(
+                              points: latLngs,
+                              color: Colors.teal.withValues(alpha: 0.22),
+                              borderColor: Colors.teal,
+                              borderStrokeWidth: 3,
+                            ),
+                          );
+                          final placement =
+                              PolygonMetrics.labelPlacement(latLngs);
+                          areaLabelMarkers.add(
+                            Marker(
+                              point: placement.anchor,
+                              width: 126,
+                              height: 48,
+                              child: IgnorePointer(
+                                child: Container(
+                                  alignment: Alignment.center,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 3,
                                   ),
-                                ),
-                                child: Text(
-                                  PolygonMetrics.areaTextMultiline(latLngs),
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                    fontSize: 9.5,
-                                    fontWeight: FontWeight.w600,
-                                    color: Colors.black87,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.58),
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: Colors.black12,
+                                      width: 0.6,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    PolygonMetrics.areaTextMultiline(latLngs),
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      fontSize: 9.5,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.black87,
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
-                        );
-                      }
-                      for (final p in properties) {
-                        final points = (p['points'] as List?) ?? const [];
-                        final latLngs =
-                            points.map(_toLatLng).whereType<LatLng>().toList();
-                        if (latLngs.length < 3) continue;
-                        polygons.add(
-                          Polygon(
-                            points: latLngs,
-                            color: Colors.orange.withValues(alpha: 0.25),
-                            borderColor: Colors.orange.shade700,
-                            borderStrokeWidth: 3,
-                          ),
-                        );
-                        final placement =
-                            PolygonMetrics.labelPlacement(latLngs);
-                        areaLabelMarkers.add(
-                          Marker(
-                            point: placement.anchor,
-                            width: 126,
-                            height: 48,
-                            child: IgnorePointer(
-                              child: Container(
-                                alignment: Alignment.center,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 3,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.58),
-                                  borderRadius: BorderRadius.circular(6),
-                                  border: Border.all(
-                                    color: Colors.black12,
-                                    width: 0.6,
+                          );
+                        }
+                        for (final p in properties) {
+                          final points = (p['points'] as List?) ?? const [];
+                          final latLngs =
+                              points.map(_toLatLng).whereType<LatLng>().toList();
+                          if (latLngs.length < 3) continue;
+                          polygons.add(
+                            Polygon(
+                              points: latLngs,
+                              color: Colors.orange.withValues(alpha: 0.25),
+                              borderColor: Colors.orange.shade700,
+                              borderStrokeWidth: 3,
+                            ),
+                          );
+                          final placement =
+                              PolygonMetrics.labelPlacement(latLngs);
+                          areaLabelMarkers.add(
+                            Marker(
+                              point: placement.anchor,
+                              width: 126,
+                              height: 48,
+                              child: IgnorePointer(
+                                child: Container(
+                                  alignment: Alignment.center,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 3,
                                   ),
-                                ),
-                                child: Text(
-                                  PolygonMetrics.areaTextMultiline(latLngs),
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                    fontSize: 9.5,
-                                    fontWeight: FontWeight.w600,
-                                    color: Colors.black87,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.58),
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: Colors.black12,
+                                      width: 0.6,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    PolygonMetrics.areaTextMultiline(latLngs),
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      fontSize: 9.5,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.black87,
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
+                          );
+                        }
+                      } catch (_) {
+                        derivedHomeIssues.add(
+                          'Falha ao processar os dados do mapa. Registros inválidos foram ignorados.',
                         );
                       }
+                      homeIssues.addAll(derivedHomeIssues);
 
                       void selectPolygonAt(LatLng tapPoint) {
                         for (final a in filteredAreas) {
@@ -3427,9 +3398,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       final initialZoom = hasFilteredFocusTargets
                           ? 14.0
                           : _countryOverviewZoom(center.latitude);
-                      final mapKey = ValueKey<String>(
-                        'home-${filters.revision}-${properties.length}-${filteredAreas.length}-${markers.length}-${_userPosition == null ? 'n' : 'u'}-$_refreshTick',
-                      );
 
                       return Column(
                         children: [
@@ -3447,7 +3415,6 @@ class _HomeScreenState extends State<HomeScreen> {
                             child: Stack(
                               children: [
                                 FlutterMap(
-                                  key: mapKey,
                                   mapController: _mapController,
                                   options: MapOptions(
                                     initialCenter: center,
@@ -3523,9 +3490,53 @@ class _HomeScreenState extends State<HomeScreen> {
                                         fontSize: 12,
                                         fontWeight: FontWeight.w600,
                                       ),
+                                      ),
+                                    ],
+                                  ),
+                                if (homeIssues.isNotEmpty)
+                                  Positioned(
+                                    top: 12,
+                                    left: 12,
+                                    right: 12,
+                                    child: Material(
+                                      color: Colors.transparent,
+                                      child: Container(
+                                        padding: const EdgeInsets.all(12),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFFFDECEC),
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                          border: Border.all(
+                                            color: const Color(0xFFE5A5A5),
+                                          ),
+                                        ),
+                                        child: Row(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            const Padding(
+                                              padding:
+                                                  EdgeInsets.only(top: 2),
+                                              child: Icon(
+                                                Icons.warning_amber_rounded,
+                                                color: Color(0xFFB3261E),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 10),
+                                            Expanded(
+                                              child: Text(
+                                                homeIssues.join('\n'),
+                                                style: const TextStyle(
+                                                  color: Color(0xFF5F1111),
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
                                     ),
-                                  ],
-                                ),
+                                  ),
                                 Positioned(
                                   left: 12,
                                   bottom: 12,

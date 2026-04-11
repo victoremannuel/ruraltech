@@ -35,6 +35,7 @@ Requisitos funcionais e não funcionais do sistema de pecuária de precisão.
 - RF04.6: Enviar comando `PING`
 - RF04.7: Ver log de eventos e telemetria da coleira (CollarLogScreen)
 - RF04.8: Ver detalhes de saúde (GPS, LoRa, MPU, MLX, armazenamento, temperatura, uptime)
+- 
 
 #### RF05 — Gestão de Gateways
 - RF05.1: Listar gateways por propriedade

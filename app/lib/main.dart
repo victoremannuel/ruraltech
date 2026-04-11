@@ -16,6 +16,7 @@ import 'services/cloud_service.dart';
 import 'services/gateway_service.dart';
 import 'services/map_filter_service.dart';
 import 'services/notification_service.dart';
+import 'utils/pending_notifications.dart';
 import 'utils/top_feedback.dart';
 
 const _kPollTaskName = 'poll_notifications';
@@ -42,8 +43,8 @@ void callbackDispatcher() {
       final response = await Supabase.instance.client.functions
           .invoke('poll-notifications', body: <String, dynamic>{});
 
-      final rows = response.data as List?;
-      if (rows == null || rows.isEmpty) return true;
+      final rows = extractPendingNotifications(response.data);
+      if (rows.isEmpty) return true;
 
       final plugin = FlutterLocalNotificationsPlugin();
       await plugin.initialize(
@@ -53,7 +54,7 @@ void callbackDispatcher() {
       );
 
       for (final raw in rows) {
-        final row = raw as Map<String, dynamic>;
+        final row = raw;
         await plugin.show(
           DateTime.now().millisecondsSinceEpoch.remainder(100000),
           (row['title'] as String?)?.isNotEmpty == true

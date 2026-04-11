@@ -12,9 +12,9 @@ Sistema em 3 camadas físicas (coleira → gateway → cloud) com app de gestão
 
 ### Status atual (2026-04-11)
 
-- Branch ativa: `audit/remove-firebase-complete` — remoção completa do Firebase em andamento
+- Branch ativa: `audit/remove-firebase-complete` — app já consolidado em Supabase; backhaul RT permanece no despacho da matriz
 - Branch principal: `main`
-- Stack atual: Supabase Auth + Postgres + Realtime + Edge Functions (sem Firebase)
+- Stack atual: Supabase Auth + Postgres + Realtime + Edge Functions; despacho cloud da matriz ainda usa `matrixId + writerKey` e fila RT
 
 ### Módulos
 
@@ -22,7 +22,7 @@ Sistema em 3 camadas físicas (coleira → gateway → cloud) com app de gestão
 - `coleira/` — ESP32 firmware (geofence NVS, herding, telemetria, health diário)
 - `gateway/` — ESP32 firmware (LoRa bridge local, API HTTP/WS porta 81)
 - `gateway-matriz/` — Serviço de despacho LoRa central (stream RTDB + polling)
-- `supabase/` — Edge Functions: `queue-lora-command`, `matrix-cloud`, `repair-firebase-mirrors`
+- `supabase/` — Edge Functions: `queue-lora-command`, `matrix-cloud`, `admin-repair-cloud-state`, `poll-notifications`, `send-push`
 - `firmware/shared/` — `command_contract.cpp` (contrato compartilhado C++/Dart)
 - `contracts/messages/` — Fixtures JSON de contratos app ↔ firmware
 

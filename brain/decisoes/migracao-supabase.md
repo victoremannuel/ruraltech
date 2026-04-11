@@ -16,7 +16,7 @@ A RTDB continua sendo o barramento de comandos cloud em tempo real.
 ## Decision
 
 Migração gradual para Supabase, mantendo RTDB como barramento de comandos LoRa.
-Branch `audit/remove-firebase-complete` indica que a remoção do Firebase está sendo completada.
+Branch `audit/remove-firebase-complete` consolidou a remoção do Firebase do app.
 
 ## Reason
 
@@ -26,9 +26,9 @@ Branch `audit/remove-firebase-complete` indica que a remoção do Firebase está
 
 ## Impact
 
-- `supabase/` tem Edge Functions: `queue-lora-command`, `matrix-cloud`, `repair-firebase-mirrors`
-- App Flutter usa ambos os SDKs durante a transição
-- Mirrors Firebase são reparados via Edge Function para manter compatibilidade
+- `supabase/` tem Edge Functions: `queue-lora-command`, `matrix-cloud`, `admin-repair-cloud-state`, `poll-notifications`, `send-push`
+- App Flutter usa apenas Supabase; o backhaul de despacho ainda depende de `matrixId + writerKey` e fila RT
+- A reconciliação de escopo/binding roda via `admin-repair-cloud-state`
 
 ## Related
 

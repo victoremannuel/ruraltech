@@ -48,6 +48,8 @@ Rules:
 - ignore notes that have the tag `plugin`
 - consider ONLY notes that have the `ruraltech` tag.
 - every note created about the ruraltech solution MUST have the `ruraltech` tag.
+- Whenever an implementation plan is requested, it must be recorded as a task in the “tasks” folder, and this note should be used for planning and as an implementation checklist. At the end of the implementation, completed items must be checked off, and the history and pending items summarized.
+- tudo que vc fizer deve ser relatado no brain
 
 ---
 
@@ -55,22 +57,22 @@ Rules:
 
 The following commands are available:
 
-/brain  
+/brain
 Load second brain context using graphify + obsidian notes
 
-/brain-save "topic"  
+/brain-save "topic"
 Create or update knowledge in the second brain
 
-/brain-decision "title"  
+/brain-decision "title"
 Register a technical or product decision
 
-/brain-architecture "component"  
+/brain-architecture "component"
 Document system architecture
 
-/brain-task "task"  
+/brain-task "task"
 Register actionable task
 
-/brain-daily  
+/brain-daily
 Save session checkpoint
 
 Rules:
@@ -103,11 +105,11 @@ Write to brain when:
 
 Prefer using:
 
-/brain-save  
-/brain-decision  
-/brain-architecture  
-/brain-task  
-/brain-daily  
+/brain-save
+/brain-decision
+/brain-architecture
+/brain-task
+/brain-daily
 
 ---
 

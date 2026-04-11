@@ -1,233 +1,234 @@
-# AGENTS.md
+# Codex Agent Configuration
 
-## 1. Visao Geral do Projeto
+This project uses:
 
-**Nome:** RuralTech**Objetivo:** Monitorar e conduzir rebanho com coleiras inteligentes, gateways LoRa e app Flutter.**Dominio de negocio:** Pecuaria de precisao (geofence, herding por fases, telemetria, eventos criticos, operacao offline-first).**Principais responsabilidades do sistema:**
-
-- Permitir envio de comandos do app para coleiras via gateway (`SET_FENCE`, `SET_HERDING_PLAN`, `SET_PARAMS`, `PING`).
-- Coletar telemetria/eventos da rede LoRa e disponibilizar para app e Supabase.
-- Aplicar regras de seguranca animal na coleira mesmo sem conectividade.
-- Controlar modo operacional Wi-Fi/OTA vs LoRa-only com regra administrativa.
-- Garantir rastreabilidade por contratos de mensagem e logs locais com hash chain.
-
-Resumo tecnico (max. 10 linhas):
-
-> Monorepo com 3 camadas principais: app (`Flutter + Supabase`), firmware de borda (`ESP32` para coleira/gateway/gateway-matriz) e contratos compartilhados.
-> O app usa `Provider`, `Supabase Auth`, `Supabase Postgres` e `Realtime` (sem Firebase).
-> Gateways expoem API HTTP (`/status`, `/devices`, `/logs`) e WebSocket na porta `81`.
-> A rede LoRa usa payload maximo de `128 bytes` com fragmentacao automatica para comandos grandes.
-> Validacoes de negocio de comandos existem no app e no modulo C++ compartilhado (`firmware/shared/command_contract.*`).
-> CI em GitHub Actions executa analise/testes Flutter, testes de contrato C++ e compilacao dos 3 firmwares.
+- Obsidian second brain in /brain
+- Graphify knowledge graph
+- Shared skills with Claude
+- Persistent architecture memory
 
 ---
 
-## 2. Stack Tecnologico
+## graphify
 
-### Monorepo (visao geral)
+Graph location:
 
-- Linguagem principal: Dart (app) + C++ Arduino (firmware) + JSON (contratos) + JS Node (rules tests)
-- CI/CD: GitHub Actions (`pr-quality.yml`, `nightly-regression.yml`)
-- Infraestrutura: Supabase (Postgres + Auth + Realtime + Edge Functions) + dispositivos ESP32 (LoRa, Wi-Fi AP, OTA, SD)
+graphify-out/GRAPH_REPORT.md
 
-### `app/` (Flutter)
+Rules:
 
-- Linguagem principal: Dart 3.3+
-- Framework: Flutter (Material 3)
-- Banco de dados: Supabase Postgres (RLS, Realtime, Edge Functions)
-- ORM: N/A (supabase-dart client)
-- Testes: `flutter_test` (unit/widget/fixtures)
-- Linter/Formatter: `flutter_lints` + `flutter analyze` + `dart format`
-- CI/CD: job `Flutter Analyze + Test` + `Flutter Regression`
-- Infraestrutura: Supabase Auth/Postgres/Realtime, WebSocket com gateway
-
-### `coleira/`, `gateway/`, `gateway-matriz/` (firmware ESP32)
-
-- Linguagem principal: C++ (Arduino)
-- Framework: Arduino Core ESP32
-- Banco de dados: NVS/EEPROM (coleira), SD card (logs gateway)
-- Testes: contrato C++ compilado com `g++` em `firmware/tests`
-- Linter/Formatter: compilacao com `-Wall -Wextra -pedantic` no teste de contrato
-- CI/CD: `arduino-cli compile` para os 3 sketches
-- Infraestrutura: ESP32 Dev Module, LoRa (RadioLib), OTA, APIs locais HTTP/WS
-
-### `app/rules-tests/`
-
-- Linguagem principal: Node.js (ESM)
-- Framework de teste: Node test runner + `@firebase/rules-unit-testing` (legado)
-- Objetivo: testes de regressao de regras de acesso (legado; substituido por pgTAP em `supabase/tests/`)
+- Always prefer graphify over raw file scanning
+- Read GRAPH_REPORT.md before answering architecture/code questions
+- If graphify-out/wiki/index.md exists, use it instead of scanning files
+- Avoid scanning the repository if graphify is available
+- If graph is outdated or missing, rebuild automatically
 
 ---
 
-## 3. Arquitetura
+## brain
 
-### Padrao arquitetural
+All knowledge is stored in /brain
 
-- Monorepo multi-servico com contratos compartilhados.
-- App Flutter em camadas simples (`screens` + `services` + `models`).
-- Firmware modular por responsabilidade (radio, API, seguranca, sensores, persistencia).
-- Contrato de comandos centralizado em modulo C++ compartilhado.
+Folders:
 
-### Estrutura de pastas
+brain/inbox → raw ideas
+brain/projetos → active projects
+brain/arquitetura → technical architecture
+brain/decisoes → decisions
+brain/tarefas → tasks
+brain/conhecimento → reusable knowledge
+brain/sessoes → session checkpoints
 
-```txt
-ruraltech/
-  app/
-    lib/
-      config/
-      models/
-      screens/
-      services/
-      utils/
-      widgets/
-    test/
-    rules-tests/
-  coleira/
-  gateway/
-  gateway-matriz/
-  firmware/
-    shared/
-    tests/
-  contracts/
-    messages/
-  temp/
-  .github/workflows/
-```
+Rules:
 
-Papel dos diretorios:
+- never duplicate notes
+- always update existing notes
+- create one concept per file
+- use [[obsidian links]]
+- keep markdown simple
+- connect related notes
+- prefer updating over creating
+- Whenever an implementation plan is requested, it must be recorded as a task in the “tasks” folder, and this note should be used for planning and as an implementation checklist. At the end of the implementation, completed items must be checked off, and the history and pending items summarized.
+- tudo que vc fizer deve ser relatado no brain
 
-- `app/lib`: UI e regras de negocio do app.
-- `app/test`: testes Flutter (inclui validacao de contrato e regras de comando).
-- `app/rules-tests`: testes de regressao de regras legadas (Firebase, mantidos como referencia historica).
-- `coleira`: firmware da coleira (telemetria, geofence, herding, seguranca animal).
-- `gateway`: firmware gateway local (LoRa <-> app via HTTP/WS).
-- `gateway-matriz`: gateway central (LoRa <-> app + integracao RTDB/writerKey).
-- `firmware/shared`: validacoes de contrato reutilizadas entre firmwares.
-- `firmware/tests`: testes nativos de contrato/fragmentacao.
-- `contracts/messages`: fixtures JSON que definem o contrato app <-> firmwares.
-- `temp`: area padrao para artefatos temporarios locais do monorepo (compilacao, logs, saidas de testes e diagnosticos).
-- `.github/workflows`: gates de qualidade de PR e regressao noturna.
+### tagging rules
+
+- every note MUST include:
+  - #ruraltech
+  - #folder-name (matching folder)
+
+Examples:
+
+- note in arquitetura → #arquitetura
+- note in decisoes → #decisoes
+
+### filtering rules
+
+- ignore notes with tag `plugin`
+- ONLY consider notes with tag `ruraltech`
 
 ---
 
-## 4. Convencoes Obrigatorias
+## brain skills
 
-### Codigo
+Available commands:
 
-- Manter tipagem explicita e validações defensivas (especialmente payloads de comando e coordenadas).
-- Nao introduzir `dynamic`/`Map` sem validacao de schema no app.
-- Em firmware, preferir tipos de largura fixa (`uint8_t`, `uint16_t`, etc.).
-- Funcoes devem manter responsabilidade unica e nomes semanticos.
-- Constantes de limite devem ser centralizadas (`maxLoraPayloadBytes`, `maxPolygonPoints`, etc.).
-- Regras de negocio devem retornar motivo claro (`reason`) quando houver rejeicao.
+/brain
+Load second brain context
 
-### Imports
+/brain-save "topic"
+Create or update knowledge
 
-- App Flutter: preferir imports de pacote (`package:ruraltech_app/...`) fora do mesmo modulo.
-- Evitar acoplamento por imports profundos e referencias cruzadas desnecessarias.
-- Firmware: headers locais por modulo (`*.h`) e contrato compartilhado via `firmware/shared`.
+/brain-decision "title"
+Register decision
 
-### Erros e retorno
+/brain-architecture "component"
+Document architecture
 
-- Nao usar falhas silenciosas para regras de negocio.
-- Em comandos app/firmware, sempre produzir retorno estruturado (`ok` + `reason`) via `command_result`/`ACK`/`NACK`.
-- Mensagens de erro devem indicar causa acionavel (ex.: `invalid_device_id`, `admin_required_for_lora_only`).
+/brain-task "task"
+Register task
 
-### Arquivos temporarios
+/brain-daily
+Save session checkpoint
 
-- Todo artefato temporario local gerado durante o trabalho no monorepo deve ser salvo em `temp/`.
-- Exemplos: arquivos de compilacao temporarios, logs, dumps, relatorios intermediarios e saidas de testes executados localmente.
-- Evitar espalhar esses arquivos em `app/`, `firmware/`, raiz do repo ou outras pastas fora de `temp/`, salvo quando uma ferramenta exigir caminho fixo.
+Rules:
 
----
-
-## 5. Padroes de Implementacao
-
-### Criacao de novos endpoints/comandos (gateway e app)
-
-- Validar payload antes de qualquer IO/rede.
-- Manter compatibilidade com contratos em `contracts/messages/`.
-- Para comandos acima de `128 bytes`, usar fragmentacao (`chunked`) seguindo padrao atual.
-- Publicar resultado no WebSocket com formato `command_result`.
-- Para alteracoes de modo operacional (`wifi_ota_enabled=false`), exigir marcador administrativo.
-
-### Acesso a banco (Supabase)
-
-- Somente `CloudService` deve concentrar acesso ao Supabase Postgres no app.
-- `screens/widgets` nao devem acessar Supabase diretamente.
-- Operacoes multiplas devem usar transacao/batch via RPC quando necessario.
-- Sempre normalizar IDs (path string, uid bruto, DocumentReference legado) antes de persistir.
+- always prefer using /brain-* skills
+- never create notes manually without skill
+- always check existing notes before creating new ones
+- always apply required tags
+- always link related notes
+- always store inside /brain
 
 ---
 
-## 6. Testes
+## when to write to brain
 
-- Toda feature/alteracao deve incluir ou atualizar testes da camada impactada.
-- Priorizar testes de comportamento observavel (entrada/saida), nao detalhes internos.
-- Mocks apenas para dependencias externas (WebSocket/HTTP/clock/Supabase client).
-- Suite minima de auditoria por impacto:
-  - App: `flutter analyze` e `flutter test` em `app/`
-  - Regras Supabase: `supabase test db --local` (pgTAP em `supabase/tests/`)
-  - Contrato firmware: compilacao/execucao de `firmware/tests/command_contract_test.cpp`
-  - Firmware: compilacao `arduino-cli` de `coleira`, `gateway`, `gateway-matriz`
+Write to brain when:
 
-Exemplo de padrao (Dart):
+- architecture is defined
+- a decision is made
+- new concept is created
+- knowledge is discovered
+- system components are defined
+- project structure is explained
+- user asks to document/save/register/log/create note
+- session is ending
 
-```dart
-group('GatewayService business rules', () {
-  test('blocks LoRa-only SET_PARAMS without admin marker', () {})
-})
-```
+Prefer:
 
----
-
-## 7. Seguranca
-
-- Nunca commitar segredos (`manual_settings.local.h`, chaves, credenciais).
-- Nao logar dados sensiveis (senhas, writer keys, tokens).
-- Validar autenticacao/autorizacao pelas RLS policies do Supabase (testadas via pgTAP).
-- Sanitizar inputs de coordenadas, IDs e payload JSON.
-- Respeitar principio de menor privilegio:
-  - `wifi_ota_enabled=false` requer origem administrativa.
-  - Escrita anonima nas Edge Functions Supabase so com `matrixId + writerKey` validos.
+/brain-save
+/brain-decision
+/brain-architecture
+/brain-task
+/brain-daily
 
 ---
 
-## 8. Performance
+## note format
 
-- Respeitar limite LoRa de `128 bytes` por frame.
-- Evitar N+1 no Supabase; preferir queries consolidadas e merge por chave.
-- Usar batch em operacoes de escrita em massa.
-- Em descoberta de rede local, manter processamento em lotes (`batch probing`).
-- Em listagens no gateway (`/devices`, `/logs`), manter limite (`?limit=<n>`).
+# Title
 
----
+#ruraltech
+#folder-name
 
-## 9. Regras Especificas do Projeto
+## Context
 
-- Toda implementacao ou alteracao deve rodar auditoria das funcionalidades impactadas para garantir sucesso E2E no requisito de negocio.
-- IDs LoRa de coleira devem ser numericos e maiores que zero.
-- `SET_FENCE`: `3..32` pontos.
-- `SET_HERDING_PLAN`: `1..8` fases, com `3..32` pontos por fase.
-- `SET_PARAMS` com `wifi_ota_enabled=false` exige admin (`requested_by_role=adm|admin` ou `requested_by_admin=true`).
-- Contratos JSON em `contracts/messages/` sao baseline de regressao e nao podem ser quebrados sem atualizar testes.
-- Policies RLS do Supabase devem permanecer alinhadas com papeis (`adm` vs `user`) e ownership.
-- Telemetria deve manter coordenadas validas e timestamps coerentes (`receivedAt`/`receivedAtMs`).
-- CRÍTICO: **Sempre levar em consideração a capacidade que a ESP32 tem de armazenar o firmware (ou seja, o tamanho do firmware não pode estourar a capacidade da placa)**
+## Description
+
+## Details
+
+## Related
+
+[[related note]]
 
 ---
 
-## 10. O que o agente NAO deve fazer
+## architecture format
 
-- Nao alterar contratos publicos de mensagem sem atualizar fixtures e testes.
-- Nao introduzir novas dependencias de firmware sem avaliar impacto de flash/memoria.
-- Nao mudar RLS policies do Supabase sem incluir teste de regressao em `supabase/tests/`.
-- Nao commitar arquivos locais de segredos (`manual_settings.local.h`, chaves de producao).
-- Nao bypassar validacoes de seguranca/admin para comandos criticos.
-- Nao desativar gates de CI (`flutter analyze`, `flutter test`, `rules tests`, `firmware compile`).
-- Nao criar artefatos temporarios locais fora de `temp/` sem necessidade tecnica.
-- NÃO DEVE NARRAR O QUE ESTIVER FAZENDO
-- NÃO DEVE DAR RESUMOS LONGOS
+# Architecture: Name
 
-## 11. O que o agente DEVE fazer
+#ruraltech
+#arquitetura
 
-- DEVE AO FINAL COLOCAR UM RESUMO CURTO DO QUE FOI FEITO, COM FRASES OBJETIVAS E DIRETAS.
+## Overview
+
+## Components
+
+## Flow
+
+## Technologies
+
+## Related
+
+---
+
+## decision format
+
+# Decision: Name
+
+#ruraltech
+#decisoes
+
+Date:
+
+## Context
+
+## Options
+
+## Decision
+
+## Reason
+
+## Impact
+
+## Related
+
+---
+
+## task format
+
+# Task: Name
+
+#ruraltech
+#tarefas
+
+## Context
+
+## Action
+
+## Status
+
+## Next step
+
+## Related
+
+---
+
+## session format
+
+# Session YYYY-MM-DD
+
+#ruraltech
+#sessoes
+
+## What was done
+
+## Decisions made
+
+## Architecture updates
+
+## Open tasks
+
+## Next step
+
+---
+
+## behavior rules
+
+- always load /brain before starting work
+- always prefer brain over raw repo scanning
+- always prefer graphify over grep/search
+- minimize token usage by using structured knowledge
+- avoid redundant reads
+- build context before answering
