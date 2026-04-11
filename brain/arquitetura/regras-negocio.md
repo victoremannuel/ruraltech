@@ -60,6 +60,17 @@ Regras que governam o comportamento do sistema, independentes de implementação
 - Falhas precoces (antes da coleira): registradas em `propertyCommandEvents`
 - Log no app combina `propertyEvents` + `propertyCommandEvents`
 
+### Integridade de Dados
+
+- Telemetria deve manter **coordenadas válidas** (lat -90..90, lon -180..180) e timestamps coerentes (`receivedAt`/`receivedAtMs`)
+- Fixtures JSON em `contracts/messages/` são **baseline de regressão** — nunca quebrar sem atualizar testes simultâneos
+- Policies RLS do Supabase devem permanecer alinhadas com papéis (`adm` vs `user`) e ownership
+
+### Auditoria de Feature (E2E)
+
+- Toda implementação ou alteração deve rodar auditoria das funcionalidades impactadas para garantir **sucesso E2E no requisito de negócio**
+- Não entregar feature sem validar o fluxo completo: app → Edge Function → RTDB → matriz → coleira → confirmação
+
 ## Flow
 
 1. App define intenção (salva polígono/plano/parâmetro)

@@ -41,5 +41,8 @@ App → Supabase Edge Function queue-lora-command
 [[regras-negocio]]
 [[requisitos]]
 [[uiux-telas]]
+[[stack-tecnologico]]
+[[convencoes-codigo]]
+[[padroes-implementacao]]
 
 #arquitetura #ruraltech 
