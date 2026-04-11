@@ -27,12 +27,13 @@ All knowledge must be written inside /brain
 
 Folders:
 
-brain/inbox → raw ideas  
-brain/projetos → active projects  
-brain/arquitetura → technical architecture  
-brain/decisoes → decisions  
-brain/tarefas → tasks  
-brain/conhecimento → reusable knowledge  
+brain/inbox → raw ideas
+brain/projetos → active projects
+brain/arquitetura → technical architecture
+brain/decisoes → decisions
+brain/tarefas → tasks
+brain/conhecimento → reusable knowledge
+brain/sessoes → session checkpoints
 
 Rules:
 
@@ -43,6 +44,42 @@ Rules:
 - keep markdown simple
 - connect related notes
 - prefer updating over creating
+- whenever a note is created, it must have a tag (#folder-name) corresponding to the folder the note is in.
+- ignore notes that have the tag `plugin`
+- consider ONLY notes that have the `ruraltech` tag.
+- every note created about the ruraltech solution MUST have the `ruraltech` tag.
+
+---
+
+## brain skills
+
+The following commands are available:
+
+/brain  
+Load second brain context using graphify + obsidian notes
+
+/brain-save "topic"  
+Create or update knowledge in the second brain
+
+/brain-decision "title"  
+Register a technical or product decision
+
+/brain-architecture "component"  
+Document system architecture
+
+/brain-task "task"  
+Register actionable task
+
+/brain-daily  
+Save session checkpoint
+
+Rules:
+
+- Prefer using /brain-* skills instead of manual note creation
+- Always check existing notes before creating new ones
+- Always apply required tags
+- Always link related notes
+- Always store notes inside /brain
 
 ---
 
@@ -59,12 +96,27 @@ Write to brain when:
 - user asks to "document"
 - user asks to "save"
 - user asks to "remember"
+- user asks to "register"
+- user asks to "create note"
+- user asks to "log"
+- session is ending
+
+Prefer using:
+
+/brain-save  
+/brain-decision  
+/brain-architecture  
+/brain-task  
+/brain-daily  
 
 ---
 
 ## note format
 
 # Title
+
+#ruraltech
+#folder-name
 
 ## Context
 
@@ -82,6 +134,9 @@ Write to brain when:
 
 # Architecture: Name
 
+#ruraltech
+#arquitetura
+
 ## Overview
 
 ## Components
@@ -98,6 +153,9 @@ Write to brain when:
 
 # Decision: Name
 
+#ruraltech
+#decisoes
+
 Date:
 
 ## Context
@@ -111,3 +169,41 @@ Date:
 ## Impact
 
 ## Related
+
+---
+
+## task format
+
+# Task: Name
+
+#ruraltech
+#tarefas
+
+## Context
+
+## Action
+
+## Status
+
+## Next step
+
+## Related
+
+---
+
+## session format
+
+# Session YYYY-MM-DD
+
+#ruraltech
+#sessoes
+
+## What was done
+
+## Decisions made
+
+## Architecture updates
+
+## Open tasks
+
+## Next step
