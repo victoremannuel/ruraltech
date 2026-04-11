@@ -11,6 +11,12 @@ Rules:
 - Use graphify knowledge before reading multiple files
 - After modifying code, rebuild graph if needed
 
+If graphify exists:
+
+- Use graphify knowledge first
+- If graph is outdated, rebuild automatically
+- Prefer graphify over raw scanning
+
 ---
 
 ## brain
