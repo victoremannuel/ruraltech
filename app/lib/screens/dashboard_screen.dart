@@ -3203,15 +3203,21 @@ class _HomeScreenState extends State<HomeScreen> {
                             if (position == null) {
                               return null;
                             }
+                            final freshness = resolveTelemetryFreshness(d);
+                            final iconColor = switch (freshness) {
+                              TelemetryFreshness.fresh => Colors.green,
+                              TelemetryFreshness.stale => Colors.red,
+                              TelemetryFreshness.unknown => Colors.grey,
+                            };
                             return Marker(
                               point: position.point,
                               width: 40,
                               height: 40,
                               child: GestureDetector(
                                 onTap: () => _openDeviceMarkerActions(context, d),
-                                child: const Icon(
+                                child: Icon(
                                   Icons.pets,
-                                  color: Colors.red,
+                                  color: iconColor,
                                   size: 30,
                                 ),
                               ),

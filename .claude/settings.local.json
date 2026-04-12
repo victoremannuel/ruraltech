@@ -27,7 +27,8 @@
       "Bash(/Users/victoremannuel/Documents/dev/ruraltech/temp/contract_test)",
       "Bash(echo \"Exit code: $?\")",
       "Bash([ -f \"$f/graphify-out/GRAPH_REPORT.md\" ])",
-      "Bash(rtk git:*)"
+      "Bash(rtk git:*)",
+      "Bash(supabase functions:*)"
     ]
   }
 }

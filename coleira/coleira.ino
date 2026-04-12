@@ -1746,8 +1746,14 @@ static uint8_t buildTelemetryPayload(const Telemetry& t, uint8_t* out, size_t ma
   // corrupcao/decrypt failure sob o perfil operacional completo da matriz.
   StaticJsonDocument<160> doc;
   doc["s"] = bindingPropertyScopeId_;
-  doc["lat"] = t.gps.lat;
-  doc["lon"] = t.gps.lon;
+  const bool gpsOk = t.gps.valid && isfinite(t.gps.lat) && isfinite(t.gps.lon) &&
+                     t.gps.lat >= -90.0 && t.gps.lat <= 90.0 &&
+                     t.gps.lon >= -180.0 && t.gps.lon <= 180.0 &&
+                     (t.gps.lat != 0.0 || t.gps.lon != 0.0);
+  if (gpsOk) {
+    doc["lat"] = t.gps.lat;
+    doc["lon"] = t.gps.lon;
+  }
   doc["m"] = (int)t.mode;
   if (isfinite(t.gps.speedKmph)) doc["sp"] = t.gps.speedKmph;
   if (isfinite(t.gps.hdop)) doc["hd"] = t.gps.hdop;
