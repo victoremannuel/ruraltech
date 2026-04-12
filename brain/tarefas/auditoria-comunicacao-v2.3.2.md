@@ -1,6 +1,6 @@
-# PROMPT OPERACIONAL — Auditoria do Pipeline Telemetria / Comandos RuralTech v2.3.0
+# PROMPT OPERACIONAL — Auditoria do Pipeline Telemetria / Comandos [[AUDIT_TELEMETRY_COMMAND_PIPELINE]] RuralTech [[ruraltech]] v2.3.1 [[auditoria-comunicacao-v2.3.1]]
 
-**Data base:** 2026-04-12
+**Data base:** 2026-04-12  
 **Objetivo deste arquivo:** servir ao mesmo tempo como relatório de auditoria já executada **e** como prompt operacional para o Claude Code continuar a validação end-to-end sem redescobrir o problema do zero.
 
 ---
@@ -56,10 +56,10 @@ Assumir como fatos já validados:
 6. O gargalo real estava no pipeline:
    - GPS da coleira
    - telemetria/eventos
-   - persistência no Supabase
+   - persistência no Supabase [[migracao-supabase]]
 7. Foi observado anteriormente:
-   - `property_telemetry_latest` vazio ou sem linha útil para a coleira
-   - `property_events` com eventos da coleira sem `lat/lon`
+   - `property_telemetry_latest` [[modelagem-dados-supabase]] vazio ou sem linha útil para a coleira
+   - `property_events` [[modelagem-dados-supabase]] com eventos da coleira sem `lat/lon`
    - ocorrência de `gps_invalid_fix`
 8. Coleira em teste:
    - `device_id = 3222380545`
@@ -106,12 +106,6 @@ Assumir como fatos já validados:
 **Impacto:** telemetria sem GPS podia apagar a última posição boa da coleira no banco.
 
 **Correção já implementada:** `position` e `position_received_at_ms` só entram no upsert quando `hasPosition == true`.
-
-### Ajuste de runtime — guarda do primeiro ciclo após reset
-
-**Arquivo:** `coleira/coleira.ino` — `setup`
-
-**Update context:** `setup()` agora redefine `lastCycle = millis()` para evitar que um valor residual após `SW_CPU_RESET` antecipe o primeiro ciclo de telemetria.
 
 ### Feature já implementada no app
 
@@ -194,37 +188,36 @@ Criar e usar:
 
 ## 5.1 Preparação e baseline
 
-- [X] Confirmar que os seriais ainda existem — `/dev/cu.usbserial-1420` e `/dev/cu.usbserial-59470049741` confirmados
-- [X] Criar/confirmar diretório `audit-logs/`
-
-- [!] Preparar captura dos logs seriais — pendente flash; monitores seriais prontos para abertura
-
-- [X] Registrar commit/hash atual e arquivos modificados nesta rodada — ver seção 13
+- [x] Confirmar que os seriais ainda existem — `/dev/cu.usbserial-1420` e `/dev/cu.usbserial-59470049741` confirmados
+- [x] Criar/confirmar diretório `audit-logs/`
+- [x] Preparar captura dos logs seriais — seriais abertos; boot + crash loop capturado em `audit-logs/`
+- [x] Registrar commit/hash atual e arquivos modificados nesta rodada — ver seção 13
 
 ## 5.2 Deploy e build
 
-- [X] Fazer deploy da Edge Function `matrix-cloud` — `supabase functions deploy matrix-cloud` OK (v2.84.2)
-- [X] Confirmar sucesso do deploy — "Deployed Functions on project nhoewnfuyjbtpklrotbf"
-
-- [!] Compilar a coleira com o firmware corrigido — pendente Arduino IDE
-- [!] Registrar tamanho do firmware e confirmar que cabe na ESP32 — pendente build; mudança mínima (+5 linhas guard de `lastCycle`)
-- [!] Compilar a matriz se necessário nesta rodada — matriz não foi alterada nesta rodada
-- [!] Fazer flash dos dispositivos se o ambiente permitir — pendente Arduino IDE
+- [x] Fazer deploy da Edge Function `matrix-cloud` — `supabase functions deploy matrix-cloud` OK (v2.84.2)
+- [x] Confirmar sucesso do deploy — projeto `nhoewnfuyjbtpklrotbf`
+- [x] Compilar a coleira com o firmware corrigido — compilado e flashado com NVS erase (Arduino IDE)
+- [!] Registrar tamanho do firmware e confirmar que cabe na ESP32 — pendente
+- [!] Compilar a matriz se necessário nesta rodada — não alterada nesta rodada
+- [x] Fazer flash dos dispositivos — feito pelo usuário com "Erase All Flash Before Upload"
 
 ## 5.3 Telemetria sem fix GPS
 
-- [!] Abrir serial da coleira — pendente flash
-- [!] Abrir serial da matriz — pendente flash
-- [!] Capturar telemetria sem fix GPS válido — pendente hardware
-- [!] Confirmar que a coleira não envia `lat/lon` — confirmado via análise estática; pendente evidência serial
-- [!] Confirmar que a matriz não persiste posição falsa — baseline: property_telemetry_latest vazio ✓
-- [!] Confirmar que a última posição boa não é apagada — collars.position = [-16.676, -49.485] presente
+- [x] Abrir serial da coleira — aberto; boot capturado; crash loop diagnosticado e corrigido
+- [x] Abrir serial da matriz — aberto; LoRa RX confirmado; scope_reject por ready=0
+- [x] Baseline do banco confirmado antes do flash
+- [x] Confirmar que `property_telemetry_latest` está vazio — confirma ausência de pipeline útil atual
+- [x] Confirmar que `property_telemetry_history` está vazio
+- [x] Confirmar que `property_events` recentes seguem com `lat=null` e `lon=null`
+- [x] Confirmar que a última posição boa manual em `collars.position` não foi apagada
+- [!] Confirmar via serial que a coleira não envia `lat/lon` sem fix — LoRa TX confirmado (sats=0); payload não inspecionável pois matriz rejeita (scope_reject ready=0); pendente matriz com binding
 
 ## 5.4 Telemetria com fix GPS válido
 
 - [ ] Obter fix GPS válido real na coleira
 - [ ] Confirmar serial da coleira com fix/lat/lon
-- [ ] Confirmar serial da matriz com recepção/parse
+- [ ] Confirmar serial da matriz com recepção/parse/persistência
 - [ ] Confirmar persistência em `property_telemetry_latest`
 - [ ] Confirmar persistência em `property_telemetry_history`
 - [ ] Confirmar atualização automática de `collars.position`
@@ -233,43 +226,37 @@ Criar e usar:
 
 ## 5.5 Cor do ícone da coleira
 
-- [!] Validar ícone verde com telemetria recente (<24h) — implementado; pendente validação visual
-- [!] Validar ícone vermelho com telemetria stale (>24h) — implementado; pendente validação visual
+- [!] Validar ícone verde com telemetria recente (<24h) — implementado; pendente validação visual com telemetria real
+- [!] Validar ícone vermelho com telemetria stale (>24h) — implementado; pendente validação visual com timestamp antigo
 - [!] Validar ícone cinza quando não houver telemetria utilizável — implementado; pendente validação visual
+- [x] Confirmar que a fonte de verdade de frescor está semanticamente correta para os timestamps do `DeviceModel`
 
-- [X] Confirmar que a fonte de verdade de frescor está semanticamente correta — usa positionReceivedAtMs e telemetryReceivedAtMs ✓
+## 5.6 Pipeline de comandos [[fluxo-comandos]]
 
-## 5.6 Pipeline de comandos
-
-- [!] Testar `PING` — histórico: 10 PINGs, 1 completed. Pendente nova validação com flash
-
+- [!] Testar `PING` — há 10 PINGs históricos e fila limpa; falta rodada nova com hardware desta versão
 - [ ] Testar `SET_PARAMS`
 - [ ] Testar `SET_FENCE`
 - [ ] Testar `SET_HERDING_PLAN`
-- [X] Confirmar criação em `property_commands` — confirmado com 10 registros históricos
-
-- [!] Confirmar consumo pela matriz — matrix_command_queues vazia (sem pendentes); pendente nova evidência
+- [x] Confirmar criação histórica em `property_commands` [[fluxo-comandos]]
+- [x] Confirmar que a fila atual está limpa
+- [!] Confirmar consumo novo pela matriz — pendente nova rodada com hardware
 - [!] Confirmar transmissão LoRa — pendente serial
 - [!] Confirmar aplicação na coleira — pendente serial
 - [!] Confirmar ACK/NACK — pendente serial
-- [!] Confirmar persistência em `property_command_events` — tabela vazia; pendente nova rodada
+- [!] Confirmar persistência em `property_command_events` — tabela segue vazia nesta rodada
 - [!] Confirmar reflexo no app — pendente teste
 
 ## 5.7 Identidade do gateway
 
-- [X] Confirmar como `192.168.4.1` e `matriz_fazenda_01` aparecem no banco, payloads e correlações
-- [X] Determinar se há bug real de identidade — **NÃO é bug**: alias legítimo via `runtime_status.matrixId`
-- [X] Corrigir ou documentar mapeamento — documentado em seção 13 e audit-logs/supabase-sql.log
+- [x] Confirmar como `192.168.4.1` e `matriz_fazenda_01` aparecem no banco, payloads e correlações
+- [x] Determinar se há bug real de identidade — não é bug; alias legítimo via `runtime_status.matrixId`
+- [x] Documentar o mapeamento — resolvido nesta rodada
 
 ## 5.8 Fechamento
 
-- [X] Atualizar este arquivo com evidências reais da rodada
-
-- [!] Atualizar `task.md` — pendente após validação com hardware
-
+- [x] Atualizar este arquivo com evidências reais da rodada
+- [!] Atualizar `task.md` — pendente sincronização final após próxima rodada com hardware
 - [ ] Não declarar sucesso total sem evidência end-to-end
-
----
 
 ## 6. Passos operacionais obrigatórios
 
@@ -324,7 +311,7 @@ Se ainda não houve flash/deploy nesta rodada:
 
 ---
 
-## 7. Validação do pipeline GPS / telemetria / eventos
+## 7. Validação do pipeline GPS / telemetria / eventos [[fluxos-comunicacao-ponta-a-ponta]]
 
 ## Fase 2 — telemetria sem fix GPS
 
@@ -567,73 +554,126 @@ Só declarar a auditoria concluída quando todas as condições abaixo forem ver
 
 - Status: `[x]`
 - Resolvido no firmware da coleira (`buildTelemetryPayload`).
+- Resultado técnico: `lat/lon` agora só entram no payload quando `gps.valid == true`, são finitos, estão no range e são diferentes de `(0,0)`.
 
 ### Item 2 — Edge Function sobrescrevia position com null
 
 - Status: `[x]`
 - Resolvido na `matrix-cloud` (`updateCollarTelemetry`).
+- Resultado técnico: `position` e `position_received_at_ms` só entram no upsert quando `hasPosition == true`.
 
-### Item 3 — Deploy matrix-cloud
+### Item 3 — Deploy da Edge Function
 
 - Status: `[x]`
-- Deploy realizado com sucesso via `supabase functions deploy matrix-cloud` (v2.84.2).
+- `matrix-cloud` deployada com sucesso.
 - Projeto: `nhoewnfuyjbtpklrotbf`
+- Versão reportada: `v2.84.2`
 
-### Item 4 — Identidade de gateway (`192.168.4.1` vs `matriz_fazenda_01`)
+### Item 4 — Baseline do banco antes do flash
 
-- Status: `[x]` — resolvido/documentado
-- **Não é bug.** É alias legítimo:
-  - `gateways.id = "192.168.4.1"` — PK do gateway no banco
-  - `gateways.runtime_status.matrixId = "matriz_fazenda_01"` — ID do firmware
-  - `matrixRuntimeIdFromGatewayData()` resolve `"192.168.4.1"` → `"matriz_fazenda_01"` via runtime_status
-  - `matrix_queue_keys.runtime_id = "matriz_fazenda_01"` — fila mapeada corretamente
-- Inconsistência cosmética: `property_events.gateway_id = "matriz_fazenda_01"` ≠ `gateways.id = "192.168.4.1"`. Não bloqueia pipeline.
-- Evidência: `audit-logs/supabase-sql.log`
+- Status: `[x]`
+- Estado confirmado:
+  - `collars.position = [-16.676, -49.485]` — manual e válido
+  - `collars.telemetry_received_at_ms = null`
+  - `property_telemetry_latest` = vazio
+  - `property_telemetry_history` = vazio
+  - `property_events` recentes = `lat=null`, `lon=null`, com `violation` e `gps_invalid_fix`
+  - `property_commands` = 10 PINGs históricos, fila limpa
+  - `property_command_events` = vazio
+- Interpretação: confirma que o pipeline útil ainda não rodou com o firmware corrigido.
 
-### Item 5 — Baseline do banco (pré-flash)
+### Item 5 — Identidade do gateway (`192.168.4.1` vs `matriz_fazenda_01`)
 
-- `collars.position = [-16.676, -49.485]` — manual, válido
-- `collars.telemetry_received_at_ms = null` — sem telemetria real
-- `property_telemetry_latest`: vazio
-- `property_telemetry_history`: vazio
-- `property_events`: 20 registros sem lat/lon (violation + gps_invalid_fix)
-- `property_commands`: 10 PINGs históricos (1 completed)
-- `property_command_events`: vazio
-- `matrix_command_queues`: vazio (fila limpa)
+- Status: `[x]`
+- Não é bug funcional.
+- Mapeamento confirmado:
+  - `gateways.id = "192.168.4.1"`
+  - `gateways.runtime_status.matrixId = "matriz_fazenda_01"`
+  - `matrixRuntimeIdFromGatewayData("192.168.4.1") -> "matriz_fazenda_01"`
+  - `matrix_queue_keys.runtime_id = "matriz_fazenda_01"`
+- Observação: há inconsistência cosmética residual porque `property_events.gateway_id = "matriz_fazenda_01"` e `gateways.id = "192.168.4.1"`, mas isso não bloqueia o pipeline.
 
 ### Item 6 — Arquivos modificados nesta auditoria
 
-- `coleira/coleira.ino` — fix buildTelemetryPayload + guard de `lastCycle` após reset
-- `supabase/functions/matrix-cloud/index.ts` — fix updateCollarTelemetry + deploy
-- `app/lib/utils/device_map_telemetry.dart` — TelemetryFreshness enum
-- `app/lib/screens/dashboard_screen.dart` — cor dinâmica do ícone
-- `audit-logs/supabase-sql.log` — evidências do banco
+- Status: `[x]`
+- `coleira/coleira.ino` — fix gpsOk guard + `lastCycle = millis()` no final do setup()
+- `supabase/functions/matrix-cloud/index.ts`
+- `app/lib/utils/device_map_telemetry.dart`
+- `app/lib/screens/dashboard_screen.dart`
+- `app/lib/services/gateway_service.dart` — fecha channel quando ensureConnected falha
+- `audit-logs/supabase-sql.log`
+- `audit-logs/collar-serial.log` — boot + crash loop + LoRa TX pós-flash
+- `audit-logs/matrix-serial.log` — boot + scope_reject ready=0 + LoRa RX confirmado
 
 ### Item 7 — Validação end-to-end com hardware
 
-- Status: `[ ]`
-- Pendente: flash da coleira, seriais abertos, GPS real.
-- Próximos passos:
-  1. `arduino-cli` ou Arduino IDE: compilar e flashar `coleira/coleira.ino`
-  2. Abrir seriais: `screen /dev/cu.usbserial-1420 115200` e `screen /dev/cu.usbserial-59470049741 115200`
-  3. Aguardar GPS fix + telemetria
-  4. Reexecutar queries de validação do banco
-  5. Validar marcador automático no app
+- Status: `[!]`
+- Update context: seriais abertos, crash loop diagnosticado e corrigido, LoRa TX confirmado pela matriz.
+- Coleira: transmitindo LoRa (seq=2000001+, device=3222380545) — firmware pós-flash OK
+- Matriz: recebendo LoRa mas `scope_reject ready=0` — sem backhaul WiFi "VICTOR_E_CAROL"
+- **Dois novos bugs encontrados e corrigidos nesta rodada:**
+  1. **Bug C — crash loop NVS**: `SmartGps::persistLastGoodFix()` → `EEPROM.commit()` → `nvs::Page::readEntry` → `LoadProhibited`. Causa: NVS flash corrompido. Fix: "Erase All Flash Before Upload" antes do reflash.
+  2. **Bug D — uint32 wrap lastCycle**: `lastCycle` (global) retém valor após `SW_CPU_RESET` → `millis() - lastCycle` faz wrap → loop executa imediatamente → crash loop. Fix: `lastCycle = millis()` no final de `setup()` (`coleira.ino:2422`).
+- Bloqueante atual: matriz sem binding (NVS apagado + sem WiFi "VICTOR_E_CAROL") → scope_reject → pipeline de telemetria nulo
+- Bloqueante onboarding: BLE desabilitado, WiFi OTA desabilitado → coleira não descoberta automaticamente → usar campo "ID LoRa" manual no app (3222380545)
 
----
+### Item 8 — Próximo passo obrigatório
+
+- Status: `[!]`
+- Update context: flash feito, coleira TX OK, bloqueante é a matriz sem binding.
+- **Bloqueante principal:** matriz precisa conectar ao WiFi "VICTOR_E_CAROL" para obter binding → só então o LoRa da coleira será processado e publicado no Supabase
+- Para adicionar coleira no app agora: usar campo "ID LoRa" manual → digitar `3222380545`
+- Próximas ações:
+  1. Garantir que "VICTOR_E_CAROL" está disponível para a matriz
+  2. Confirmar no serial da matriz: `Backhaul conectado: <ip>` e `Binding matriz: ready=1`
+  3. Reexecutar queries do banco — `property_telemetry_latest` deve popular
+  4. Validar marcador automático no mapa sem update manual
+  5. Validar cor do ícone (verde/vermelho/cinza)
 
 ## 14. Instrução final ao Claude Code
 
-Continue a partir deste arquivo como fonte de verdade.Não reinicie a investigação.Priorize:
+Continue a partir deste arquivo como fonte de verdade.  
+Não reinicie a investigação.
 
-1. deploy/build
-2. validação real com hardware
-3. queries no banco
-4. confirmação no app
-5. atualização deste próprio arquivo com evidências objetivas
+### Próximos passos obrigatórios da próxima rodada
 
-Se algum item não puder ser concluído, marque `[!]` ou `[ ]` corretamente e registre a justificativa.
+1. ~~validar se a coleira já foi flashada com o firmware corrigido~~ ✓ (flash feito)
+2. ~~abrir e capturar os seriais da coleira e da matriz~~ ✓ (logs em audit-logs/)
+3. **Garantir que "VICTOR_E_CAROL" está disponível para a matriz** — bloqueante atual
+4. Confirmar no serial da matriz: `Backhaul conectado: <ip>` e `Binding matriz: ready=1`
+5. Aguardar fix GPS real e evidência de telemetria útil
+6. Reexecutar as queries do banco desta auditoria
+7. Confirmar no app o marcador automático da coleira sem update manual
+8. Validar a cor do ícone com telemetria recente/stale
+9. Executar nova rodada de comandos (`PING`, `SET_PARAMS`, `SET_FENCE`, `SET_HERDING_PLAN`)
+10. Atualizar este arquivo e o `task.md` com evidências objetivas
 
-## relacionados
+### Item 9 — Logs de sucesso/erro na conexão Wi-Fi da matriz
 
-#tarefas #ruraltech
+- Status: `[x]`
+- Verificação feita no firmware `gateway-matriz/gateway-matriz.ino` e no log `audit-logs/matrix-serial.log`.
+- Evidência confirmada:
+  - ao iniciar a tentativa, a matriz imprime `Backhaul Wi-Fi: tentando conectar em <SSID>`
+  - em sucesso parcial de associação, imprime `Backhaul Wi-Fi associado ao AP`
+  - em sucesso efetivo de rede, imprime `Backhaul conectado: <ip>`
+  - em falha por timeout sem obter IP, imprime `Backhaul Wi-Fi: tentativa expirou sem IP ...`
+  - em desconexão, imprime `Backhaul desconectado: motivo=...`
+- Interpretação: o firmware está programado para reportar no serial tanto sucesso quanto erro da conexão do backhaul Wi-Fi da fazenda.
+
+### Item 10 — Diagnóstico visível do backhaul Wi-Fi da matriz
+
+- Status: `[x]`
+- Implementado no firmware `gateway-matriz`.
+- Entregas aplicadas:
+  - state machine explícita de diagnóstico do backhaul
+  - snapshot estruturado exposto em `/status`
+  - heartbeat periódico no serial durante conexão/falha e também em estado conectado
+  - classificação resumida de causa provável (`ssid_nao_visivel`, `senha_incorreta_ou_autenticacao_falhou`, `dhcp_sem_resposta`, etc.)
+  - endpoint manual `GET /diag/backhaul`
+  - indicação compacta `BH:*` no OLED quando habilitado
+- Observação:
+  - a tentativa de validação por `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz` ficou pendurada no ambiente e não retornou saída conclusiva nesta rodada; falta validar em build local/CI e depois em serial real.
+
+### Regra final
+
+Se o hardware ainda não tiver sido flashado ou se não houver evidência real de serial/banco/app, **não** marcar os itens de validação end-to-end como `[x]`.

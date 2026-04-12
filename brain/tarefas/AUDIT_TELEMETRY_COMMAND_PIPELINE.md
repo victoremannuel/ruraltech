@@ -125,7 +125,9 @@ Adicionado:
 
 ### Itens que requerem hardware físico conectado
 
-- [ ] Validação end-to-end com serial aberto (coleira + matriz)
+- [!] Validação end-to-end com serial aberto (coleira + matriz)
+  - 2026-04-12: captura tentada, `/dev/cu.usbserial-1420` e `/dev/cu.usbserial-59470049741` sem output em 115200/9600/57600
+  - Conclusão: dispositivos conectados mas não ativos — flash ainda não realizado
 - [ ] Confirmar que collar envia telemetria sem lat/lon quando sem GPS fix
 - [ ] Confirmar que `property_telemetry_latest` fica vazio quando sem GPS fix (correto após fix)
 - [ ] Confirmar que `collars.position` não é sobrescrito com null após fix
@@ -135,8 +137,10 @@ Adicionado:
 
 ### Identidade de gateway
 
-- Divergência potencial entre `192.168.4.1` e `matriz_fazenda_01` não foi normalizada nesta rodada
-- Requer análise ao conectar hardware
+- [x] **Resolvida** — `192.168.4.1` vs `matriz_fazenda_01` é alias legítimo
+- `gateways.runtime_status.matrixId = "matriz_fazenda_01"` → `matrixRuntimeIdFromGatewayData()` resolve corretamente
+- `matrix_queue_keys.runtime_id = "matriz_fazenda_01"` — pipeline de comandos funciona
+- Inconsistência cosmética residual: `property_events.gateway_id = "matriz_fazenda_01"` ≠ `gateways.id = "192.168.4.1"` (sem impacto funcional)
 
 ---
 
@@ -167,9 +171,11 @@ ORDER BY received_at_ms DESC LIMIT 50;
 
 ## 7. Próximos Passos
 
-1. Fazer deploy da Edge Function `matrix-cloud` atualizada
-2. Flash da coleira com firmware corrigido
-3. Conectar seriais e capturar logs em `audit-logs/`
-4. Rodar queries de validação e salvar em `audit-logs/supabase-sql.log`
-5. Validar marcador automático no mapa sem update manual
-6. Auditar pipeline de comandos end-to-end
+1. ~~Fazer deploy da Edge Function `matrix-cloud` atualizada~~ ✓ (deployada em 2026-04-12)
+2. **Flash da coleira** com firmware corrigido (`coleira/coleira.ino`) — **BLOQUEANTE**
+3. Ligar a matriz e confirmar output serial
+4. Conectar seriais: `python3 -m serial.tools.miniterm /dev/cu.usbserial-1420 115200`
+5. Aguardar GPS fix e coletar evidência serial
+6. Rodar queries de validação e salvar em `audit-logs/supabase-sql.log`
+7. Validar marcador automático no mapa sem update manual
+8. Auditar pipeline de comandos end-to-end (PING → SET_PARAMS → SET_FENCE → SET_HERDING_PLAN)

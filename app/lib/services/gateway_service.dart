@@ -151,6 +151,10 @@ class GatewayService extends ChangeNotifier {
     }
 
     if (!isConnected || _channel == null) {
+      // Cancela a tentativa de conexão pendente para evitar que o timeout do OS
+      // (~60s no iOS) dispare onError em background e polua lastError na UI.
+      _channel?.sink.close();
+      _channel = null;
       lastError = 'gateway_not_connected';
       notifyListeners();
       return false;

@@ -2419,6 +2419,10 @@ void setup() {
   recordBootStage("ready");
 
   LOGI("Coleira inicializada: id=%lu fw=%s", cfg::DEVICE_ID, cfg::FW_VERSION);
+  // Garante que o primeiro ciclo de telemetria só roda após o intervalo normal,
+  // mesmo após SW_CPU_RESET (panic), onde a DRAM não é zerada e lastCycle poderia
+  // ter um valor residual que causaria uint32 wrap no guard de loop().
+  lastCycle = millis();
 }
 
 void loop() {
