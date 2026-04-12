@@ -61,6 +61,28 @@ class _HomeScreenState extends State<HomeScreen> {
   final Map<String, DeviceMapTelemetrySample> _latestTelemetryByDeviceId = {};
   List<DeviceModel> _latestKnownDevices = const <DeviceModel>[];
 
+  // Stream cache: evita que build() recrie streams a cada rebuild,
+  // o que causava StreamBuilder re-subscriptions e reset do mapa.
+  String? _cachedStreamKey;
+  Stream<List<Map<String, dynamic>>>? _propertiesStream;
+  Stream<List<Map<String, dynamic>>>? _areasStream;
+  Stream<List<DeviceModel>>? _devicesStream;
+  Stream<List<Map<String, dynamic>>>? _gatewaysStream;
+
+  void _updateStreamsIfNeeded({
+    required String uid,
+    required bool isAdmin,
+  }) {
+    final key = '$uid-$isAdmin-$_refreshTick';
+    if (_cachedStreamKey == key) return;
+    _cachedStreamKey = key;
+    final fb = context.read<CloudService>();
+    _propertiesStream = fb.streamRuralProperties(uid: uid, isAdmin: isAdmin);
+    _areasStream = fb.streamAreas(uid: uid, isAdmin: isAdmin);
+    _devicesStream = fb.streamDevices(uid: uid, isAdmin: isAdmin);
+    _gatewaysStream = fb.streamGateways(uid: uid, isAdmin: isAdmin);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -2989,7 +3011,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final auth = context.watch<AuthService>();
     final gateway = context.watch<GatewayService>();
     final filters = context.watch<MapFilterService>();
-    final fb = context.read<CloudService>();
     final uid = auth.user?.uid;
     final authKey = resolveHomeAuthKey(uid: uid, role: auth.role);
 
@@ -3006,6 +3027,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final currentUid = uid!;
 
     _syncAuthenticatedSession(authKey: authKey);
+    _updateStreamsIfNeeded(uid: currentUid, isAdmin: auth.isAdmin);
 
     return Scaffold(
       appBar: AppBar(
@@ -3036,25 +3058,22 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       body: StreamBuilder<List<Map<String, dynamic>>>(
-        key: ValueKey('props-$uid-${auth.role}-$_refreshTick'),
-        stream: fb.streamRuralProperties(uid: uid, isAdmin: auth.isAdmin),
+        key: ValueKey('props-$currentUid-$_refreshTick'),
+        stream: _propertiesStream,
         builder: (context, propsSnap) {
           final propertiesError = propsSnap.error;
           return StreamBuilder<List<Map<String, dynamic>>>(
-            key: ValueKey('areas-$uid-${auth.role}-$_refreshTick'),
-            stream: fb.streamAreas(uid: uid, isAdmin: auth.isAdmin),
+            key: ValueKey('areas-$currentUid-$_refreshTick'),
+            stream: _areasStream,
             builder: (context, areasSnap) {
               final areasError = areasSnap.error;
               return StreamBuilder<List<DeviceModel>>(
-                key: ValueKey('devices-$uid-${auth.role}-$_refreshTick'),
-                stream: fb.streamDevices(uid: uid, isAdmin: auth.isAdmin),
+                key: ValueKey('devices-$currentUid-$_refreshTick'),
+                stream: _devicesStream,
                 builder: (context, devicesSnap) {
                   final devicesError = devicesSnap.error;
                   return StreamBuilder<List<Map<String, dynamic>>>(
-                    stream: fb.streamGateways(
-                      uid: currentUid,
-                      isAdmin: auth.isAdmin,
-                    ),
+                    stream: _gatewaysStream,
                     builder: (context, gatewaySnap) {
                       final gatewaysError = gatewaySnap.error;
                       final derivedHomeIssues = <String>[];
@@ -3430,7 +3449,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                   children: [
                                     TileLayer(
                                       urlTemplate:
-                                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                          'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                      subdomains: const ['a', 'b', 'c'],
                                       userAgentPackageName: ManualSettings
                                           .mapUserAgentPackageName,
                                     ),
