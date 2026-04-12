@@ -674,6 +674,51 @@ Não reinicie a investigação.
 - Observação:
   - a tentativa de validação por `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz` ficou pendurada no ambiente e não retornou saída conclusiva nesta rodada; falta validar em build local/CI e depois em serial real.
 
+### Item 11 — Logs detalhados de upload Supabase no gateway matriz
+
+- Status: `[!]`
+- Implementação aplicada em `gateway-matriz/gateway-matriz.ino`.
+- Entregas concluídas:
+  - novas structs leves `CloudWriteTrace` e `TelemetryPublishTrace` para rastrear `latest`, `history`, status HTTP, estágio e tempo gasto
+  - `rtdbRequest(...)` enriquecido para preencher trace opcional com `wifi`, `path`, `connect`, `http` e `ok`
+  - wrappers `rtdbWrite(...)`, `rtdbRead(...)` e `rtdbDelete(...)` adaptados para propagar trace opcional sem quebrar chamadas existentes
+  - `publishCloudLatestAndHistory(...)` agora mede `total_ms`, registra resultado por etapa e mantém o fluxo atual de gravação
+  - `publishTelemetryToCloud(...)` agora emite `CLOUD_TX_SKIP`, `CLOUD_TX_BEGIN`, `CLOUD_TX_STEP`, `CLOUD_TX_DONE`, `CLOUD_TX_PARTIAL` e `CLOUD_TX_FAIL`
+  - `scope_reject` foi preservado sem introduzir `CLOUD_TX_BEGIN` quando o binding falha
+- Evidência objetiva:
+  - objeto compilado do sketch atualizado em `~/Library/Caches/arduino/sketches/25337E44B85A7FAC9701DD0BACCC23F6/sketch/gateway-matriz.ino.cpp.o` às `2026-04-12 17:44:52`
+  - override local já mantém `RT_MATRIX_LOG_LEVEL 3` em `gateway-matriz/manual_settings.local.h`
+- Pendência:
+  - a compilação completa do `arduino-cli` continua excessivamente lenta/pendurada no ambiente e ainda não gerou `gateway-matriz.ino.bin` novo nesta rodada
+  - os cenários de bancada/serial para sucesso, Wi-Fi off, HTTP 5xx, JSON inválido e coordenadas inválidas ainda não foram executados no hardware após esta alteração
+- Não bloqueia continuação da auditoria estática, mas bloqueia marcar os cenários end-to-end como concluídos.
+
+### Item 12 — Desativação temporária do anti-replay da matriz para bancada
+
+- Status: `[!]`
+- Implementação aplicada para a branch de auditoria com flag reversível e desligada por padrão.
+- Entregas concluídas:
+  - macro base `RT_MATRIX_DISABLE_LORA_REPLAY_FOR_TESTS` adicionada em `gateway-matriz/config.h`
+  - `cfg::DISABLE_LORA_REPLAY_FOR_TESTS` exposta no namespace `cfg`
+  - override local ativado em `gateway-matriz/manual_settings.local.h` com valor `1`
+  - `LoRaGateway::loadReplayState()` agora ignora estado salvo e zera a tabela em modo de teste
+  - `LoRaGateway::persistReplayState()` agora não grava NVS em modo de teste
+  - `LoRaGateway::begin()` agora sinaliza no boot que o anti-replay foi desativado temporariamente
+  - `LoRaGateway::receive(...)` agora preserva o bloqueio em produção, mas aceita `seq` repetido/regressivo em modo de teste com warning explícito
+- Evidência objetiva:
+  - `gateway-matriz/config.h:19-21` e `:50-51`
+  - `gateway-matriz/LoRaGateway.cpp:25-31`, `:54-56`, `:116-119`, `:196-222`
+  - `gateway-matriz/manual_settings.local.h:7-8`
+  - nova rodada de `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz` iniciada; `build.options.json` atualizado em `~/Library/Caches/arduino/sketches/25337E44B85A7FAC9701DD0BACCC23F6/` às `2026-04-12 19:38:50`
+- Pendências:
+  - o `arduino-cli` segue excessivamente lento/pendurado no ambiente e não retornou conclusão confiável nesta rodada
+  - ainda falta flashar a matriz com este firmware e capturar no serial os logs:
+    - `ANTI_REPLAY_TEST_MODE=1; estado anti-replay ignorado na inicializacao`
+    - `ANTI_REPLAY_TEST_MODE=1 no gateway-matriz; replays serao aceitos temporariamente`
+    - `ANTI_REPLAY_TEST_MODE=1 aceitando frame repetido ...`
+  - ainda falta validar persistência real em `property_telemetry_latest` e `property_telemetry_history` após aceitar replay
+- Não bloqueia a continuação da implementação, mas bloqueia marcar a validação funcional e de banco como concluídas.
+
 ### Regra final
 
 Se o hardware ainda não tiver sido flashado ou se não houver evidência real de serial/banco/app, **não** marcar os itens de validação end-to-end como `[x]`.

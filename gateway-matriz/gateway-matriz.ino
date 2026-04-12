@@ -248,6 +248,23 @@ struct CloudPublishContext {
   String propertyScopeId;
 };
 
+struct CloudWriteTrace {
+  bool ok = false;
+  int httpStatus = 0;
+  uint32_t elapsedMs = 0;
+  char stage[24]{};
+  char detail[96]{};
+};
+
+struct TelemetryPublishTrace {
+  bool attempted = false;
+  bool latestOk = false;
+  bool historyOk = false;
+  uint32_t totalElapsedMs = 0;
+  CloudWriteTrace latest{};
+  CloudWriteTrace history{};
+};
+
 static void setWatchdogEnabled(bool enabled);
 static void feedWatchdogIfEnabled();
 static void printBootChecklist(
@@ -304,6 +321,17 @@ static void handleUplinkDuringAckWait(const LoRaFrame& rx);
 static void pollActiveSimpleCommandFeedbackSlice();
 static bool processPrioritySimpleCommandFeedbackWindow();
 static String payloadBytesToString(const uint8_t* data, size_t len);
+static void fillCloudWriteTrace(
+    CloudWriteTrace* trace,
+    bool ok,
+    int httpStatus,
+    uint32_t elapsedMs,
+    const char* stage,
+    const char* detail);
+static int parseHttpStatusCode(const String& statusLine);
+static String summarizeHttpFailureDetail(
+    const String& statusLine,
+    const String& responseBody);
 static void primeSpiChipSelectLines();
 static bool backhaulWindowOpen();
 static void requestImmediateQueueDispatch(const char* source);
@@ -1099,24 +1127,77 @@ static String urlEncodeComponent(const String& input) {
   return out;
 }
 
+static void fillCloudWriteTrace(
+    CloudWriteTrace* trace,
+    bool ok,
+    int httpStatus,
+    uint32_t elapsedMs,
+    const char* stage,
+    const char* detail) {
+  if (!trace) return;
+  trace->ok = ok;
+  trace->httpStatus = httpStatus;
+  trace->elapsedMs = elapsedMs;
+  copyStringToBuffer(trace->stage, sizeof(trace->stage), stage && stage[0] ? stage : "unknown");
+  copyStringToBuffer(trace->detail, sizeof(trace->detail), detail && detail[0] ? detail : "-");
+}
+
+static int parseHttpStatusCode(const String& statusLine) {
+  const int firstSpace = statusLine.indexOf(' ');
+  if (firstSpace < 0) return 0;
+  const int secondSpace = statusLine.indexOf(' ', firstSpace + 1);
+  const String codeText =
+      secondSpace > firstSpace ? statusLine.substring(firstSpace + 1, secondSpace)
+                               : statusLine.substring(firstSpace + 1);
+  return codeText.toInt();
+}
+
+static String summarizeHttpFailureDetail(
+    const String& statusLine,
+    const String& responseBody) {
+  String detail = responseBody;
+  detail.trim();
+  if (detail.isEmpty()) {
+    detail = statusLine;
+    detail.trim();
+  }
+  detail.replace('\r', ' ');
+  detail.replace('\n', ' ');
+  if (detail.length() > 88) {
+    detail.remove(88);
+  }
+  return detail;
+}
+
 static bool rtdbRequest(
     const char* method,
     const String& path,
     const String& body,
-    String* responseBody = nullptr) {
+    String* responseBody = nullptr,
+    CloudWriteTrace* trace = nullptr) {
   if (WiFi.status() != WL_CONNECTED) {
+    fillCloudWriteTrace(trace, false, 0, 0, "wifi", "disconnected");
     setLastCloudWriteError("wifi", path);
     return false;
   }
   if (path.isEmpty()) {
+    fillCloudWriteTrace(trace, false, 0, 0, "path", "empty");
     setLastCloudWriteError("path", "-");
     return false;
   }
 
+  const uint32_t startedAtMs = millis();
   WiFiClientSecure client;
   client.setInsecure();
   client.setTimeout(cfg::CLOUD_HTTP_TIMEOUT_MS);
   if (!client.connect(cfg::SUPABASE_EDGE_HOST, 443)) {
+    fillCloudWriteTrace(
+        trace,
+        false,
+        0,
+        (uint32_t)(millis() - startedAtMs),
+        "connect",
+        "tls_connect_failed");
     setLastCloudWriteError("connect", path);
     return false;
   }
@@ -1138,17 +1219,20 @@ static bool rtdbRequest(
   if (bodyLen > 0) client.print(body);
 
   const String statusLine = client.readStringUntil('\n');
-  bool ok = false;
-  if (statusLine.startsWith("HTTP/1.1 2") || statusLine.startsWith("HTTP/1.0 2")) {
-    ok = true;
-  }
+  const int httpStatus = parseHttpStatusCode(statusLine);
+  const bool ok =
+      statusLine.startsWith("HTTP/1.1 2") || statusLine.startsWith("HTTP/1.0 2");
 
   while (client.connected()) {
     const String line = client.readStringUntil('\n');
     if (line == "\r" || line.length() == 0) break;
   }
+  String bodyRead;
   if (responseBody) {
-    *responseBody = client.readString();
+    bodyRead = client.readString();
+    *responseBody = bodyRead;
+  } else if (!ok) {
+    bodyRead = client.readString();
   }
 
   const uint32_t drainStart = millis();
@@ -1160,25 +1244,33 @@ static bool rtdbRequest(
     delay(1);
   }
   client.stop();
+  const uint32_t elapsedMs = (uint32_t)(millis() - startedAtMs);
   if (ok) {
+    fillCloudWriteTrace(trace, true, httpStatus, elapsedMs, "ok", "ok");
     clearLastCloudWriteError();
   } else {
+    const String detail = summarizeHttpFailureDetail(statusLine, bodyRead);
+    fillCloudWriteTrace(trace, false, httpStatus, elapsedMs, "http", detail.c_str());
     setLastCloudWriteError("http", path + "|" + statusLine);
   }
   return ok;
 }
 
-static bool rtdbWrite(const char* method, const String& path, const String& body) {
-  return rtdbRequest(method, path, body, nullptr);
+static bool rtdbWrite(
+    const char* method,
+    const String& path,
+    const String& body,
+    CloudWriteTrace* trace = nullptr) {
+  return rtdbRequest(method, path, body, nullptr, trace);
 }
 
-static bool rtdbRead(const String& path, String& body) {
+static bool rtdbRead(const String& path, String& body, CloudWriteTrace* trace = nullptr) {
   body = "";
-  return rtdbRequest("GET", path, "", &body);
+  return rtdbRequest("GET", path, "", &body, trace);
 }
 
-static bool rtdbDelete(const String& path) {
-  return rtdbRequest("DELETE", path, "", nullptr);
+static bool rtdbDelete(const String& path, CloudWriteTrace* trace = nullptr) {
+  return rtdbRequest("DELETE", path, "", nullptr, trace);
 }
 
 static void setLastCloudWriteError(const char* stage, const String& detail) {
@@ -1411,7 +1503,9 @@ static bool publishCloudLatestAndHistory(
     const String& historyDayKey,
     const String& body,
     const char* logLabel,
-    uint32_t entrySeq) {
+    uint32_t entrySeq,
+    TelemetryPublishTrace* trace = nullptr) {
+  const uint32_t startedAtMs = millis();
   const String latestPath =
       String(latestRoot) + "/" + ctx.propertyId + "/" + ctx.deviceId;
   char historyEntryId[40];
@@ -1421,8 +1515,58 @@ static bool publishCloudLatestAndHistory(
       String(historyRoot) + "/" + ctx.propertyId + "/" + ctx.deviceId + "/" +
       historyDayKey + "/" + String(historyEntryId);
 
-  const bool latestOk = rtdbWrite("PUT", latestPath, body);
-  const bool historyOk = rtdbWrite("PUT", historyPath, body);
+  if (trace) {
+    trace->attempted = true;
+  }
+
+  const bool latestOk = rtdbWrite("PUT", latestPath, body, trace ? &trace->latest : nullptr);
+  if (trace) {
+    trace->latestOk = latestOk;
+    if (latestOk) {
+      LOGI(
+          "CLOUD_TX_STEP kind=%s step=latest ok=1 code=%d ms=%lu device=%s seq=%lu",
+          logLabel,
+          trace->latest.httpStatus,
+          (unsigned long)trace->latest.elapsedMs,
+          ctx.deviceId.c_str(),
+          (unsigned long)entrySeq);
+    } else {
+      LOGW(
+          "CLOUD_TX_STEP kind=%s step=latest ok=0 stage=%s code=%d ms=%lu detail=%s device=%s seq=%lu",
+          logLabel,
+          trace->latest.stage,
+          trace->latest.httpStatus,
+          (unsigned long)trace->latest.elapsedMs,
+          trace->latest.detail,
+          ctx.deviceId.c_str(),
+          (unsigned long)entrySeq);
+    }
+  }
+
+  const bool historyOk = rtdbWrite("PUT", historyPath, body, trace ? &trace->history : nullptr);
+  if (trace) {
+    trace->historyOk = historyOk;
+    trace->totalElapsedMs = (uint32_t)(millis() - startedAtMs);
+    if (historyOk) {
+      LOGI(
+          "CLOUD_TX_STEP kind=%s step=history ok=1 code=%d ms=%lu device=%s seq=%lu",
+          logLabel,
+          trace->history.httpStatus,
+          (unsigned long)trace->history.elapsedMs,
+          ctx.deviceId.c_str(),
+          (unsigned long)entrySeq);
+    } else {
+      LOGW(
+          "CLOUD_TX_STEP kind=%s step=history ok=0 stage=%s code=%d ms=%lu detail=%s device=%s seq=%lu",
+          logLabel,
+          trace->history.stage,
+          trace->history.httpStatus,
+          (unsigned long)trace->history.elapsedMs,
+          trace->history.detail,
+          ctx.deviceId.c_str(),
+          (unsigned long)entrySeq);
+    }
+  }
   if (latestOk && historyOk) {
     cloudLastPublishAtMs = millis();
   } else {
@@ -1490,10 +1634,20 @@ static bool ensureCloudBackhaulConnected() {
 
 static void publishTelemetryToCloud(const LoRaFrame& rx) {
   if (rx.msgType != MsgType::TELEMETRY) return;
-  if (!cloudPublishReady()) return;
+  if (!cloudPublishReady()) {
+    LOGW(
+        "CLOUD_TX_SKIP reason=cloud_not_ready device=%lu seq=%lu",
+        (unsigned long)rx.deviceId,
+        (unsigned long)rx.seq);
+    return;
+  }
 
   StaticJsonDocument<256> telemetry;
   if (deserializeJson(telemetry, rx.payload, rx.payloadLen) != DeserializationError::Ok) {
+    LOGW(
+        "CLOUD_TX_SKIP reason=invalid_json device=%lu seq=%lu",
+        (unsigned long)rx.deviceId,
+        (unsigned long)rx.seq);
     return;
   }
 
@@ -1505,11 +1659,31 @@ static void publishTelemetryToCloud(const LoRaFrame& rx) {
   const float lon = lonField | NAN;
   if (!isfinite(lat) || !isfinite(lon) ||
       lat < -90.0f || lat > 90.0f || lon < -180.0f || lon > 180.0f) {
+    LOGW(
+        "CLOUD_TX_SKIP reason=invalid_coordinates device=%lu seq=%lu",
+        (unsigned long)rx.deviceId,
+        (unsigned long)rx.seq);
     return;
   }
 
   CloudPublishContext ctx;
-  if (!buildCloudPublishContext(rx, ctx)) return;
+  if (!buildCloudPublishContext(rx, ctx)) {
+    if (scopeMatchesBinding(rx.scopeId)) {
+      LOGW(
+          "CLOUD_TX_SKIP reason=context_not_ready device=%lu seq=%lu",
+          (unsigned long)rx.deviceId,
+          (unsigned long)rx.seq);
+    }
+    return;
+  }
+
+  LOGI(
+      "CLOUD_TX_BEGIN kind=telemetry device=%s seq=%lu scope=%s lat=%.6f lon=%.6f",
+      ctx.deviceId.c_str(),
+      (unsigned long)rx.seq,
+      ctx.propertyScopeId.c_str(),
+      lat,
+      lon);
 
   StaticJsonDocument<512> payload;
   payload["deviceId"] = ctx.deviceId;
@@ -1529,9 +1703,31 @@ static void publishTelemetryToCloud(const LoRaFrame& rx) {
 
   String body;
   serializeJson(payload, body);
-  publishCloudLatestAndHistory(
+  TelemetryPublishTrace trace;
+  const bool ok = publishCloudLatestAndHistory(
       "propertyTelemetryLatest", "propertyTelemetryHistory", ctx, utcDayKey(ctx.nowSec), body,
-      "telemetria", rx.seq);
+      "telemetry", rx.seq, &trace);
+  if (ok) {
+    LOGI(
+        "CLOUD_TX_DONE kind=telemetry device=%s seq=%lu latest=1 history=1 total_ms=%lu",
+        ctx.deviceId.c_str(),
+        (unsigned long)rx.seq,
+        (unsigned long)trace.totalElapsedMs);
+  } else if (trace.latestOk || trace.historyOk) {
+    LOGW(
+        "CLOUD_TX_PARTIAL kind=telemetry device=%s seq=%lu latest=%d history=%d total_ms=%lu",
+        ctx.deviceId.c_str(),
+        (unsigned long)rx.seq,
+        trace.latestOk ? 1 : 0,
+        trace.historyOk ? 1 : 0,
+        (unsigned long)trace.totalElapsedMs);
+  } else {
+    LOGE(
+        "CLOUD_TX_FAIL kind=telemetry device=%s seq=%lu latest=0 history=0 total_ms=%lu",
+        ctx.deviceId.c_str(),
+        (unsigned long)rx.seq,
+        (unsigned long)trace.totalElapsedMs);
+  }
 }
 
 static bool isDailyHealthEvent(const JsonVariantConst payload) {

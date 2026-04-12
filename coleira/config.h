@@ -106,7 +106,7 @@ constexpr uint32_t VIOLATION_PERSIST_MS = 45000;
 // Sensores
 constexpr uint32_t NO_MOTION_MS = 90000;
 constexpr float MOTION_THRESHOLD_G = 0.20f;
-constexpr uint8_t MIN_SATS = 7;
+constexpr uint8_t MIN_SATS = 0;
 constexpr float OUTLIER_MAX_SPEED = 15.0f;  // m/s
 constexpr uint8_t MEDIAN_WINDOW = 5;
 constexpr float EMA_ALPHA_STOP = 0.2f;

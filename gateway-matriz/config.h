@@ -16,6 +16,10 @@
 #define RT_MATRIX_LOG_LEVEL 2
 #endif
 
+#ifndef RT_MATRIX_DISABLE_LORA_REPLAY_FOR_TESTS
+#define RT_MATRIX_DISABLE_LORA_REPLAY_FOR_TESTS 0
+#endif
+
 // Perfis de diagnostico da matriz:
 //   0 = operacional completo (padrao)
 //   1 = LoRa puro
@@ -43,6 +47,8 @@ namespace cfg {
 constexpr char FW_VERSION[] = "gateway-matriz-1.0.0";
 constexpr uint8_t LOG_LEVEL = RT_MATRIX_LOG_LEVEL;
 constexpr uint8_t DIAG_STAGE = RT_MATRIX_DIAG_STAGE;
+constexpr bool DISABLE_LORA_REPLAY_FOR_TESTS =
+    RT_MATRIX_DISABLE_LORA_REPLAY_FOR_TESTS != 0;
 constexpr uint32_t SERIAL_BAUD = 115200;
 constexpr uint16_t TASK_WDT_TIMEOUT_SEC = 30;
 
