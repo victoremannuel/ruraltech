@@ -411,6 +411,10 @@ Deno.serve(async (request) => {
   const expiresAtMs = nowMs + 15 * 60 * 1000;
   const updatedByUid = normalizeId(record.updated_by_uid ?? record.updatedByUid) || "system";
 
+  // Serializar points no formato esperado pelo firmware: [[lat, lon], ...]
+  // A canonicalização interna {lat, lon} é usada apenas para hash/idempotência.
+  const pointsForFirmware = newPerimeter.map((p) => [p.lat, p.lon]);
+
   const commandPayload: JsonMap = {
     cmd_id: commandId,
     command_id: commandId,
@@ -424,7 +428,7 @@ Deno.serve(async (request) => {
     requested_by_uid: updatedByUid,
     requested_by_role: "system",
     requested_at_ms: nowMs,
-    points: newPerimeter,
+    points: pointsForFirmware,
   };
 
   const deviceResults = Object.fromEntries(

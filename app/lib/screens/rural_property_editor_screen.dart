@@ -44,6 +44,10 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
   bool _isLoadingUsers = false;
   int _viewportRevision = 0;
 
+  // Rastreio do auto-sync após salvar polígono
+  String? _syncPropertyId;
+  bool _syncActive = false;
+
   bool get _isEditMode => widget.initialProperty != null;
 
   String? get _editingPropertyId {
@@ -708,10 +712,22 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
 
       if (_didTimeout) return;
       if (!mounted) return;
+
+      // Ativar acompanhamento de auto-sync se for edição de polígono
+      if (_isEditMode) {
+        final savedId = _editingPropertyId;
+        if (savedId != null && savedId.isNotEmpty) {
+          setState(() {
+            _syncPropertyId = savedId;
+            _syncActive = true;
+          });
+        }
+      }
+
       await _showMessage(
         'Sucesso',
         _isEditMode
-            ? 'Propriedade rural atualizada com sucesso.'
+            ? 'Propriedade rural atualizada. Sincronizando com as coleiras...'
             : 'Propriedade rural salva com sucesso.',
       );
       if (mounted) Navigator.pop(context, true);
@@ -781,6 +797,64 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
       ),
       body: Column(
         children: [
+          // Banner de status de sincronização automática com as coleiras
+          if (_syncActive && _syncPropertyId != null)
+            StreamBuilder<Map<String, dynamic>?>(
+              stream: cloud.streamLatestCommandForOrigin(
+                propertyId: _syncPropertyId!,
+                originDocType: 'ruralProperty',
+                originDocId: _syncPropertyId!,
+              ),
+              builder: (context, snapshot) {
+                final data = snapshot.data;
+                final status = data?['status'] as String?;
+                final label = CloudService.commandStatusLabel(status);
+                final text = label['label'] as String;
+                final isTerminal = label['isTerminal'] as bool;
+                if (isTerminal) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) setState(() => _syncActive = false);
+                  });
+                }
+                final color = isTerminal
+                    ? (status == 'applied' || status == 'success'
+                        ? Colors.green.shade700
+                        : Colors.orange.shade700)
+                    : Colors.blue.shade700;
+                return Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  color: color.withValues(alpha: 0.08),
+                  child: Row(
+                    children: [
+                      if (!isTerminal)
+                        SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: color,
+                          ),
+                        ),
+                      if (!isTerminal) const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Cerca: $text',
+                          style: TextStyle(
+                            color: color,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
             child: TextField(

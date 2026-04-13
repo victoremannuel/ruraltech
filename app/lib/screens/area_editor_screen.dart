@@ -35,6 +35,11 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
   bool _saving = false;
   List<Map<String, dynamic>> _properties = const <Map<String, dynamic>>[];
 
+  // Rastreio de auto-sync após salvar área
+  String? _syncAreaId;
+  String? _syncPropertyId;
+  bool _syncActive = false;
+
   bool get _isEditMode => widget.initialArea != null;
 
   String? get _editingAreaId {
@@ -279,6 +284,22 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
         );
       }
       if (!mounted) return;
+
+      // Ativar acompanhamento de auto-sync se for edição de área
+      if (_isEditMode) {
+        final areaId = _editingAreaId;
+        final propId = _selectedPropertyId?.trim();
+        if (areaId != null && areaId.isNotEmpty && propId != null && propId.isNotEmpty) {
+          setState(() {
+            _syncAreaId = areaId;
+            _syncPropertyId = propId;
+            _syncActive = true;
+          });
+          AppFeedback.success('Piquete salvo. Sincronizando com as coleiras...');
+          return; // mantém na tela para mostrar o status
+        }
+      }
+
       Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
@@ -314,6 +335,64 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
       ),
       body: Column(
         children: [
+          // Banner de status de sincronização automática com as coleiras
+          if (_syncActive && _syncAreaId != null && _syncPropertyId != null)
+            StreamBuilder<Map<String, dynamic>?>(
+              stream: context.read<CloudService>().streamLatestCommandForOrigin(
+                    propertyId: _syncPropertyId!,
+                    originDocType: 'area',
+                    originDocId: _syncAreaId!,
+                  ),
+              builder: (context, snapshot) {
+                final data = snapshot.data;
+                final status = data?['status'] as String?;
+                final label = CloudService.commandStatusLabel(status);
+                final text = label['label'] as String;
+                final isTerminal = label['isTerminal'] as bool;
+                final color = isTerminal
+                    ? (status == 'applied' || status == 'success'
+                        ? Colors.green.shade700
+                        : Colors.orange.shade700)
+                    : Colors.blue.shade700;
+                return Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  color: color.withValues(alpha: 0.08),
+                  child: Row(
+                    children: [
+                      if (!isTerminal)
+                        SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: color,
+                          ),
+                        ),
+                      if (!isTerminal) const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Cerca: $text',
+                          style: TextStyle(
+                            color: color,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      if (isTerminal)
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          child: const Text('Fechar'),
+                        ),
+                    ],
+                  ),
+                );
+              },
+            ),
           Padding(
             padding: const EdgeInsets.all(12),
             child: _loadingProperties

@@ -108,11 +108,47 @@ Plano completo baseado em: `ruraltech_plano_implementacao_auditoria_fluxo_app_co
 - [ ] Adaptar telas de propriedade e área para mostrar "Sincronizando..." após salvar
 - [ ] Documentação técnica final
 
+## Plano v2.4.1 — Fechamento do restante (2026-04-11)
+
+### Sprint 1 — Corrigir payload.points para formato [[lat,lon]] ✅
+
+**Problema resolvido:** edge functions agora serializam `points` como `[[lat, lon], ...]` no payload enviado à matriz. Canonicalização interna para hash continua em `{lat, lon}`.
+
+- [x] Corrigir `auto-sync-property-fence`: `pointsForFirmware = newPoints.map(p => [p.lat, p.lon])`
+- [x] Corrigir `auto-sync-area-fence`: mesma correção com `newPerimeter`
+- [x] Hash continua calculado em `{lat, lon}` — idempotência preservada
+
+### Sprint 2 — Ativar disparo automático real (webhooks Supabase) ✅
+
+- [x] Criar `supabase/WEBHOOKS.md` com instruções operacionais completas
+- [x] Documentado webhook `rural_properties → auto-sync-property-fence`
+- [x] Documentado webhook `areas → auto-sync-area-fence`
+- [x] Alternativa CLI documentada
+- [x] Tabela de diagnóstico de falhas comuns
+
+### Sprint 3 — UX completa no app ✅
+
+- [x] `rural_property_editor_screen.dart`: StreamBuilder com `streamLatestCommandForOrigin(propertyId, 'ruralProperty', propertyId)`; mensagem "Sincronizando com as coleiras..." ao salvar; banner animado com estado em tempo real
+- [x] `area_editor_screen.dart`: StreamBuilder com `streamLatestCommandForOrigin(propertyId, 'area', areaId)`; banner de sync com botão "Fechar" ao atingir estado terminal; tela permanece aberta durante sincronização
+
+### Sprint 4 — Validação E2E manual
+
+- [ ] E2E-01: fazenda → propagação automática até coleira
+- [ ] E2E-02: área → propagação seletiva
+- [ ] E2E-03: arrebanhamento não regrediu
+- [ ] E2E-04: falha por escopo incorreto
+- [ ] E2E-05: bypass herding_operation
+
+### Sprint 5 — Testes automatizados mínimos ✅
+
+- [x] `auto-sync-property-fence/index.test.ts`: 14 testes cobrindo canonicalização, hash, idempotência, formato de points, bypass por polígono insuficiente/inalterado
+- [x] `auto-sync-area-fence/index.test.ts`: 17 testes cobrindo bypass herding, detecção de mudança, normalização de IDs, active_area_id mirror, formato de points, idempotência
+
 ## Next step
 
-1. No Supabase Dashboard → Database → Webhooks: criar webhook para `rural_properties` → `auto-sync-property-fence` e para `areas` → `auto-sync-area-fence`
-2. Executar testes E2E manuais
-3. Adaptar `rural_property_editor_screen.dart` e `area_editor_screen.dart` para usar `streamLatestCommandForOrigin`
+1. **Ativar webhooks** no Supabase Dashboard conforme `supabase/WEBHOOKS.md`
+2. Executar testes E2E manuais (Sprint 4)
+3. Rodar testes unitários com `deno test` após instalar Deno no ambiente
 
 ## Related
 
