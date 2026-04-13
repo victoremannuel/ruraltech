@@ -32,6 +32,11 @@ constexpr size_t kPersistPayloadSize = offsetof(PersistedLastGoodFix, crc);
 }  // namespace
 
 void SmartGps::begin() {
+  if (!cfg::SMART_GPS_PERSISTENCE_ENABLED) {
+    LOGW("SmartGps: persistencia last_good_fix desabilitada por configuracao");
+    return;
+  }
+
   if (!ensureEepromReady()) return;
   if (loadLastGoodFixFromEeprom()) {
     LOGI("SmartGps: last_good_fix restaurado (lat=%.6f lon=%.6f)", lastGoodFix_.lat, lastGoodFix_.lon);
@@ -217,6 +222,7 @@ bool SmartGps::loadLastGoodFixFromEeprom() {
 
 void SmartGps::persistLastGoodFix() {
   if (!hasLastGoodFix_) return;
+  if (!cfg::SMART_GPS_PERSISTENCE_ENABLED) return;
   if (!ensureEepromReady()) return;
 
   PersistedLastGoodFix rec{};

@@ -115,6 +115,8 @@ constexpr uint32_t STOP_DETECT_MS = 30000;
 constexpr float LOCK_RADIUS_M = 5.0f;
 constexpr float GPS_SPEED_MOVE_THRESHOLD_KMPH = 1.2f;
 constexpr bool SMART_GPS_TEST_MODE = false;
+constexpr bool SMART_GPS_PERSISTENCE_ENABLED = cfg_manual::SMART_GPS_PERSISTENCE_ENABLED;
+constexpr bool STORAGE_QUEUE_PERSISTENCE_ENABLED = cfg_manual::STORAGE_QUEUE_PERSISTENCE_ENABLED;
 
 // Persistência
 constexpr uint16_t EEPROM_SIZE = 2048;

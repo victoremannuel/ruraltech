@@ -719,6 +719,310 @@ Não reinicie a investigação.
   - ainda falta validar persistência real em `property_telemetry_latest` e `property_telemetry_history` após aceitar replay
 - Não bloqueia a continuação da implementação, mas bloqueia marcar a validação funcional e de banco como concluídas.
 
+### Item 13 — Instrumentação cirúrgica do loop da coleira para localizar o crash
+
+- Status: `[!]`
+- Implementação aplicada em `coleira/coleira.ino` sem alterar intervalos de produção, payload LoRa, contratos ou regras de negócio.
+- Entregas concluídas:
+  - helper `logLoopMark(...)` adicionado para registrar `LOOP_MARK`, `free_heap` e `min_heap`
+  - `loop()` instrumentado com marcas sequenciais de `01_enter` até `34_before_deep_sleep`
+  - leitura de telemetria agora emite `RAW_TELEMETRY ...`
+  - `refreshBlePositionForOnboarding()` agora emite `BLE_POS_REFRESH begin/end`
+  - bloco de geofence agora emite `GEOFENCE_INPUT ...`
+  - bloco de herding agora emite `HERD_INPUT ...` e `HERD_UPDATE done`
+  - preparação/envio de uplink agora emite `UPLINK_PREP`, `UPLINK_PAYLOAD` e `UPLINK_SEND`
+- Evidência objetiva:
+  - `coleira/coleira.ino:150`, `:227-235`, `:1322-1336`, `:2442-2748`
+  - nova rodada de `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs coleira` iniciada; `build.options.json` atualizado em `~/Library/Caches/arduino/sketches/B522BEE16A02DC8D401D8C0EE7366F49/` às `2026-04-12 20:46:50`
+  - o cache dessa rodada já contém o sketch expandido atualizado em `~/Library/Caches/arduino/sketches/B522BEE16A02DC8D401D8C0EE7366F49/sketch/coleira.ino.cpp`
+- Pendências:
+  - o `arduino-cli` segue excessivamente lento/pendurado neste ambiente e não retornou conclusão confiável de build nesta rodada
+  - ainda falta flashar a coleira com esta versão e capturar o serial para descobrir o último `LOOP_MARK` antes do panic
+  - por isso, o “último ponto alcançado antes do crash” ainda é desconhecido nesta rodada e continua dependente de evidência de hardware
+- Hipótese técnica atual:
+  - o crash continua mais provável no primeiro ciclo real do `loop()` após o vencimento da guarda de intervalo, em um dos blocos entre `readTelemetry`, `smartGps.update`, geofence, herding ou preparação/envio do uplink
+- esta instrumentação foi criada exatamente para transformar essa hipótese em evidência objetiva no próximo flash
+- Não bloqueia a continuação da auditoria, mas bloqueia marcar a causa raiz do panic como concluída até haver serial com `LOOP_MARK`.
+
+### Item 14 — Instrumentação específica da guarda de intervalo da coleira
+
+- Status: `[!]`
+- Implementação aplicada em `coleira/coleira.ino` para explicar por que `13_interval_elapsed` não aparecia no serial.
+- Entregas concluídas:
+  - guarda de intervalo agora registra `now`, `lastCycle`, `delta`, `interval` e `mode`
+  - a mesma guarda agora registra explicitamente `INTERVAL_GUARD block remaining=...` ou `INTERVAL_GUARD pass`
+  - todos os pontos reais de atualização de `lastCycle` em `coleira/coleira.ino` agora emitem `LAST_CYCLE_UPDATE ...`
+  - transições locais relevantes de `stateMachine.setMode(...)` agora emitem `STATE_MACHINE mode=%d interval=%lu`
+- Pontos de escrita de `lastCycle` atualmente instrumentados:
+  - `setup_init`
+  - `loop_interval_pass`
+- Evidência objetiva:
+  - `coleira/coleira.ino:2450-2458`
+  - `coleira/coleira.ino:2523-2547`
+  - `coleira/coleira.ino:871-874`, `1143-1146`, `2210-2213`, `2633-2636`, `2646-2649`, `2672-2675`
+- O que esses logs devem responder na próxima rodada:
+  - se `deltaMs` cresce normalmente e apenas ainda não atingiu o intervalo
+  - se `lastCycle` está sendo resetado indevidamente
+  - se `intervalMs()` está vindo com valor inesperado para o modo atual
+  - se há alternância de modo mudando o intervalo efetivo antes do vencimento da guarda
+- Pendência:
+  - ainda falta flashar esta versão da coleira e capturar o serial para concluir por evidência qual dos quatro cenários acima está ocorrendo
+- Não bloqueia a continuidade da auditoria, mas ainda não permite afirmar a causa raiz do bloqueio da telemetria sem os novos logs de campo.
+
+### Item 15 — Correção do `latest/collars` na Edge Function e limpeza do serial da coleira
+
+- Status: `[!]`
+- Implementação aplicada em:
+  - `supabase/functions/matrix-cloud/index.ts`
+  - `coleira/coleira.ino`
+- Entregas concluídas:
+  - `updateCollarTelemetry(...)` agora calcula `safeCollarName` com fallback seguro:
+    - `payload.name`
+    - `existingCollar.name`
+    - `Coleira <device_id>`
+  - o upsert em `collars` agora sempre envia `name` não nulo e não vazio
+  - a lógica já corrigida de `position` / `position_received_at_ms` foi preservada
+  - em erro de upsert em `collars`, a Edge Function agora registra log estruturado com:
+    - `device_id`
+    - `property_id`
+    - presença de `payload.name`
+    - `existingCollar.name`
+    - `safeCollarName`
+    - mensagem do banco
+  - todos os logs temporários de diagnóstico do loop da coleira foram removidos do caminho normal:
+    - `LOOP_MARK`
+    - `INTERVAL_GUARD`
+    - `BLE_POS_REFRESH`
+    - `RAW_TELEMETRY`
+    - `GEOFENCE_INPUT`
+    - `HERD_INPUT`
+    - `HERD_UPDATE done`
+    - `UPLINK_PREP`
+    - `UPLINK_PAYLOAD`
+    - `UPLINK_SEND`
+    - `LAST_CYCLE_UPDATE`
+    - `STATE_MACHINE mode=...`
+- Evidência objetiva:
+  - `supabase/functions/matrix-cloud/index.ts:79-122`
+  - busca em `coleira/coleira.ino` não retorna mais os padrões temporários acima
+  - o diff desta rodada ficou restrito às duas frentes planejadas e à atualização da tarefa
+  - deploy em produção executado com sucesso:
+    - comando: `supabase functions deploy matrix-cloud`
+    - projeto: `nhoewnfuyjbtpklrotbf`
+    - retorno: `Deployed Functions on project nhoewnfuyjbtpklrotbf: matrix-cloud`
+- Pendências:
+  - ainda falta validar em runtime que o `latest` da matriz muda de falha parcial para sucesso completo
+  - ainda falta execução com serial real da matriz para comprovar:
+    - `CLOUD_TX_STEP ... step=latest ok=1`
+    - `CLOUD_TX_DONE ...`
+  - ainda falta evidência de banco mostrando atualização correta em `collars` e `property_telemetry_latest`
+- Hipótese técnica desta frente:
+  - a falha HTTP 500 observada no passo `latest` vinha do upsert em `collars` tentando gravar `name = null`
+  - com `safeCollarName`, a Edge Function deve parar de falhar mesmo quando a telemetria vier sem `name`
+- Não bloqueia a continuação da auditoria, mas continua bloqueando o fechamento do caso até haver evidência real de serial e banco após a correção.
+
 ### Regra final
 
 Se o hardware ainda não tiver sido flashado ou se não houver evidência real de serial/banco/app, **não** marcar os itens de validação end-to-end como `[x]`.
+
+### Item 16 — Diagnóstico do erro de compilação local da coleira
+
+- Status: `[!]`
+- Nenhuma mudança foi necessária no firmware da `coleira` nesta rodada.
+- O erro observado ao compilar é compatível com conflito e/ou instalação quebrada de bibliotecas Arduino no ambiente local.
+- Evidência objetiva:
+  - o `README` da `coleira` pede explicitamente:
+    - `ArduinoJson@7.4.2`
+    - `RadioLib@6.6.0`
+    - `TinyGPSPlus@1.0.3`
+  - o `arduino-cli lib list` mostra `RadioLib 6.6.0` instalado em `/Users/victoremannuel/Documents/Arduino/libraries/RadioLib`
+  - porém o erro de compilação está incluindo headers de outra árvore local:
+    - `/Users/victoremannuel/Documents/Dev/Arduino/libraries/RadioLib`
+    - `/Users/victoremannuel/Documents/Dev/Arduino/libraries/ArduinoJson`
+  - nessa árvore paralela, `library.properties` informa:
+    - `ArduinoJson 7.4.2`
+    - `RadioLib 7.6.0`
+  - após a primeira tentativa de correção, o build continuou incluindo:
+    - `/Users/victoremannuel/Documents/Dev/Arduino/libraries/ArduinoJson.bak`
+    - `/Users/victoremannuel/Documents/Dev/Arduino/libraries/RadioLib.bak`
+  - isso confirma que, para o Arduino IDE/sketchbook atual, renomear para `.bak` dentro de `libraries/` não impede a descoberta da biblioteca
+  - o sintoma principal (`SX1276 does not name a type`, `RADIOLIB_NC was not declared`, `CompareResult does not name a type`) é típico de versão incompatível ou instalação incompleta/misturada de headers
+- Impacto técnico:
+  - o build da `coleira` pode falhar antes mesmo de validar o código do repositório
+  - qualquer teste de bancada fica bloqueado até unificar a origem das bibliotecas Arduino
+- Ação sugerida:
+  - remover ou mover **para fora** de `/Users/victoremannuel/Documents/Dev/Arduino/libraries` as árvores conflitantes
+  - não usar sufixo `.bak` dentro da própria pasta `libraries/`
+  - manter apenas as versões alinhadas ao `README` no sketchbook realmente usado pelo IDE
+  - reinstalar com:
+    - `arduino-cli lib install "ArduinoJson@7.4.2" "RadioLib@6.6.0" "TinyGPSPlus@1.0.3" "Adafruit MLX90614 Library@2.1.5" "MPU6050_tockn@1.5.2"`
+  - recompilar com:
+    - `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs coleira`
+- Bloqueio:
+  - sim, bloqueia a gravação e a validação da coleira até corrigir o ambiente local de bibliotecas
+
+### Item 17 — Compatibilização explícita de namespace do ArduinoJson
+
+- Status: `[!]`
+- Implementação aplicada para alinhar o firmware com a instalação saudável de `ArduinoJson 7.4.2`.
+- Mudanças concluídas:
+  - adicionado `using namespace ArduinoJson;` em:
+    - `coleira/coleira.ino`
+    - `gateway-matriz/gateway-matriz.ino`
+    - `gateway-matriz/ApiServer.cpp`
+  - ajustada a assinatura em `gateway-matriz/ApiServer.h` para `ArduinoJson::StaticJsonDocument<4096>&`
+- Contexto técnico:
+  - após remover o conflito mais grave de bibliotecas, o build da `coleira` passou a falhar com:
+    - `JsonVariantConst does not name a type`
+    - `JsonArray does not name a type`
+    - `StaticJsonDocument was not declared in this scope`
+  - a instalação válida de `ArduinoJson 7.4.2` expõe esses símbolos no namespace `ArduinoJson`
+  - o firmware estava usando a API sem prefixo explícito
+- Evidência objetiva:
+  - `coleira/coleira.ino` inclui `ArduinoJson.h` e agora declara `using namespace ArduinoJson;`
+  - a compilação deixou de falhar imediatamente no primeiro ponto de include quebrado e avançou para a etapa longa do `arduino-cli compile`
+- Pendência:
+  - ainda falta o retorno completo do compile para marcar esta frente como `[x]`
+  - se surgir novo erro após essa compatibilização, ele deve ser tratado como próximo bloqueio independente
+- Bloqueio:
+  - reduz um bloqueio real de compilação, mas a validação final ainda depende do término do build
+
+### Item 18 — Correção definitiva do ambiente ArduinoJson e rollback dos ajustes exploratórios
+
+- Status: `[!]`
+- Implementação aplicada no ambiente local e no firmware, conforme o plano de saneamento.
+- Entregas concluídas no ambiente:
+  - `arduino-cli` foi configurado para usar `directories.user: /Users/victoremannuel/Documents/Arduino`
+  - as cópias conflitantes foram removidas de dentro de `libraries/` e movidas para backup externo:
+    - `/Users/victoremannuel/Documents/arduino-lib-backups/2026-04-12-arduinojson-fix/ArduinoJson.bak`
+    - `/Users/victoremannuel/Documents/arduino-lib-backups/2026-04-12-arduinojson-fix/RadioLib.bak`
+  - a instalação corrompida de `ArduinoJson` em `/Users/victoremannuel/Documents/Arduino/libraries/ArduinoJson` foi substituída por reinstalação limpa
+  - também foram reinstaladas as versões alinhadas ao projeto:
+    - `ArduinoJson@7.4.2`
+    - `RadioLib@6.6.0`
+    - `TinyGPSPlus@1.0.3`
+    - `Adafruit MLX90614 Library@2.1.5`
+    - `MPU6050_tockn@1.5.2`
+- Evidência objetiva do ambiente:
+  - `arduino-cli.yaml` agora contém:
+    - `directories.user: /Users/victoremannuel/Documents/Arduino`
+  - o arquivo crítico voltou a existir com conteúdo real:
+    - `/Users/victoremannuel/Documents/Arduino/libraries/ArduinoJson/src/ArduinoJson.h`
+    - leitura validada com `len=297` e cabeçalho `// ArduinoJson - https://arduinojson.org`
+  - não há mais `ArduinoJson.bak` nem `RadioLib.bak` dentro de:
+    - `/Users/victoremannuel/Documents/Arduino/libraries`
+    - `/Users/victoremannuel/Documents/dev/Arduino/libraries`
+  - `build.options.json` dos dois sketches aponta:
+    - `otherLibrariesFolders=/Users/victoremannuel/Documents/Arduino/libraries`
+  - `libraries.cache` de ambos os builds mostra resolução correta para:
+    - `/Users/victoremannuel/Documents/Arduino/libraries/ArduinoJson/src`
+    - `/Users/victoremannuel/Documents/Arduino/libraries/RadioLib/src`
+    - `/Users/victoremannuel/Documents/Arduino/libraries/TinyGPSPlus/src`
+- Entregas concluídas no firmware:
+  - removido `using namespace ArduinoJson;` de:
+    - `coleira/coleira.ino`
+    - `gateway-matriz/gateway-matriz.ino`
+    - `gateway-matriz/ApiServer.cpp`
+  - revertida a assinatura exploratória em `gateway-matriz/ApiServer.h` para o padrão original:
+    - `bool popCommand(StaticJsonDocument<4096>& out);`
+- Evidência objetiva de build pós-correção:
+  - `coleira` voltou a gerar objetos de compilação que antes não eram alcançados no colapso geral do `ArduinoJson`, incluindo:
+    - `.../B522BEE16A02DC8D401D8C0EE7366F49/sketch/coleira.ino.cpp.o`
+    - `.../B522BEE16A02DC8D401D8C0EE7366F49/sketch/BlePresence.cpp.o`
+    - `.../B522BEE16A02DC8D401D8C0EE7366F49/sketch/LoRaManager.cpp.o`
+  - `gateway-matriz` também voltou a resolver e compilar a stack correta de `RadioLib`, incluindo:
+    - `.../25337E44B85A7FAC9701DD0BACCC23F6/libraries/RadioLib/modules/SX127x/SX1276.cpp.o`
+    - `.../25337E44B85A7FAC9701DD0BACCC23F6/libraries/RadioLib/Module.cpp.o`
+    - `.../25337E44B85A7FAC9701DD0BACCC23F6/libraries/Preferences/Preferences.cpp.o`
+- Limitação observada:
+  - neste host, os comandos `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs coleira` e `gateway-matriz` continuaram pendurando no final com CPU ociosa, sem devolver `.bin` nem mensagem final
+  - apesar disso, o erro sistêmico anterior de `ArduinoJson` deixou de bloquear a etapa de compilação e os artefatos intermediários foram gerados normalmente
+- Pendência:
+  - ainda falta uma execução de compile que conclua até `.bin` ou uma recompilação no Arduino IDE já apontando para o sketchbook saneado
+  - se surgir novo erro a partir daqui, ele deve ser tratado como próximo bloqueio específico e não mais como corrupção geral de biblioteca
+- Bloqueio:
+  - o bloqueio principal de descoberta/resolução do `ArduinoJson` foi removido
+  - permanece apenas a pendência operacional do `arduino-cli` que trava no fechamento do build neste ambiente
+
+### Item 19 — Regressão do Guru Meditation na coleira após reflash
+
+- Status: `[!]`
+- Novo contexto reportado em bancada:
+  - a coleira voltou a reiniciar logo após `BOOT stage=ready`
+  - o log serial mostra `Guru Meditation Error: Core 1 panic'ed (LoadProhibited)` com `EXCVADDR: 0x00000010`
+  - o hash do ELF reportado no serial foi `dceb75ee5`
+- Diagnóstico objetivo desta rodada:
+  - o backtrace desse ELF foi decodificado com `xtensa-esp32-elf-addr2line`
+  - a cadeia relevante caiu em:
+    - `EEPROMClass::commit()` (`EEPROM.cpp:180`)
+    - `SmartGps::persistLastGoodFix()` (`coleira/SmartGps.cpp:234`)
+    - `SmartGps::update()` (`coleira/SmartGps.cpp:157`)
+    - `loop()` (`coleira/coleira.ino:2489`)
+  - isso confirma que a regressão atual não está no pipeline LoRa, e sim no write do `last_good_fix` do `SmartGps`
+  - o fix anterior do `lastCycle = millis()` continua presente, então esta rodada não reabriu o bug D; o gatilho voltou a ser o write em flash do GPS inteligente
+- Mitigação aplicada no firmware:
+  - adicionada a configuração `RT_CFG_SMART_GPS_PERSISTENCE_ENABLED`
+  - valor default definido como `false` em `coleira/manual_settings.h`
+  - exposta em `coleira/config.h` como `cfg::SMART_GPS_PERSISTENCE_ENABLED`
+  - `SmartGps::begin()` agora aborta o fluxo de leitura persistida quando a flag está desligada e loga:
+    - `SmartGps: persistencia last_good_fix desabilitada por configuracao`
+  - `SmartGps::persistLastGoodFix()` agora retorna imediatamente quando a flag está desligada
+- Evidência objetiva da compilação da mitigação:
+  - o objeto recompilado `.../B522BEE16A02DC8D401D8C0EE7366F49/sketch/SmartGps.cpp.o` contém a string:
+    - `SmartGps: persistencia last_good_fix desabilitada por configuracao`
+  - o `arduino-cli compile` voltou a gerar os objetos atualizados da `coleira`, mas ainda prende no fechamento do build neste host antes de produzir o `.elf/.bin` final nessa pasta de cache
+- Impacto técnico esperado:
+  - a coleira deixa de tocar no caminho de `EEPROM.commit()` do `SmartGps`, que é o ponto exato do panic
+  - a filtragem/anti-outlier do `SmartGps` continua ativa em RAM
+  - a telemetria LoRa para a matriz não depende dessa persistência, então a mitigação é compatível com o objetivo imediato de recuperar operação
+- Pendência obrigatória:
+  - regravar a coleira com o firmware que contém essa mitigação
+  - validar no serial que o boot passa por `Coleira inicializada...` sem reboot e que aparece o log:
+    - `SmartGps: persistencia last_good_fix desabilitada por configuracao`
+  - em seguida confirmar novos uplinks LoRa aceitos pela `gateway-matriz`
+
+### Item 20 — Segunda causa raiz do Guru Meditation: `StorageQueue::pushEvent()`
+
+- Status: `[!]`
+- Novo contexto confirmado pelo log mais recente:
+  - mesmo com `SmartGps` em modo sem persistência, a coleira continua reiniciando logo após:
+    - `BOOT stage=ready`
+    - `Coleira inicializada: id=3222380545 fw=coleira-1.0.0`
+  - o serial já mostra explicitamente:
+    - `SmartGps: persistencia last_good_fix desabilitada por configuracao`
+  - isso prova que o panic atual não está mais no `SmartGps`
+- Diagnóstico objetivo desta rodada:
+  - o ELF do log foi localizado pelo hash `d3524b7ab`
+  - o backtrace foi decodificado e caiu em:
+    - `nvs::Page::readEntry(...)`
+    - `EEPROMClass::commit()` (`EEPROM.cpp:180`)
+    - `StorageQueue::pushEvent(...)` (`coleira/StorageQueue.cpp:59`)
+    - `logEvent(...)` (`coleira/coleira.ino:1630`)
+    - `loop()` (`coleira/coleira.ino:2539`)
+  - a linha de `loop()` corresponde ao primeiro:
+    - `logEvent(EventType::VIOLATION);`
+  - conclusão: a coleira sobe, detecta violação de cerca e cai ao tentar persistir o evento offline em EEPROM/NVS
+- Mitigação aplicada no firmware:
+  - adicionada a configuração `RT_CFG_STORAGE_QUEUE_PERSISTENCE_ENABLED`
+  - valor default definido como `false` em `coleira/manual_settings.h`
+  - exposta em `coleira/config.h` como `cfg::STORAGE_QUEUE_PERSISTENCE_ENABLED`
+  - `StorageQueue` agora opera em modo RAM-only quando a persistência está desligada
+  - o checklist de boot foi atualizado para mostrar:
+    - `EEPROM_QUEUE : OK (RAM-only; persistencia off)`
+- Evidência objetiva da compilação da mitigação:
+  - `.../B522BEE16A02DC8D401D8C0EE7366F49/sketch/StorageQueue.cpp.o` contém:
+    - `StorageQueue: persistencia EEPROM desabilitada; usando fila em RAM`
+  - `.../B522BEE16A02DC8D401D8C0EE7366F49/sketch/coleira.ino.cpp.o` contém:
+    - `RAM-only; persistencia off`
+  - o `arduino-cli` voltou a gerar os objetos atualizados, mas continuou pendurando no fechamento do build neste host
+- Impacto técnico esperado:
+  - a coleira deixa de chamar `EEPROM.commit()` pela fila de eventos offline durante o runtime
+  - eventos continuam disponíveis em RAM enquanto o dispositivo estiver ligado
+  - a telemetria LoRa e o envio de eventos deixam de depender da NVS corrompida
+- Pendência obrigatória:
+  - regravar a coleira com o firmware que contém essa mitigação
+  - validar no serial que o boot mostra:
+    - `StorageQueue: persistencia EEPROM desabilitada; usando fila em RAM`
+    - `EEPROM_QUEUE : OK (RAM-only; persistencia off)`
+  - confirmar que a coleira não reinicia mais após `Coleira inicializada...`
+  - confirmar novos uplinks LoRa sendo aceitos pela matriz

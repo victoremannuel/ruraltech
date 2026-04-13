@@ -1458,7 +1458,8 @@ static void printBootChecklist(bool bleInitOk, bool storageOk, bool loraOk) {
   checklistLine(
       "EEPROM_QUEUE",
       storageOk,
-      "EEPROM emulada indisponivel; revisar particao/flash.");
+      "EEPROM emulada indisponivel; revisar particao/flash.",
+      storageOk && !storage.persistenceEnabled() ? "RAM-only; persistencia off" : nullptr);
   checklistLine(
       "LORA_RFM95",
       loraOk,
