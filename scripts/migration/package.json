@@ -1,0 +1,17 @@
+{
+  "name": "ruraltech-migration",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Firebase → Supabase migration pipeline for RuralTech",
+  "scripts": {
+    "export": "node 01_export_firebase.mjs",
+    "transform": "node 02_transform.mjs",
+    "import": "node 03_import_supabase.mjs",
+    "validate": "node 04_validate.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.4",
+    "firebase-admin": "^13.2.0"
+  }
+}

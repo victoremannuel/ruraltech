@@ -1,7 +1,25 @@
 import 'package:latlong2/latlong.dart';
 
 import '../models/device_model.dart';
-import 'legacy_firebase_compat.dart';
+import 'cloud_compat.dart';
+
+enum TelemetryFreshness { unknown, fresh, stale }
+
+const _telemetryFreshThreshold = Duration(hours: 24);
+
+TelemetryFreshness resolveTelemetryFreshness(DeviceModel device) {
+  final candidates = [
+    device.positionReceivedAtMs,
+    device.telemetryReceivedAtMs,
+  ].whereType<int>().where((ms) => ms > 0);
+  if (candidates.isEmpty) return TelemetryFreshness.unknown;
+  final best = candidates.reduce((a, b) => a > b ? a : b);
+  final age = DateTime.now()
+      .difference(DateTime.fromMillisecondsSinceEpoch(best));
+  return age <= _telemetryFreshThreshold
+      ? TelemetryFreshness.fresh
+      : TelemetryFreshness.stale;
+}
 
 class DeviceMapTelemetrySample {
   const DeviceMapTelemetrySample({

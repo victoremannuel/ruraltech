@@ -5,6 +5,36 @@ Monorepo com:
 - `gateway/`: firmware ESP32 do gateway
 - `app/`: aplicativo Flutter + Firebase
 
+## LIGAR O BRAIN
+
+Navegue até a pasta raiz `cd ~/ruraltech`
+
+### 1) ligar o ambiente venv
+
+```bash
+source .venv/bin/activate
+```
+
+### 2) abra o claude
+
+```bash
+claude
+```
+
+### 3) reindexar o brain
+
+Reindexa
+
+```bash
+/graphify .
+```
+
+Ativa o cérebro e reindexa
+
+```bash
+/brain
+```
+
 ## Apoio Git (commit/push/sync)
 
 ### Erro comum no push (HTTP 400)

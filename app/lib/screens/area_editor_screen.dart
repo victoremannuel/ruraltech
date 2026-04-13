@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import '../models/device_model.dart';
 import '../models/polygon_map_context.dart';
 import '../services/auth_service.dart';
-import '../services/firebase_service.dart';
+import '../services/cloud_service.dart';
 import '../services/gateway_service.dart';
 import '../utils/polygon_edit_session.dart';
 import '../utils/linked_device_selection.dart';
@@ -157,7 +157,7 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
     if (uid == null) return;
 
     final properties = await context
-        .read<FirebaseService>()
+        .read<CloudService>()
         .getRuralProperties(uid: uid, isAdmin: auth.isAdmin);
 
     if (!mounted) return;
@@ -219,7 +219,7 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
 
     setState(() => _saving = true);
     try {
-      await context.read<FirebaseService>().deleteArea(id: areaId);
+      await context.read<CloudService>().deleteArea(id: areaId);
       if (!mounted) return;
       Navigator.pop(context, true);
     } catch (e) {
@@ -257,20 +257,20 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
         .toList();
 
     try {
-      final firebase = context.read<FirebaseService>();
+      final cloud = context.read<CloudService>();
       if (_isEditMode) {
         final areaId = _editingAreaId;
         if (areaId == null || areaId.isEmpty) {
           throw Exception('id_da_area_invalido');
         }
-        await firebase.updateAreaPerimeter(
+        await cloud.updateAreaPerimeter(
           id: areaId,
           perimeter: perimeter,
           linkedDeviceIds: _linkedDeviceController.selectedDeviceIds,
           updatedByUid: uid,
         );
       } else {
-        await firebase.addArea(
+        await cloud.addArea(
           ownerUid: uid,
           ruralPropertyId: propertyId,
           perimeter: perimeter,
@@ -364,7 +364,7 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
                 ? const Center(child: CircularProgressIndicator())
                 : StreamBuilder<List<DeviceModel>>(
                     stream: context
-                        .read<FirebaseService>()
+                        .read<CloudService>()
                         .streamDevices(uid: uid, isAdmin: auth.isAdmin),
                     builder: (context, deviceSnap) {
                       if (deviceSnap.hasError) {
@@ -404,7 +404,7 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
 
                       return StreamBuilder<List<Map<String, dynamic>>>(
                         stream: context
-                            .read<FirebaseService>()
+                            .read<CloudService>()
                             .streamGateways(uid: uid, isAdmin: auth.isAdmin),
                         builder: (context, gatewaySnap) {
                           if (gatewaySnap.hasError) {

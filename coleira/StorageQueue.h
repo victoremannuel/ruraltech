@@ -11,10 +11,17 @@ class StorageQueue {
   bool begin();
   void pushEvent(const EventRecord& ev);
   bool popEvent(EventRecord& ev);
+  bool persistenceEnabled() const { return persistenceEnabled_; }
 
  private:
-  void resetQueue();
+  void resetPersistentQueue();
+  void resetRamQueue();
   uint16_t headAddr_ = 6;
   uint16_t tailAddr_ = 8;
   uint16_t slotAddr(uint8_t idx) const;
+  bool persistenceEnabled_ = cfg::STORAGE_QUEUE_PERSISTENCE_ENABLED;
+  bool initialized_ = false;
+  EventRecord ramQueue_[cfg::EEPROM_EVENT_SLOTS]{};
+  uint8_t ramHead_ = 0;
+  uint8_t ramTail_ = 0;
 };

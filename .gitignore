@@ -39,7 +39,7 @@
 
 # debug information files
 *.dwo
-
+ruraltech10-firebase-adminsdk-fbsvc-66b85a4f95.json
 /.arduino-build
 /coleira/build/
 /gateway/build/
@@ -48,10 +48,11 @@
 .DS_Store
 /gateway-matriz/manual_settings.local.h
 /app/android/key.properties
-
+graphify-out
 .build_*/
-.*
+/.vscode/*
 /temp/*
 !/temp/.gitkeep
 **/node_modules
-/.claude
+/scripts/migration/.env
+/scripts/migration/package-lock.json

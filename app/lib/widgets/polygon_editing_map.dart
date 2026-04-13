@@ -434,7 +434,8 @@ class _PolygonEditingMapState extends State<PolygonEditingMap> {
       children: [
         if (widget.showBaseTiles)
           TileLayer(
-            urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+            urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            subdomains: const ['a', 'b', 'c'],
             userAgentPackageName: ManualSettings.mapUserAgentPackageName,
           ),
         if (polygons.isNotEmpty) PolygonLayer(polygons: polygons),

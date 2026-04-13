@@ -1458,7 +1458,8 @@ static void printBootChecklist(bool bleInitOk, bool storageOk, bool loraOk) {
   checklistLine(
       "EEPROM_QUEUE",
       storageOk,
-      "EEPROM emulada indisponivel; revisar particao/flash.");
+      "EEPROM emulada indisponivel; revisar particao/flash.",
+      storageOk && !storage.persistenceEnabled() ? "RAM-only; persistencia off" : nullptr);
   checklistLine(
       "LORA_RFM95",
       loraOk,
@@ -1746,8 +1747,14 @@ static uint8_t buildTelemetryPayload(const Telemetry& t, uint8_t* out, size_t ma
   // corrupcao/decrypt failure sob o perfil operacional completo da matriz.
   StaticJsonDocument<160> doc;
   doc["s"] = bindingPropertyScopeId_;
-  doc["lat"] = t.gps.lat;
-  doc["lon"] = t.gps.lon;
+  const bool gpsOk = t.gps.valid && isfinite(t.gps.lat) && isfinite(t.gps.lon) &&
+                     t.gps.lat >= -90.0 && t.gps.lat <= 90.0 &&
+                     t.gps.lon >= -180.0 && t.gps.lon <= 180.0 &&
+                     (t.gps.lat != 0.0 || t.gps.lon != 0.0);
+  if (gpsOk) {
+    doc["lat"] = t.gps.lat;
+    doc["lon"] = t.gps.lon;
+  }
   doc["m"] = (int)t.mode;
   if (isfinite(t.gps.speedKmph)) doc["sp"] = t.gps.speedKmph;
   if (isfinite(t.gps.hdop)) doc["hd"] = t.gps.hdop;
@@ -2413,6 +2420,10 @@ void setup() {
   recordBootStage("ready");
 
   LOGI("Coleira inicializada: id=%lu fw=%s", cfg::DEVICE_ID, cfg::FW_VERSION);
+  // Garante que o primeiro ciclo de telemetria só roda após o intervalo normal,
+  // mesmo após SW_CPU_RESET (panic), onde a DRAM não é zerada e lastCycle poderia
+  // ter um valor residual que causaria uint32 wrap no guard de loop().
+  lastCycle = millis();
 }
 
 void loop() {

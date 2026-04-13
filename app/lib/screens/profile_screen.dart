@@ -3,9 +3,9 @@ import 'package:provider/provider.dart';
 
 import '../models/device_model.dart';
 import '../services/auth_service.dart';
-import '../services/firebase_service.dart';
+import '../services/cloud_service.dart';
 import '../services/map_filter_service.dart';
-import '../utils/legacy_firebase_compat.dart';
+import '../utils/cloud_compat.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -32,7 +32,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<List<Map<String, String>>> _safeLoadUserOptions(
-      FirebaseService fb) async {
+      CloudService fb) async {
     try {
       return await fb.getUserOptions();
     } catch (_) {
@@ -44,14 +44,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _userOptionsFuture ??=
-        _safeLoadUserOptions(context.read<FirebaseService>());
+        _safeLoadUserOptions(context.read<CloudService>());
   }
 
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
     final filters = context.watch<MapFilterService>();
-    final fb = context.read<FirebaseService>();
+    final fb = context.read<CloudService>();
     final uid = auth.user?.uid;
     if (uid == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));

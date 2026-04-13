@@ -1,17 +1,83 @@
+import 'dart:io';
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:workmanager/workmanager.dart';
 
 import 'config/manual_settings.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/auth_service.dart';
 import 'services/bluetooth_discovery_service.dart';
-import 'services/firebase_service.dart';
+import 'services/cloud_service.dart';
 import 'services/gateway_service.dart';
 import 'services/map_filter_service.dart';
 import 'services/notification_service.dart';
+import 'utils/pending_notifications.dart';
 import 'utils/top_feedback.dart';
+
+const _kPollTaskName = 'poll_notifications';
+
+/// Callback dispatcher executado em isolate separado pelo WorkManager (Android).
+/// Re-inicializa Supabase, busca pending_notifications não entregues e exibe
+/// via flutter_local_notifications. Ignora silenciosamente se não houver sessão.
+@pragma('vm:entry-point')
+void callbackDispatcher() {
+  Workmanager().executeTask((task, _) async {
+    if (task != _kPollTaskName) return true;
+    try {
+      WidgetsFlutterBinding.ensureInitialized();
+      DartPluginRegistrant.ensureInitialized();
+
+      await Supabase.initialize(
+        url: ManualSettings.supabaseUrl,
+        anonKey: ManualSettings.supabaseAnonKey,
+      );
+
+      final session = Supabase.instance.client.auth.currentSession;
+      if (session == null) return true;
+
+      final response = await Supabase.instance.client.functions
+          .invoke('poll-notifications', body: <String, dynamic>{});
+
+      final rows = extractPendingNotifications(response.data);
+      if (rows.isEmpty) return true;
+
+      final plugin = FlutterLocalNotificationsPlugin();
+      await plugin.initialize(
+        const InitializationSettings(
+          android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        ),
+      );
+
+      for (final raw in rows) {
+        final row = raw;
+        await plugin.show(
+          DateTime.now().millisecondsSinceEpoch.remainder(100000),
+          (row['title'] as String?)?.isNotEmpty == true
+              ? row['title'] as String
+              : 'RuralTech',
+          row['body'] as String?,
+          const NotificationDetails(
+            android: AndroidNotificationDetails(
+              'ruraltech_push',
+              'RuralTech',
+              channelDescription: 'Notificações do RuralTech',
+              importance: Importance.high,
+              priority: Priority.high,
+            ),
+          ),
+        );
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  });
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -24,6 +90,23 @@ Future<void> main() async {
     );
   } catch (e) {
     bootstrapError = e.toString();
+  }
+
+  // WorkManager é exclusivo do Android. Guard de plataforma + try-catch evitam
+  // que uma PlatformException impeça o runApp() de ser chamado.
+  if (Platform.isAndroid) {
+    try {
+      await Workmanager().initialize(callbackDispatcher);
+      await Workmanager().registerPeriodicTask(
+        _kPollTaskName,
+        _kPollTaskName,
+        frequency: const Duration(minutes: 15),
+        constraints: Constraints(networkType: NetworkType.connected),
+        existingWorkPolicy: ExistingWorkPolicy.keep,
+      );
+    } catch (e) {
+      debugPrint('WorkManager init failed: $e');
+    }
   }
 
   runApp(RuralTechApp(bootstrapError: bootstrapError));
@@ -69,7 +152,7 @@ class RuralTechApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthService()),
-        Provider(create: (_) => FirebaseService()),
+        Provider(create: (_) => CloudService()),
         ChangeNotifierProvider(create: (_) => GatewayService()),
         ChangeNotifierProvider(create: (_) => BluetoothDiscoveryService()),
         ChangeNotifierProvider(create: (_) => MapFilterService()),
@@ -170,13 +253,13 @@ class _AuthenticatedHomeState extends State<_AuthenticatedHome> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     final auth = context.read<AuthService>();
-    final firebase = context.read<FirebaseService>();
+    final cloud = context.read<CloudService>();
     final notifications = context.read<NotificationService>();
     final uid = auth.user?.uid;
     if (uid == null || uid == _initializedUid) return;
     _initializedUid = uid;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      notifications.initialize(uid: uid, firebase: firebase);
+      notifications.initialize(uid: uid, cloud: cloud);
     });
   }
 

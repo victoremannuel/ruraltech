@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(flutter analyze:*)",
+      "Bash(flutter test:*)",
+      "Bash(cat /Users/victoremannuel/Documents/dev/ruraltech/contracts/messages/*.json)",
+      "Bash(grep:*)",
+      "Bash(git checkout:*)",
+      "Bash(git mv:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(git rm:*)",
+      "Bash(flutter pub:*)",
+      "Bash(cat /Users/victoremannuel/Documents/dev/ruraltech/.github/workflows/*.yml)",
+      "Bash(npm install:*)",
+      "Bash(node:*)",
+      "Bash(supabase --version)",
+      "Bash(supabase projects:*)",
+      "Bash(supabase db:*)",
+      "Bash(git -C /Users/victoremannuel/Documents/dev/ruraltech add -f supabase/migrations/)",
+      "Bash(git -C /Users/victoremannuel/Documents/dev/ruraltech commit -m ':*)",
+      "Bash(git -C /Users/victoremannuel/Documents/dev/ruraltech add -f app/lib/main.dart)",
+      "Bash(rtk wc:*)",
+      "Bash(rtk read:*)",
+      "Bash(g++ -std=c++17 -Wall /Users/victoremannuel/Documents/dev/ruraltech/firmware/shared/command_contract.cpp /Users/victoremannuel/Documents/dev/ruraltech/firmware/tests/command_contract_test.cpp -o /Users/victoremannuel/Documents/dev/ruraltech/temp/contract_test)",
+      "Bash(/Users/victoremannuel/Documents/dev/ruraltech/temp/contract_test)",
+      "Bash(echo \"Exit code: $?\")",
+      "Bash([ -f \"$f/graphify-out/GRAPH_REPORT.md\" ])",
+      "Bash(rtk git:*)",
+      "Bash(supabase functions:*)",
+      "Bash(python3:*)",
+      "Bash(rtk pip:*)"
+    ]
+  }
+}

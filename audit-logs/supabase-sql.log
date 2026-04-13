@@ -1,0 +1,85 @@
+# Supabase SQL Audit Log
+# Data: 2026-04-12 — Branch: audit/remove-firebase-complete
+
+---
+
+## collars WHERE device_id = '3222380545'
+
+id: 3222380545 | device_id: 3222380545 | property_id: T0xeG8WQHwJRI6H3t7vr
+gateway_id: 192.168.4.1
+position: [-16.676, -49.485]          <- coordenadas manuais validas (Brasil)
+telemetry_received_at_ms: null        <- sem telemetria via pipeline ainda
+position_received_at_ms: null         <- posicao inserida manualmente
+
+---
+
+## property_telemetry_latest WHERE device_id = '3222380545'
+
+rows: []  <- VAZIO — confirmado: sem telemetria com GPS valido no pipeline
+
+---
+
+## property_telemetry_history WHERE device_id = '3222380545'
+
+rows: []  <- VAZIO
+
+---
+
+## property_events WHERE device_id = '3222380545' (ultimas 20)
+
+Todos os 20 registros:
+  event_type: "violation" (18x) e "gps_invalid_fix" (2x)
+  lat: null, lon: null, position_received_at_ms: null
+  gateway_id: "matriz_fazenda_01"  <- matrixCloudId = RTDB_MATRIX_ID
+  Ultimo: received_at_ms: 1775240116357
+
+---
+
+## gateways WHERE id = '192.168.4.1'
+
+id: 192.168.4.1 | gateway_id: 192.168.4.1
+property_id: T0xeG8WQHwJRI6H3t7vr
+position: [-16.6758, -49.4849]
+is_matrix: true | binding_ready: true | supports_scoped_lora: true
+runtime_status.matrixId: "matriz_fazenda_01"  <- chave de resolucao
+runtime_status.matrixGatewayId: "192.168.4.1"
+runtime_status.gatewayId: "F4650B4AF619"     <- MAC
+
+---
+
+## matrix_queue_keys
+
+runtime_id: "matriz_fazenda_01" | queue_key: HcTWH2NTTw...  <- match correto
+
+---
+
+## property_commands (ultimos 10, todos PING)
+
+matrix_gateway_id: "192.168.4.1" (todos)
+property_scope_id: "9FFFC95AA1624895"
+status: completed (1), failed (8), expired (1)
+
+---
+
+## matrix_command_queues WHERE runtime_id = 'matriz_fazenda_01'
+
+rows: []  <- fila limpa
+
+---
+
+## property_command_events
+
+rows: []  <- sem eventos de comando registrados
+
+---
+
+## CONCLUSAO IDENTIDADE GATEWAY
+
+gateways.id = "192.168.4.1"
+runtime_status.matrixId = "matriz_fazenda_01"
+matrixRuntimeIdFromGatewayData() => "matriz_fazenda_01"  (via runtimeStatus.matrixId)
+matrix_queue_keys.runtime_id = "matriz_fazenda_01"  OK
+
+VEREDICTO: alias legitimo, pipeline de comandos funciona corretamente.
+Inconsistencia cosmética: property_events.gateway_id="matriz_fazenda_01" != gateways.id="192.168.4.1"
+Impacto: queries diretas por gateway_id podem nao encontrar o gateway (nao bloqueia pipeline).

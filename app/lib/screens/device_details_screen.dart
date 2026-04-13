@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/device_model.dart';
-import '../services/firebase_service.dart';
+import '../services/cloud_service.dart';
 import 'collar_log_screen.dart';
 import 'geofence_screen.dart';
 import 'herding_screen.dart';
@@ -74,11 +74,11 @@ class DeviceDetailsScreen extends StatelessWidget {
   Widget _buildLatestPositionTile(BuildContext context) {
     final propertyId = device.propertyId?.trim();
     final deviceId = device.loraDeviceId;
-    FirebaseService? firebase;
+    CloudService? cloud;
     try {
-      firebase = context.read<FirebaseService>();
+      cloud = context.read<CloudService>();
     } catch (_) {
-      firebase = null;
+      cloud = null;
     }
     final fallbackPosition = _formatPosition();
     final fallbackTimestamp = _formatTelemetryTimestamp();
@@ -86,7 +86,7 @@ class DeviceDetailsScreen extends StatelessWidget {
     if (propertyId == null ||
         propertyId.isEmpty ||
         deviceId == null ||
-        firebase == null) {
+        cloud == null) {
       return ListTile(
         title: const Text('Última posição'),
         subtitle: Row(
@@ -106,7 +106,7 @@ class DeviceDetailsScreen extends StatelessWidget {
     }
 
     return StreamBuilder<Map<String, dynamic>?>(
-      stream: firebase.streamLatestTelemetryEntryForDevice(
+      stream: cloud.streamLatestTelemetryEntryForDevice(
         propertyId: propertyId,
         deviceId: deviceId,
       ),

@@ -1,6 +1,6 @@
 begin;
 
-select plan(11);
+select plan(19);
 
 create extension if not exists pgtap with schema extensions;
 
@@ -139,6 +139,52 @@ begin
       property_id = excluded.property_id,
       updated_by_uid = excluded.updated_by_uid;
 
+  insert into public.gateways (
+    id,
+    gateway_id,
+    owner_uid,
+    name,
+    property_id
+  )
+  values (
+    'gateway-owner',
+    'RT-GW-01',
+    'owner-legacy',
+    'Gateway Owner',
+    'prop-owner'
+  )
+  on conflict (id) do update
+  set gateway_id = excluded.gateway_id,
+      owner_uid = excluded.owner_uid,
+      name = excluded.name,
+      property_id = excluded.property_id;
+
+  insert into public.collars (
+    id,
+    device_id,
+    owner_uid,
+    name,
+    status,
+    property_id,
+    gateway_id
+  )
+  values (
+    '101',
+    '101',
+    'owner-legacy',
+    'Coleira 101',
+    'active',
+    'prop-owner',
+    'gateway-owner'
+  )
+  on conflict (id) do update
+  set device_id = excluded.device_id,
+      owner_uid = excluded.owner_uid,
+      name = excluded.name,
+      status = excluded.status,
+      property_id = excluded.property_id,
+      gateway_id = excluded.gateway_id;
+
   insert into public.property_telemetry_latest (
     property_id,
     device_id,
@@ -180,6 +226,17 @@ begin
       writer_key = excluded.writer_key,
       updated_at_ms = excluded.updated_at_ms,
       raw = excluded.raw;
+
+  insert into public.pending_notifications (
+    legacy_uid,
+    title,
+    body
+  )
+  values (
+    'owner-legacy',
+    'Alerta',
+    'Notificacao owner'
+  );
 end
 $$;
 
@@ -191,18 +248,26 @@ select is(public.current_legacy_uid(), 'owner-legacy', 'owner resolves legacy ui
 select is(public.current_role(), 'user', 'owner resolves role');
 select is((select count(*) from public.rural_properties), 1::bigint, 'owner can read own property');
 select is((select count(*) from public.areas), 1::bigint, 'owner can read area under accessible property');
+select is((select count(*) from public.gateways), 1::bigint, 'owner can read gateway under accessible property');
+select is((select count(*) from public.collars), 1::bigint, 'owner can read collar under accessible property');
 select is((select count(*) from public.property_telemetry_latest), 1::bigint, 'owner can read latest telemetry');
+select is((select count(*) from public.pending_notifications), 1::bigint, 'owner can read own pending notification');
 select is((select count(*) from public.matrix_queue_keys), 0::bigint, 'owner cannot read matrix queue keys');
 
 select set_config('request.jwt.claim.sub', '22222222-2222-2222-2222-222222222222', true);
 select is((select count(*) from public.rural_properties), 1::bigint, 'linked user can read linked property');
+select is((select count(*) from public.gateways), 1::bigint, 'linked user can read linked gateway');
+select is((select count(*) from public.collars), 1::bigint, 'linked user can read linked collar');
 
 select set_config('request.jwt.claim.sub', '33333333-3333-3333-3333-333333333333', true);
 select is((select count(*) from public.rural_properties), 0::bigint, 'unrelated user cannot read property');
+select is((select count(*) from public.gateways), 0::bigint, 'unrelated user cannot read gateway');
+select is((select count(*) from public.pending_notifications), 0::bigint, 'unrelated user cannot read pending notification');
 select is((select count(*) from public.property_telemetry_latest), 0::bigint, 'unrelated user cannot read telemetry');
 
 select set_config('request.jwt.claim.sub', '44444444-4444-4444-4444-444444444444', true);
 select is(public.is_admin(), true, 'admin role is recognized');
+select is((select count(*) from public.pending_notifications), 1::bigint, 'admin can read pending notifications');
 select is((select count(*) from public.matrix_queue_keys), 1::bigint, 'admin can read matrix queue keys');
 
 select * from finish();

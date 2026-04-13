@@ -86,16 +86,39 @@ async function updateCollarTelemetry(
   const lon = typeof body.lon === "number" ? body.lon : null;
   const receivedAtMs = Number(body.receivedAtMs ?? body.received_at_ms ?? 0) || null;
   const collarId = normalizeId(deviceId);
-  const position = lat != null && lon != null ? [lat, lon] : null;
-  const update = await admin.from("collars").upsert({
+  const hasPosition = lat != null && lon != null;
+  const payloadName = normalizeText(body.name ?? body.collarName ?? body.collar_name);
+  const { data: existingCollar, error: existingError } = await admin
+    .from("collars")
+    .select("name")
+    .eq("id", collarId)
+    .maybeSingle();
+  if (existingError) throw new Error(existingError.message);
+  const existingCollarName = normalizeText(existingCollar?.name);
+  const safeCollarName = payloadName || existingCollarName || `Coleira ${collarId}`;
+  const upsertPayload: JsonMap = {
     id: collarId,
     device_id: collarId,
     property_id: propertyId,
-    position,
+    name: safeCollarName,
     telemetry_received_at_ms: receivedAtMs,
-    position_received_at_ms: receivedAtMs,
-  });
-  if (update.error) throw new Error(update.error.message);
+  };
+  if (hasPosition) {
+    upsertPayload.position = [lat, lon];
+    upsertPayload.position_received_at_ms = receivedAtMs;
+  }
+  const update = await admin.from("collars").upsert(upsertPayload);
+  if (update.error) {
+    console.error("collar_telemetry_upsert_failed", {
+      device_id: collarId,
+      property_id: propertyId,
+      has_payload_name: !!payloadName,
+      existing_collar_name: existingCollarName || null,
+      safe_collar_name: safeCollarName,
+      error: update.error.message,
+    });
+    throw new Error(update.error.message);
+  }
 }
 
 async function updateCollarHealth(

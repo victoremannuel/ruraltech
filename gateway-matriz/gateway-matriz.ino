@@ -86,6 +86,46 @@ char lastCloudWriteError[96]{};
 constexpr uint8_t kAcceptedUplinkQueueSize = 8;
 constexpr uint32_t kAcceptedUplinkQuietMs = 1500;
 constexpr uint32_t kBackhaulStartupDelayMs = 8000;
+constexpr uint32_t kBackhaulDiagHeartbeatWhileUnhealthyMs = 5000;
+constexpr uint32_t kBackhaulDiagHeartbeatConnectedMs = 30000;
+
+enum class BackhaulDiagState : uint8_t {
+  kDisabled,
+  kIdle,
+  kConnecting,
+  kAssociatedNoIp,
+  kConnected,
+  kNoSsid,
+  kAuthFailed,
+  kDhcpTimeout,
+  kConnectionLost,
+  kRetryWait,
+  kUnknownFailure
+};
+
+struct BackhaulDiagSnapshot {
+  BackhaulDiagState state = BackhaulDiagState::kIdle;
+  uint32_t attemptCount = 0;
+  uint32_t connectStartedAtMs = 0;
+  uint32_t lastStateChangeAtMs = 0;
+  uint32_t lastHeartbeatAtMs = 0;
+  uint32_t lastSuccessAtMs = 0;
+  uint32_t retryDelayMs = 0;
+  wl_status_t wlStatus = WL_DISCONNECTED;
+  wifi_err_reason_t lastDisconnectReason = WIFI_REASON_UNSPECIFIED;
+  bool associated = false;
+  bool targetVisible = false;
+  int16_t targetRssi = 0;
+  int32_t targetChannel = 0;
+  wifi_auth_mode_t targetAuth = WIFI_AUTH_OPEN;
+  char targetBssid[24]{};
+  char ip[20]{};
+  char gateway[20]{};
+  char dns[20]{};
+  char lastSummary[96]{};
+};
+
+BackhaulDiagSnapshot backhaulDiag;
 
 struct AcceptedUplinkEntry {
   bool used = false;
@@ -208,6 +248,23 @@ struct CloudPublishContext {
   String propertyScopeId;
 };
 
+struct CloudWriteTrace {
+  bool ok = false;
+  int httpStatus = 0;
+  uint32_t elapsedMs = 0;
+  char stage[24]{};
+  char detail[96]{};
+};
+
+struct TelemetryPublishTrace {
+  bool attempted = false;
+  bool latestOk = false;
+  bool historyOk = false;
+  uint32_t totalElapsedMs = 0;
+  CloudWriteTrace latest{};
+  CloudWriteTrace history{};
+};
+
 static void setWatchdogEnabled(bool enabled);
 static void feedWatchdogIfEnabled();
 static void printBootChecklist(
@@ -264,10 +321,37 @@ static void handleUplinkDuringAckWait(const LoRaFrame& rx);
 static void pollActiveSimpleCommandFeedbackSlice();
 static bool processPrioritySimpleCommandFeedbackWindow();
 static String payloadBytesToString(const uint8_t* data, size_t len);
+static void fillCloudWriteTrace(
+    CloudWriteTrace* trace,
+    bool ok,
+    int httpStatus,
+    uint32_t elapsedMs,
+    const char* stage,
+    const char* detail);
+static int parseHttpStatusCode(const String& statusLine);
+static String summarizeHttpFailureDetail(
+    const String& statusLine,
+    const String& responseBody);
 static void primeSpiChipSelectLines();
 static bool backhaulWindowOpen();
 static void requestImmediateQueueDispatch(const char* source);
 static void closeQueueCommandStream(const char* reason);
+static void drawStatus(const char* line1, const char* line2);
+static const char* backhaulStateLabel(BackhaulDiagState state);
+static const char* backhaulOledLabel(BackhaulDiagState state);
+static void refreshBackhaulNetworkSnapshot();
+static void setBackhaulDiagState(
+    BackhaulDiagState state,
+    const char* summary,
+    bool forceLog = false);
+static void updateBackhaulDiagState(
+    uint32_t now,
+    bool timeoutExpired = false,
+    bool forceLog = false);
+static void emitBackhaulHeartbeatIfNeeded(uint32_t now);
+static void logBackhaulConnectedSnapshot();
+void fillBackhaulDiagJson(JsonObject obj);
+void runBackhaulManualDiagnostic();
 
 static const char* otaErrorText(ota_error_t error) {
   switch (error) {
@@ -317,6 +401,293 @@ static const char* wifiAuthModeLabel(wifi_auth_mode_t authMode) {
   }
 }
 
+static const char* backhaulStateLabel(BackhaulDiagState state) {
+  switch (state) {
+    case BackhaulDiagState::kDisabled: return "disabled";
+    case BackhaulDiagState::kIdle: return "idle";
+    case BackhaulDiagState::kConnecting: return "connecting";
+    case BackhaulDiagState::kAssociatedNoIp: return "associated_no_ip";
+    case BackhaulDiagState::kConnected: return "connected";
+    case BackhaulDiagState::kNoSsid: return "no_ssid";
+    case BackhaulDiagState::kAuthFailed: return "auth_failed";
+    case BackhaulDiagState::kDhcpTimeout: return "dhcp_timeout";
+    case BackhaulDiagState::kConnectionLost: return "connection_lost";
+    case BackhaulDiagState::kRetryWait: return "retry_wait";
+    default: return "unknown_failure";
+  }
+}
+
+static const char* backhaulOledLabel(BackhaulDiagState state) {
+  switch (state) {
+    case BackhaulDiagState::kConnected: return "OK";
+    case BackhaulDiagState::kConnecting: return "CONN";
+    case BackhaulDiagState::kAssociatedNoIp: return "DHCP";
+    case BackhaulDiagState::kNoSsid: return "NO SSID";
+    case BackhaulDiagState::kAuthFailed: return "AUTH";
+    case BackhaulDiagState::kDhcpTimeout: return "DHCP";
+    case BackhaulDiagState::kConnectionLost: return "LOST";
+    case BackhaulDiagState::kRetryWait: return "RETRY";
+    case BackhaulDiagState::kDisabled: return "OFF";
+    default: return "IDLE";
+  }
+}
+
+static bool ipAddressLooksValid(const IPAddress& ip) {
+  return !(ip[0] == 0 && ip[1] == 0 && ip[2] == 0 && ip[3] == 0);
+}
+
+static bool containsReasonToken(const char* text, const char* token) {
+  return text && token && strstr(text, token) != nullptr;
+}
+
+static bool isAuthFailureReason(const char* reasonLabel) {
+  return containsReasonToken(reasonLabel, "AUTH") ||
+         containsReasonToken(reasonLabel, "HANDSHAKE") ||
+         containsReasonToken(reasonLabel, "MIC_FAILURE") ||
+         containsReasonToken(reasonLabel, "AKMP");
+}
+
+static bool isNoSsidReason(const char* reasonLabel) {
+  return containsReasonToken(reasonLabel, "NO_AP_FOUND") ||
+         containsReasonToken(reasonLabel, "BEACON_TIMEOUT");
+}
+
+static const char* summarizeBackhaulFailure(bool timeoutExpired) {
+  const char* reasonLabel = wifiDisconnectReasonLabel(backhaulDiag.lastDisconnectReason);
+  if (WiFi.status() == WL_CONNECTED && ipAddressLooksValid(WiFi.localIP())) {
+    return "connected_ok";
+  }
+  if (!backhaulDiag.targetVisible && (timeoutExpired || isNoSsidReason(reasonLabel))) {
+    return "ssid_nao_visivel";
+  }
+  if (isAuthFailureReason(reasonLabel)) {
+    return "senha_incorreta_ou_autenticacao_falhou";
+  }
+  if ((timeoutExpired || backhaulDiag.associated) && !ipAddressLooksValid(WiFi.localIP())) {
+    return "dhcp_sem_resposta";
+  }
+  if (backhaulDiag.targetVisible && backhaulDiag.targetRssi != 0 &&
+      backhaulDiag.targetRssi <= -82) {
+    return "sinal_fraco";
+  }
+  if (backhaulDiag.targetVisible && !backhaulDiag.associated) {
+    return "target_visible_auth_ok_no_assoc";
+  }
+  if (backhaulDiag.lastSuccessAtMs != 0) {
+    return "conexao_perdida";
+  }
+  return "falha_indeterminada";
+}
+
+static void refreshBackhaulNetworkSnapshot() {
+  backhaulDiag.wlStatus = WiFi.status();
+  backhaulDiag.lastDisconnectReason = cloudBackhaulLastDisconnectReason;
+  backhaulDiag.connectStartedAtMs = cloudBackhaulConnectStartedAtMs;
+  copyStringToBuffer(backhaulDiag.ip, sizeof(backhaulDiag.ip), WiFi.localIP().toString().c_str());
+  copyStringToBuffer(
+      backhaulDiag.gateway, sizeof(backhaulDiag.gateway), WiFi.gatewayIP().toString().c_str());
+  copyStringToBuffer(backhaulDiag.dns, sizeof(backhaulDiag.dns), WiFi.dnsIP().toString().c_str());
+}
+
+static void setBackhaulDiagState(
+    BackhaulDiagState state,
+    const char* summary,
+    bool forceLog) {
+  refreshBackhaulNetworkSnapshot();
+  const BackhaulDiagState previousState = backhaulDiag.state;
+  const bool stateChanged = backhaulDiag.state != state;
+  const bool summaryChanged =
+      summary && summary[0] != '\0' &&
+      strncmp(backhaulDiag.lastSummary, summary, sizeof(backhaulDiag.lastSummary) - 1) != 0;
+  if (summary && summary[0] != '\0') {
+    copyStringToBuffer(backhaulDiag.lastSummary, sizeof(backhaulDiag.lastSummary), summary);
+  }
+  if (stateChanged) {
+    backhaulDiag.state = state;
+    backhaulDiag.lastStateChangeAtMs = millis();
+  }
+  if (!(forceLog || stateChanged || summaryChanged)) return;
+
+  const char* prevState = backhaulStateLabel(previousState);
+  const char* newState = backhaulStateLabel(state);
+  const bool warn =
+      state == BackhaulDiagState::kNoSsid ||
+      state == BackhaulDiagState::kAuthFailed ||
+      state == BackhaulDiagState::kDhcpTimeout ||
+      state == BackhaulDiagState::kConnectionLost ||
+      state == BackhaulDiagState::kUnknownFailure;
+  if (warn) {
+    LOGW(
+        "Backhaul transicao: %s -> %s wl=%s(%d) reason=%s(%u) resumo=%s",
+        prevState,
+        newState,
+        wifiStatusLabel(backhaulDiag.wlStatus),
+        (int)backhaulDiag.wlStatus,
+        wifiDisconnectReasonLabel(backhaulDiag.lastDisconnectReason),
+        (unsigned)backhaulDiag.lastDisconnectReason,
+        backhaulDiag.lastSummary);
+  } else {
+    LOGI(
+        "Backhaul transicao: %s -> %s wl=%s(%d) resumo=%s",
+        prevState,
+        newState,
+        wifiStatusLabel(backhaulDiag.wlStatus),
+        (int)backhaulDiag.wlStatus,
+        backhaulDiag.lastSummary);
+  }
+#if RT_MATRIX_OLED_ENABLED
+  if (state != BackhaulDiagState::kConnected) {
+    drawStatus("Backhaul", backhaulOledLabel(state));
+  }
+#endif
+}
+
+static void updateBackhaulDiagState(
+    uint32_t now,
+    bool timeoutExpired,
+    bool forceLog) {
+  refreshBackhaulNetworkSnapshot();
+  backhaulDiag.retryDelayMs = 0;
+  if (!cfg::FEATURE_BACKHAUL || !cloudTelemetryConfigured()) {
+    setBackhaulDiagState(BackhaulDiagState::kDisabled, "disabled", forceLog);
+    return;
+  }
+
+  const bool connected =
+      backhaulDiag.wlStatus == WL_CONNECTED && ipAddressLooksValid(WiFi.localIP());
+  if (connected) {
+    backhaulDiag.lastSuccessAtMs = now;
+    setBackhaulDiagState(BackhaulDiagState::kConnected, "connected_ok", forceLog);
+    return;
+  }
+
+  if (cloudBackhaulConnecting) {
+    if (backhaulDiag.associated) {
+      setBackhaulDiagState(
+          timeoutExpired ? BackhaulDiagState::kDhcpTimeout : BackhaulDiagState::kAssociatedNoIp,
+          timeoutExpired ? "dhcp_sem_resposta" : "aguardando_dhcp",
+          forceLog);
+      return;
+    }
+    const char* summary = summarizeBackhaulFailure(timeoutExpired);
+    if (timeoutExpired && strcmp(summary, "ssid_nao_visivel") == 0) {
+      setBackhaulDiagState(BackhaulDiagState::kNoSsid, summary, forceLog);
+      return;
+    }
+    if (timeoutExpired && strcmp(summary, "senha_incorreta_ou_autenticacao_falhou") == 0) {
+      setBackhaulDiagState(BackhaulDiagState::kAuthFailed, summary, forceLog);
+      return;
+    }
+    setBackhaulDiagState(BackhaulDiagState::kConnecting, "tentando_conectar", forceLog);
+    return;
+  }
+
+  if (cloudBackhaulAttemptAtMs != 0) {
+    const uint32_t elapsed = (uint32_t)(now - cloudBackhaulAttemptAtMs);
+    if (elapsed < cfg::CLOUD_BACKHAUL_RETRY_MS) {
+      backhaulDiag.retryDelayMs = cfg::CLOUD_BACKHAUL_RETRY_MS - elapsed;
+      setBackhaulDiagState(BackhaulDiagState::kRetryWait, summarizeBackhaulFailure(false), forceLog);
+      return;
+    }
+  }
+
+  const char* summary = summarizeBackhaulFailure(false);
+  if (strcmp(summary, "ssid_nao_visivel") == 0) {
+    setBackhaulDiagState(BackhaulDiagState::kNoSsid, summary, forceLog);
+    return;
+  }
+  if (strcmp(summary, "senha_incorreta_ou_autenticacao_falhou") == 0) {
+    setBackhaulDiagState(BackhaulDiagState::kAuthFailed, summary, forceLog);
+    return;
+  }
+  if (strcmp(summary, "dhcp_sem_resposta") == 0) {
+    setBackhaulDiagState(BackhaulDiagState::kDhcpTimeout, summary, forceLog);
+    return;
+  }
+  if (backhaulDiag.lastSuccessAtMs != 0) {
+    setBackhaulDiagState(BackhaulDiagState::kConnectionLost, summary, forceLog);
+    return;
+  }
+  setBackhaulDiagState(BackhaulDiagState::kIdle, "idle", forceLog);
+}
+
+static void emitBackhaulHeartbeatIfNeeded(uint32_t now) {
+  updateBackhaulDiagState(now);
+  const bool connected = backhaulDiag.state == BackhaulDiagState::kConnected;
+  const uint32_t interval =
+      connected ? kBackhaulDiagHeartbeatConnectedMs : kBackhaulDiagHeartbeatWhileUnhealthyMs;
+  if (backhaulDiag.lastHeartbeatAtMs != 0 &&
+      (uint32_t)(now - backhaulDiag.lastHeartbeatAtMs) < interval) {
+    return;
+  }
+  backhaulDiag.lastHeartbeatAtMs = now;
+  const uint32_t elapsed =
+      backhaulDiag.connectStartedAtMs == 0 ? 0 : (uint32_t)(now - backhaulDiag.connectStartedAtMs);
+  LOGI(
+      "Backhaul status: state=%s wl=%s(%d) elapsed_ms=%lu attempt=%lu reason=%s(%u) target_visible=%d target_rssi=%d ip=%s",
+      backhaulStateLabel(backhaulDiag.state),
+      wifiStatusLabel(backhaulDiag.wlStatus),
+      (int)backhaulDiag.wlStatus,
+      (unsigned long)elapsed,
+      (unsigned long)backhaulDiag.attemptCount,
+      wifiDisconnectReasonLabel(backhaulDiag.lastDisconnectReason),
+      (unsigned)backhaulDiag.lastDisconnectReason,
+      backhaulDiag.targetVisible ? 1 : 0,
+      (int)backhaulDiag.targetRssi,
+      backhaulDiag.ip);
+}
+
+static void logBackhaulConnectedSnapshot() {
+  refreshBackhaulNetworkSnapshot();
+  LOGI(
+      "Backhaul snapshot: state=%s ssid=%s rssi=%d channel=%ld ip=%s gateway=%s dns=%s",
+      backhaulStateLabel(backhaulDiag.state),
+      cfg::BACKHAUL_WIFI_SSID,
+      (int)WiFi.RSSI(),
+      (long)WiFi.channel(),
+      backhaulDiag.ip,
+      backhaulDiag.gateway,
+      backhaulDiag.dns);
+}
+
+void fillBackhaulDiagJson(JsonObject obj) {
+  const uint32_t now = millis();
+  updateBackhaulDiagState(now);
+  obj["enabled"] = cfg::FEATURE_BACKHAUL && cloudTelemetryConfigured();
+  obj["state"] = backhaulStateLabel(backhaulDiag.state);
+  obj["wl_status"] = wifiStatusLabel(backhaulDiag.wlStatus);
+  obj["ssid"] = cfg::BACKHAUL_WIFI_SSID;
+  obj["attempt_count"] = backhaulDiag.attemptCount;
+  obj["connecting"] = cloudBackhaulConnecting;
+  obj["elapsed_ms"] =
+      backhaulDiag.connectStartedAtMs == 0 ? 0 : (uint32_t)(now - backhaulDiag.connectStartedAtMs);
+  obj["retry_delay_ms"] = backhaulDiag.retryDelayMs;
+  obj["last_disconnect_reason_code"] = (unsigned)backhaulDiag.lastDisconnectReason;
+  obj["last_disconnect_reason_label"] = wifiDisconnectReasonLabel(backhaulDiag.lastDisconnectReason);
+  obj["ip"] = backhaulDiag.ip;
+  obj["gateway"] = backhaulDiag.gateway;
+  obj["dns"] = backhaulDiag.dns;
+  obj["rssi"] = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : backhaulDiag.targetRssi;
+  obj["channel"] = WiFi.status() == WL_CONNECTED ? WiFi.channel() : backhaulDiag.targetChannel;
+  obj["last_diag_summary"] = backhaulDiag.lastSummary;
+  obj["target_visible"] = backhaulDiag.targetVisible;
+  obj["target_rssi"] = backhaulDiag.targetRssi;
+  obj["target_channel"] = backhaulDiag.targetChannel;
+  obj["target_bssid"] = backhaulDiag.targetBssid;
+  obj["target_auth"] = wifiAuthModeLabel(backhaulDiag.targetAuth);
+  obj["associated"] = backhaulDiag.associated;
+  obj["last_success_at_ms"] = backhaulDiag.lastSuccessAtMs;
+}
+
+void runBackhaulManualDiagnostic() {
+  const uint32_t now = millis();
+  cloudBackhaulLastDiagScanAtMs = 0;
+  backhaulDiag.lastHeartbeatAtMs = 0;
+  logBackhaulScanDiagnostics(now);
+  updateBackhaulDiagState(now, cloudBackhaulConnecting, true);
+  emitBackhaulHeartbeatIfNeeded(now);
+}
+
 static void logBackhaulScanDiagnostics(uint32_t now) {
   if (cloudBackhaulLastDiagScanAtMs != 0 &&
       (uint32_t)(now - cloudBackhaulLastDiagScanAtMs) <
@@ -334,24 +705,62 @@ static void logBackhaulScanDiagnostics(uint32_t now) {
   }
 
   uint8_t matchCount = 0;
+  int16_t bestRssi = -127;
+  int16_t bestIndex = -1;
   for (int16_t i = 0; i < networkCount; ++i) {
     const String ssid = WiFi.SSID((uint8_t)i);
     if (ssid != cfg::BACKHAUL_WIFI_SSID) continue;
     matchCount++;
+    const int16_t rssi = WiFi.RSSI((uint8_t)i);
+    if (bestIndex < 0 || rssi > bestRssi) {
+      bestIndex = i;
+      bestRssi = rssi;
+    }
     LOGI(
         "Backhaul scan alvo[%u/%d]: bssid=%s canal=%d rssi=%d auth=%s(%d)",
         (unsigned)matchCount,
         (int)networkCount,
         WiFi.BSSIDstr((uint8_t)i).c_str(),
         (int)WiFi.channel((uint8_t)i),
-        (int)WiFi.RSSI((uint8_t)i),
+        (int)rssi,
         wifiAuthModeLabel(WiFi.encryptionType((uint8_t)i)),
         (int)WiFi.encryptionType((uint8_t)i));
   }
 
   if (matchCount == 0) {
+    backhaulDiag.targetVisible = false;
+    backhaulDiag.targetRssi = 0;
+    backhaulDiag.targetChannel = 0;
+    backhaulDiag.targetAuth = WIFI_AUTH_OPEN;
+    backhaulDiag.targetBssid[0] = '\0';
     LOGW("Backhaul scan: SSID alvo %s nao apareceu entre %d redes visiveis",
          cfg::BACKHAUL_WIFI_SSID, (int)networkCount);
+  } else if (bestIndex >= 0) {
+    backhaulDiag.targetVisible = true;
+    backhaulDiag.targetRssi = WiFi.RSSI((uint8_t)bestIndex);
+    backhaulDiag.targetChannel = WiFi.channel((uint8_t)bestIndex);
+    backhaulDiag.targetAuth = WiFi.encryptionType((uint8_t)bestIndex);
+    copyStringToBuffer(
+        backhaulDiag.targetBssid,
+        sizeof(backhaulDiag.targetBssid),
+        WiFi.BSSIDstr((uint8_t)bestIndex).c_str());
+    LOGW(
+        "Backhaul diagnostico: ssid_visivel=1 associou=%d ip=%s causa_provavel=%s",
+        backhaulDiag.associated ? 1 : 0,
+        backhaulDiag.ip,
+        summarizeBackhaulFailure(true));
+  }
+  if (matchCount == 0) {
+    copyStringToBuffer(
+        backhaulDiag.lastSummary,
+        sizeof(backhaulDiag.lastSummary),
+        "ssid_nao_visivel");
+    LOGW("Backhaul diagnostico: causa_provavel=ssid_nao_visivel");
+  } else {
+    copyStringToBuffer(
+        backhaulDiag.lastSummary,
+        sizeof(backhaulDiag.lastSummary),
+        summarizeBackhaulFailure(true));
   }
   WiFi.scanDelete();
 }
@@ -718,24 +1127,77 @@ static String urlEncodeComponent(const String& input) {
   return out;
 }
 
+static void fillCloudWriteTrace(
+    CloudWriteTrace* trace,
+    bool ok,
+    int httpStatus,
+    uint32_t elapsedMs,
+    const char* stage,
+    const char* detail) {
+  if (!trace) return;
+  trace->ok = ok;
+  trace->httpStatus = httpStatus;
+  trace->elapsedMs = elapsedMs;
+  copyStringToBuffer(trace->stage, sizeof(trace->stage), stage && stage[0] ? stage : "unknown");
+  copyStringToBuffer(trace->detail, sizeof(trace->detail), detail && detail[0] ? detail : "-");
+}
+
+static int parseHttpStatusCode(const String& statusLine) {
+  const int firstSpace = statusLine.indexOf(' ');
+  if (firstSpace < 0) return 0;
+  const int secondSpace = statusLine.indexOf(' ', firstSpace + 1);
+  const String codeText =
+      secondSpace > firstSpace ? statusLine.substring(firstSpace + 1, secondSpace)
+                               : statusLine.substring(firstSpace + 1);
+  return codeText.toInt();
+}
+
+static String summarizeHttpFailureDetail(
+    const String& statusLine,
+    const String& responseBody) {
+  String detail = responseBody;
+  detail.trim();
+  if (detail.isEmpty()) {
+    detail = statusLine;
+    detail.trim();
+  }
+  detail.replace('\r', ' ');
+  detail.replace('\n', ' ');
+  if (detail.length() > 88) {
+    detail.remove(88);
+  }
+  return detail;
+}
+
 static bool rtdbRequest(
     const char* method,
     const String& path,
     const String& body,
-    String* responseBody = nullptr) {
+    String* responseBody = nullptr,
+    CloudWriteTrace* trace = nullptr) {
   if (WiFi.status() != WL_CONNECTED) {
+    fillCloudWriteTrace(trace, false, 0, 0, "wifi", "disconnected");
     setLastCloudWriteError("wifi", path);
     return false;
   }
   if (path.isEmpty()) {
+    fillCloudWriteTrace(trace, false, 0, 0, "path", "empty");
     setLastCloudWriteError("path", "-");
     return false;
   }
 
+  const uint32_t startedAtMs = millis();
   WiFiClientSecure client;
   client.setInsecure();
   client.setTimeout(cfg::CLOUD_HTTP_TIMEOUT_MS);
   if (!client.connect(cfg::SUPABASE_EDGE_HOST, 443)) {
+    fillCloudWriteTrace(
+        trace,
+        false,
+        0,
+        (uint32_t)(millis() - startedAtMs),
+        "connect",
+        "tls_connect_failed");
     setLastCloudWriteError("connect", path);
     return false;
   }
@@ -757,17 +1219,20 @@ static bool rtdbRequest(
   if (bodyLen > 0) client.print(body);
 
   const String statusLine = client.readStringUntil('\n');
-  bool ok = false;
-  if (statusLine.startsWith("HTTP/1.1 2") || statusLine.startsWith("HTTP/1.0 2")) {
-    ok = true;
-  }
+  const int httpStatus = parseHttpStatusCode(statusLine);
+  const bool ok =
+      statusLine.startsWith("HTTP/1.1 2") || statusLine.startsWith("HTTP/1.0 2");
 
   while (client.connected()) {
     const String line = client.readStringUntil('\n');
     if (line == "\r" || line.length() == 0) break;
   }
+  String bodyRead;
   if (responseBody) {
-    *responseBody = client.readString();
+    bodyRead = client.readString();
+    *responseBody = bodyRead;
+  } else if (!ok) {
+    bodyRead = client.readString();
   }
 
   const uint32_t drainStart = millis();
@@ -779,25 +1244,33 @@ static bool rtdbRequest(
     delay(1);
   }
   client.stop();
+  const uint32_t elapsedMs = (uint32_t)(millis() - startedAtMs);
   if (ok) {
+    fillCloudWriteTrace(trace, true, httpStatus, elapsedMs, "ok", "ok");
     clearLastCloudWriteError();
   } else {
+    const String detail = summarizeHttpFailureDetail(statusLine, bodyRead);
+    fillCloudWriteTrace(trace, false, httpStatus, elapsedMs, "http", detail.c_str());
     setLastCloudWriteError("http", path + "|" + statusLine);
   }
   return ok;
 }
 
-static bool rtdbWrite(const char* method, const String& path, const String& body) {
-  return rtdbRequest(method, path, body, nullptr);
+static bool rtdbWrite(
+    const char* method,
+    const String& path,
+    const String& body,
+    CloudWriteTrace* trace = nullptr) {
+  return rtdbRequest(method, path, body, nullptr, trace);
 }
 
-static bool rtdbRead(const String& path, String& body) {
+static bool rtdbRead(const String& path, String& body, CloudWriteTrace* trace = nullptr) {
   body = "";
-  return rtdbRequest("GET", path, "", &body);
+  return rtdbRequest("GET", path, "", &body, trace);
 }
 
-static bool rtdbDelete(const String& path) {
-  return rtdbRequest("DELETE", path, "", nullptr);
+static bool rtdbDelete(const String& path, CloudWriteTrace* trace = nullptr) {
+  return rtdbRequest("DELETE", path, "", nullptr, trace);
 }
 
 static void setLastCloudWriteError(const char* stage, const String& detail) {
@@ -1030,7 +1503,9 @@ static bool publishCloudLatestAndHistory(
     const String& historyDayKey,
     const String& body,
     const char* logLabel,
-    uint32_t entrySeq) {
+    uint32_t entrySeq,
+    TelemetryPublishTrace* trace = nullptr) {
+  const uint32_t startedAtMs = millis();
   const String latestPath =
       String(latestRoot) + "/" + ctx.propertyId + "/" + ctx.deviceId;
   char historyEntryId[40];
@@ -1040,8 +1515,58 @@ static bool publishCloudLatestAndHistory(
       String(historyRoot) + "/" + ctx.propertyId + "/" + ctx.deviceId + "/" +
       historyDayKey + "/" + String(historyEntryId);
 
-  const bool latestOk = rtdbWrite("PUT", latestPath, body);
-  const bool historyOk = rtdbWrite("PUT", historyPath, body);
+  if (trace) {
+    trace->attempted = true;
+  }
+
+  const bool latestOk = rtdbWrite("PUT", latestPath, body, trace ? &trace->latest : nullptr);
+  if (trace) {
+    trace->latestOk = latestOk;
+    if (latestOk) {
+      LOGI(
+          "CLOUD_TX_STEP kind=%s step=latest ok=1 code=%d ms=%lu device=%s seq=%lu",
+          logLabel,
+          trace->latest.httpStatus,
+          (unsigned long)trace->latest.elapsedMs,
+          ctx.deviceId.c_str(),
+          (unsigned long)entrySeq);
+    } else {
+      LOGW(
+          "CLOUD_TX_STEP kind=%s step=latest ok=0 stage=%s code=%d ms=%lu detail=%s device=%s seq=%lu",
+          logLabel,
+          trace->latest.stage,
+          trace->latest.httpStatus,
+          (unsigned long)trace->latest.elapsedMs,
+          trace->latest.detail,
+          ctx.deviceId.c_str(),
+          (unsigned long)entrySeq);
+    }
+  }
+
+  const bool historyOk = rtdbWrite("PUT", historyPath, body, trace ? &trace->history : nullptr);
+  if (trace) {
+    trace->historyOk = historyOk;
+    trace->totalElapsedMs = (uint32_t)(millis() - startedAtMs);
+    if (historyOk) {
+      LOGI(
+          "CLOUD_TX_STEP kind=%s step=history ok=1 code=%d ms=%lu device=%s seq=%lu",
+          logLabel,
+          trace->history.httpStatus,
+          (unsigned long)trace->history.elapsedMs,
+          ctx.deviceId.c_str(),
+          (unsigned long)entrySeq);
+    } else {
+      LOGW(
+          "CLOUD_TX_STEP kind=%s step=history ok=0 stage=%s code=%d ms=%lu detail=%s device=%s seq=%lu",
+          logLabel,
+          trace->history.stage,
+          trace->history.httpStatus,
+          (unsigned long)trace->history.elapsedMs,
+          trace->history.detail,
+          ctx.deviceId.c_str(),
+          (unsigned long)entrySeq);
+    }
+  }
   if (latestOk && historyOk) {
     cloudLastPublishAtMs = millis();
   } else {
@@ -1058,6 +1583,7 @@ static bool ensureCloudBackhaulConnected() {
     cloudBackhaulConnecting = false;
     cloudBackhaulConnectStartedAtMs = 0;
     cloudBackhaulLastDisconnectReason = WIFI_REASON_UNSPECIFIED;
+    updateBackhaulDiagState(millis());
     return true;
   }
 
@@ -1076,15 +1602,19 @@ static bool ensureCloudBackhaulConnected() {
         wifiDisconnectReasonLabel(cloudBackhaulLastDisconnectReason),
         (unsigned)cloudBackhaulLastDisconnectReason);
     logBackhaulScanDiagnostics(now);
+    updateBackhaulDiagState(now, true, true);
     cloudBackhaulConnecting = false;
     cloudBackhaulConnectStartedAtMs = 0;
     WiFi.disconnect(false, false);
+    LOGI("Backhaul retry agendado em %lu ms", (unsigned long)cfg::CLOUD_BACKHAUL_RETRY_MS);
   }
   if (cloudBackhaulAttemptAtMs != 0 &&
       (uint32_t)(now - cloudBackhaulAttemptAtMs) < cfg::CLOUD_BACKHAUL_RETRY_MS) {
+    updateBackhaulDiagState(now);
     return false;
   }
   cloudBackhaulAttemptAtMs = now;
+  backhaulDiag.attemptCount++;
   // Em modo OTA/manual, preserva AP local e sobe STA para backhaul cloud.
   const wifi_mode_t desiredMode =
       (cfg::FEATURE_WIFI_AP && wifiOtaEnabled) ? WIFI_AP_STA : WIFI_STA;
@@ -1095,17 +1625,29 @@ static bool ensureCloudBackhaulConnected() {
   cloudBackhaulConnecting = true;
   cloudBackhaulConnectStartedAtMs = now;
   cloudBackhaulLastDisconnectReason = WIFI_REASON_UNSPECIFIED;
+  backhaulDiag.associated = false;
   WiFi.begin(cfg::BACKHAUL_WIFI_SSID, cfg::BACKHAUL_WIFI_PASS);
   LOGI("Backhaul Wi-Fi: tentando conectar em %s", cfg::BACKHAUL_WIFI_SSID);
+  updateBackhaulDiagState(now, false, true);
   return false;
 }
 
 static void publishTelemetryToCloud(const LoRaFrame& rx) {
   if (rx.msgType != MsgType::TELEMETRY) return;
-  if (!cloudPublishReady()) return;
+  if (!cloudPublishReady()) {
+    LOGW(
+        "CLOUD_TX_SKIP reason=cloud_not_ready device=%lu seq=%lu",
+        (unsigned long)rx.deviceId,
+        (unsigned long)rx.seq);
+    return;
+  }
 
   StaticJsonDocument<256> telemetry;
   if (deserializeJson(telemetry, rx.payload, rx.payloadLen) != DeserializationError::Ok) {
+    LOGW(
+        "CLOUD_TX_SKIP reason=invalid_json device=%lu seq=%lu",
+        (unsigned long)rx.deviceId,
+        (unsigned long)rx.seq);
     return;
   }
 
@@ -1117,11 +1659,31 @@ static void publishTelemetryToCloud(const LoRaFrame& rx) {
   const float lon = lonField | NAN;
   if (!isfinite(lat) || !isfinite(lon) ||
       lat < -90.0f || lat > 90.0f || lon < -180.0f || lon > 180.0f) {
+    LOGW(
+        "CLOUD_TX_SKIP reason=invalid_coordinates device=%lu seq=%lu",
+        (unsigned long)rx.deviceId,
+        (unsigned long)rx.seq);
     return;
   }
 
   CloudPublishContext ctx;
-  if (!buildCloudPublishContext(rx, ctx)) return;
+  if (!buildCloudPublishContext(rx, ctx)) {
+    if (scopeMatchesBinding(rx.scopeId)) {
+      LOGW(
+          "CLOUD_TX_SKIP reason=context_not_ready device=%lu seq=%lu",
+          (unsigned long)rx.deviceId,
+          (unsigned long)rx.seq);
+    }
+    return;
+  }
+
+  LOGI(
+      "CLOUD_TX_BEGIN kind=telemetry device=%s seq=%lu scope=%s lat=%.6f lon=%.6f",
+      ctx.deviceId.c_str(),
+      (unsigned long)rx.seq,
+      ctx.propertyScopeId.c_str(),
+      lat,
+      lon);
 
   StaticJsonDocument<512> payload;
   payload["deviceId"] = ctx.deviceId;
@@ -1141,9 +1703,31 @@ static void publishTelemetryToCloud(const LoRaFrame& rx) {
 
   String body;
   serializeJson(payload, body);
-  publishCloudLatestAndHistory(
+  TelemetryPublishTrace trace;
+  const bool ok = publishCloudLatestAndHistory(
       "propertyTelemetryLatest", "propertyTelemetryHistory", ctx, utcDayKey(ctx.nowSec), body,
-      "telemetria", rx.seq);
+      "telemetry", rx.seq, &trace);
+  if (ok) {
+    LOGI(
+        "CLOUD_TX_DONE kind=telemetry device=%s seq=%lu latest=1 history=1 total_ms=%lu",
+        ctx.deviceId.c_str(),
+        (unsigned long)rx.seq,
+        (unsigned long)trace.totalElapsedMs);
+  } else if (trace.latestOk || trace.historyOk) {
+    LOGW(
+        "CLOUD_TX_PARTIAL kind=telemetry device=%s seq=%lu latest=%d history=%d total_ms=%lu",
+        ctx.deviceId.c_str(),
+        (unsigned long)rx.seq,
+        trace.latestOk ? 1 : 0,
+        trace.historyOk ? 1 : 0,
+        (unsigned long)trace.totalElapsedMs);
+  } else {
+    LOGE(
+        "CLOUD_TX_FAIL kind=telemetry device=%s seq=%lu latest=0 history=0 total_ms=%lu",
+        ctx.deviceId.c_str(),
+        (unsigned long)rx.seq,
+        (unsigned long)trace.totalElapsedMs);
+  }
 }
 
 static bool isDailyHealthEvent(const JsonVariantConst payload) {
@@ -1643,6 +2227,8 @@ static void stopWifiAndOta() {
     WiFi.softAPdisconnect(true);
   }
   WiFi.mode(WIFI_OFF);
+  backhaulDiag.associated = false;
+  updateBackhaulDiagState(millis(), false, true);
   LOGI("Gateway matriz em modo LoRa-only");
 }
 
@@ -1676,14 +2262,19 @@ static void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
     cloudBackhaulConnectStartedAtMs = 0;
     cloudBackhaulAttemptAtMs = 0;
     cloudBackhaulLastDisconnectReason = WIFI_REASON_UNSPECIFIED;
+    backhaulDiag.associated = true;
     LOGI("Backhaul conectado: %s", WiFi.localIP().toString().c_str());
+    updateBackhaulDiagState(millis(), false, true);
+    logBackhaulConnectedSnapshot();
   }
 #endif
 #if defined(ARDUINO_EVENT_WIFI_STA_CONNECTED)
   if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
     cloudBackhaulConnecting = true;
     cloudBackhaulConnectStartedAtMs = millis();
+    backhaulDiag.associated = true;
     LOGI("Backhaul Wi-Fi associado ao AP");
+    updateBackhaulDiagState(millis(), false, true);
   }
 #endif
 #if defined(ARDUINO_EVENT_WIFI_STA_DISCONNECTED)
@@ -1694,6 +2285,7 @@ static void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
     cloudBackhaulLastDisconnectReason = reason;
     cloudBackhaulConnecting = false;
     cloudBackhaulConnectStartedAtMs = 0;
+    backhaulDiag.associated = false;
     if (cloudTelemetryConfigured() || !wifiOtaEnabled) {
       LOGW(
           "Backhaul desconectado: motivo=%s(%u) wl=%s(%d)",
@@ -1702,6 +2294,7 @@ static void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
           wifiStatusLabel(WiFi.status()),
           (int)WiFi.status());
     }
+    updateBackhaulDiagState(millis(), false, true);
   }
 #endif
 }
@@ -3316,6 +3909,10 @@ static void drawStatus(const char* line1, const char* line2) {
   display.println("RuralTech Matriz");
   display.println(line1);
   display.println(line2);
+  if (cfg::FEATURE_BACKHAUL) {
+    display.print("BH: ");
+    display.println(backhaulOledLabel(backhaulDiag.state));
+  }
   display.display();
 #else
   (void)line1;
@@ -3484,6 +4081,9 @@ void loop() {
   flushDeferredAcceptedUplinksIfReady();
   if (cfg::FEATURE_BACKHAUL && backhaulWindowOpen()) {
     ensureCloudBackhaulConnected();
+  }
+  if (cfg::FEATURE_BACKHAUL) {
+    emitBackhaulHeartbeatIfNeeded(millis());
   }
   if (cfg::FEATURE_CLOUD && backhaulWindowOpen()) {
     publishMatrixRuntimeMirrors(false);

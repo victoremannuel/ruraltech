@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.send-push]
 verify_jwt = false
+
+[functions.poll-notifications]
+verify_jwt = true

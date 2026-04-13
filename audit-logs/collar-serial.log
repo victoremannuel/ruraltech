@@ -1,0 +1,186 @@
+---- A porta serial /dev/tty.usbserial-1420 abriu ----
+ets Jul 29 2019 12:21:46
+
+rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+configsip: 0, SPIWP:0xee
+clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+mode:DIO, clock div:2
+load:0x3fff0030,len:4640
+load:0x40078000,len:15660
+load:0x40080400,len:3164
+entry 0x4008059c
+[I] Boot reset_reason=1
+[I] BOOT stage=serial free_heap=227216 min_heap=224268 heap_ok=1
+[I] BOOT stage=wdt free_heap=227248 min_heap=224268 heap_ok=1
+[I] BOOT stage=prefs_counter free_heap=227176 min_heap=224268 heap_ok=1
+[W] Seq uplink restaurado next=2000001 hi=0 reboot=2 (persistencia write-through desabilitada)
+[I] Binding coleira: ready=1 property=T0xeG8WQHwJRI6H3t7vr scope=9FFFC95AA1624895 matrix=192.168.4.1 ver=1
+[I] BOOT stage=load_config free_heap=227176 min_heap=224268 heap_ok=1
+[I] BOOT stage=wifi_event free_heap=227128 min_heap=224268 heap_ok=1
+[I] BOOT stage=status_routes free_heap=226864 min_heap=224268 heap_ok=1
+[I] BOOT stage=wifi_ota free_heap=226864 min_heap=224268 heap_ok=1
+[I] BOOT stage=status_server free_heap=226864 min_heap=224268 heap_ok=1
+[I] BOOT stage=sensors_begin free_heap=226864 min_heap=224268 heap_ok=1
+
+========================================
+Calculating gyro offsets
+DO NOT MOVE MPU6050...
+Done!
+X : 0.35
+Y : -0.81
+Z : 2.17
+Program will start after 3 seconds
+========================================[I] BOOT stage=safety_begin free_heap=222276 min_heap=222224 heap_ok=1
+[I] BOOT stage=storage_begin free_heap=222276 min_heap=222136 heap_ok=1
+[I] BOOT stage=smart_gps_begin free_heap=220024 min_heap=219972 heap_ok=1
+[I] SmartGps: sem last_good_fix persistido
+[I] BOOT stage=lora_begin free_heap=219952 min_heap=219880 heap_ok=1
+[I] Anti-replay downlink restaurado last_seq=0
+[I] BOOT stage=checklist free_heap=219632 min_heap=219580 heap_ok=1
+==== HW CHECKLIST | COLEIRA ====
+[CHECK] NVS_CONFIG               : OK
+[CHECK] SEQ_UPLINK_NVS           : OFF
+[W] CHECKLIST SEQ_UPLINK_NVS OFF: Seq uplink sem persistencia; revisar NVS.
+[CHECK] WIFI_OTA_SERVICE         : OK
+[MODE ] WIFI_OTA_ENABLED         : false
+[CHECK] STATUS_HTTP_80           : OK (/status habilitado)
+[CHECK] BLE_PRESENCE             : OK (desabilitado em config)
+[CHECK] GPS_UART                 : OK
+[CHECK] GPS_BOOT_RX              : OK (baud=9600 bytes=421 nmea=$7 sample=.,21,14,22,09,07,,,,2.70)
+[CHECK] GPS_NMEA                 : OK (lat=-16.675360 lon=-49.485057 sats=0 hdop=99.90)
+[CHECK] I2C_BUS_SCAN             : OK (found=2 [0x5A,0x68])
+[CHECK] MPU6050_I2C              : OK (addr=0x68)
+[CHECK] MPU6050_DRIVER           : OK
+[CHECK] MLX90614_I2C             : OK
+[CHECK] MLX90614_DRIVER          : OK
+[CHECK] EEPROM_QUEUE             : OK
+[CHECK] LORA_RFM95               : OK
+================================
+[I] BOOT stage=ready free_heap=219368 min_heap=219208 heap_ok=1
+[I] Coleira inicializada: id=3222380545 fw=coleira-1.0.0
+[I] LoRa TX ok type=1 seq=2000001 target=3222380545 scope=9FFFC95AA1624895 bytes=159
+[I] LoRa TX ok type=2 seq=2000002 target=3222380545 scope=9FFFC95AA1624895 bytes=180
+[I] Health report diario enviado (day=20260412 fallback=0)
+[I] LoRa TX ok type=2 seq=2000003 target=3222380545 scope=9FFFC95AA1624895 bytes=166
+ets Jul 29 2019 12:21:46
+
+rst:0x5 (DEEPSLEEP_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+configsip: 0, SPIWP:0xee
+clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+mode:DIO, clock div:2
+load:0x3fff0030,len:4640
+load:0x40078000,len:15660
+load:0x40080400,len:3164
+entry 0x4008059c
+[I] Boot reset_reason=8
+[I] BOOT stage=serial free_heap=227068 min_heap=224120 heap_ok=1
+[I] BOOT stage=wdt free_heap=227100 min_heap=224120 heap_ok=1
+[I] BOOT stage=prefs_counter free_heap=227028 min_heap=224120 heap_ok=1
+[W] Seq uplink restaurado next=3000001 hi=0 reboot=3 (persistencia write-through desabilitada)
+[I] Binding coleira: ready=1 property=T0xeG8WQHwJRI6H3t7vr scope=9FFFC95AA1624895 matrix=192.168.4.1 ver=1
+[I] BOOT stage=load_config free_heap=227028 min_heap=224120 heap_ok=1
+[I] BOOT stage=wifi_event free_heap=226980 min_heap=224120 heap_ok=1
+[I] BOOT stage=status_routes free_heap=226716 min_heap=224120 heap_ok=1
+[I] BOOT stage=wifi_ota free_heap=226716 min_heap=224120 heap_ok=1
+[I] BOOT stage=status_server free_heap=226716 min_heap=224120 heap_ok=1
+[I] BOOT stage=sensors_begin free_heap=226716 min_heap=224120 heap_ok=1
+
+========================================
+Calculating gyro offsets
+DO NOT MOVE MPU6050...
+Done!
+X : 0.17
+Y : -0.41
+Z : 1.09
+Program will start after 3 seconds
+========================================[I] BOOT stage=safety_begin free_heap=222128 min_heap=222076 heap_ok=1
+[I] BOOT stage=storage_begin free_heap=222128 min_heap=221988 heap_ok=1
+[I] BOOT stage=smart_gps_begin free_heap=219876 min_heap=219824 heap_ok=1
+[I] SmartGps: last_good_fix restaurado (lat=-16.675395 lon=-49.485045)
+[I] BOOT stage=lora_begin free_heap=219540 min_heap=219400 heap_ok=1
+[I] Anti-replay downlink restaurado last_seq=0
+[I] BOOT stage=checklist free_heap=219220 min_heap=219168 heap_ok=1
+==== HW CHECKLIST | COLEIRA ====
+[CHECK] NVS_CONFIG               : OK
+[CHECK] SEQ_UPLINK_NVS           : OFF
+[W] CHECKLIST SEQ_UPLINK_NVS OFF: Seq uplink sem persistencia; revisar NVS.
+[CHECK] WIFI_OTA_SERVICE         : OK
+[MODE ] WIFI_OTA_ENABLED         : false
+[CHECK] STATUS_HTTP_80           : OK (/status habilitado)
+[CHECK] BLE_PRESENCE             : OK (desabilitado em config)
+[CHECK] GPS_UART                 : OK
+[CHECK] GPS_BOOT_RX              : OK (baud=9600 bytes=160 nmea=$3 sample=b..b..b..b...b..b..b..b.)
+[CHECK] GPS_NMEA                 : OK (lat=-16.675394 lon=-49.485040 sats=0 hdop=99.90)
+[CHECK] I2C_BUS_SCAN             : OK (found=2 [0x5A,0x68])
+[CHECK] MPU6050_I2C              : OK (addr=0x68)
+[CHECK] MPU6050_DRIVER           : OK
+[CHECK] MLX90614_I2C             : OK
+[CHECK] MLX90614_DRIVER          : OK
+[CHECK] EEPROM_QUEUE             : OK
+[CHECK] LORA_RFM95               : OK
+================================
+[I] BOOT stage=ready free_heap=219020 min_heap=218860 heap_ok=1
+[I] Coleira inicializada: id=3222380545 fw=coleira-1.0.0
+[I] LoRa TX ok type=1 seq=3000001 target=3222380545 scope=9FFFC95AA1624895 bytes=159
+[I] LoRa TX ok type=2 seq=3000002 target=3222380545 scope=9FFFC95AA1624895 bytes=180
+[I] Health report diario enviado (day=20260412 fallback=0)
+[I] LoRa TX ok type=2 seq=3000003 target=3222380545 scope=9FFFC95AA1624895 bytes=166
+ets Jul 29 2019 12:21:46
+
+rst:0x8 (TG1WDT_SYS_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+configsip: 0, SPIWP:0xee
+clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+mode:DIO, clock div:2
+load:0x3fff0030,len:4640
+load:0x40078000,len:15660
+load:0x40080400,len:3164
+entry 0x4008059c
+[I] Boot reset_reason=5
+[I] BOOT stage=serial free_heap=226920 min_heap=223972 heap_ok=1
+[I] BOOT stage=wdt free_heap=226952 min_heap=223972 heap_ok=1
+[I] BOOT stage=prefs_counter free_heap=227028 min_heap=223972 heap_ok=1
+[W] Seq uplink restaurado next=4000001 hi=0 reboot=4 (persistencia write-through desabilitada)
+[I] Binding coleira: ready=1 property=T0xeG8WQHwJRI6H3t7vr scope=9FFFC95AA1624895 matrix=192.168.4.1 ver=1
+[I] BOOT stage=load_config free_heap=227028 min_heap=223972 heap_ok=1
+[I] BOOT stage=wifi_event free_heap=226980 min_heap=223972 heap_ok=1
+[I] BOOT stage=status_routes free_heap=226712 min_heap=223972 heap_ok=1
+[I] BOOT stage=wifi_ota free_heap=226712 min_heap=223972 heap_ok=1
+[I] BOOT stage=status_server free_heap=226712 min_heap=223972 heap_ok=1
+[I] BOOT stage=sensors_begin free_heap=226712 min_heap=223972 heap_ok=1
+
+========================================
+Calculating gyro offsets
+DO NOT MOVE MPU6050...
+Done!
+X : 0.17
+Y : -0.41
+Z : 1.09
+Program will start after 3 seconds
+========================================[I] BOOT stage=safety_begin free_heap=222128 min_heap=222076 heap_ok=1
+[I] BOOT stage=storage_begin free_heap=222128 min_heap=221988 heap_ok=1
+[I] BOOT stage=smart_gps_begin free_heap=219876 min_heap=219824 heap_ok=1
+[I] SmartGps: last_good_fix restaurado (lat=-16.675395 lon=-49.485045)
+[I] BOOT stage=lora_begin free_heap=219540 min_heap=219400 heap_ok=1
+[I] Anti-replay downlink restaurado last_seq=0
+[I] BOOT stage=checklist free_heap=219220 min_heap=219168 heap_ok=1
+==== HW CHECKLIST | COLEIRA ====
+[CHECK] NVS_CONFIG               : OK
+[CHECK] SEQ_UPLINK_NVS           : OFF
+[W] CHECKLIST SEQ_UPLINK_NVS OFF: Seq uplink sem persistencia; revisar NVS.
+[CHECK] WIFI_OTA_SERVICE         : OK
+[MODE ] WIFI_OTA_ENABLED         : false
+[CHECK] STATUS_HTTP_80           : OK (/status habilitado)
+[CHECK] BLE_PRESENCE             : OK (desabilitado em config)
+[CHECK] GPS_UART                 : OK
+[CHECK] GPS_BOOT_RX              : OK (baud=9600 bytes=67 nmea=$1 sample=$GPRMC,175244.00,A,1640.)
+[CHECK] GPS_NMEA                 : OK (lat=-16.675418 lon=-49.485064 sats=0 hdop=99.90)
+[CHECK] I2C_BUS_SCAN             : OK (found=2 [0x5A,0x68])
+[CHECK] MPU6050_I2C              : OK (addr=0x68)
+[CHECK] MPU6050_DRIVER           : OK
+[CHECK] MLX90614_I2C             : OK
+[CHECK] MLX90614_DRIVER          : OK
+[CHECK] EEPROM_QUEUE             : OK
+[CHECK] LORA_RFM95               : OK
+================================
+[I] BOOT stage=ready free_heap=219020 min_heap=218860 heap_ok=1
+[I] Coleira inicializada: id=3222380545 fw=coleira-1.0.0
