@@ -33,6 +33,8 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
   late LatLng _center;
   final List<LatLng> _polygonPoints = [];
   bool _isLoadingSavedFence = true;
+  String? _lastCommandId;
+  String? _commandStatus;
 
   @override
   void initState() {
@@ -86,27 +88,56 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
     final points =
         _polygonPoints.map((p) => <double>[p.latitude, p.longitude]).toList();
     await cloud.saveFence(widget.deviceId, uid, points);
+
+    setState(() => _commandStatus = 'queued');
+
     try {
-      await cloud.enqueueScopedCommand(
+      final commandId = await cloud.enqueueScopedCommand(
         command: 'SET_FENCE',
         propertyId: propertyId,
         requestedByUid: uid,
         requestedByRole: auth.role,
         targetDeviceIds: <String>[widget.deviceId],
-        payload: {'points': points},
+        payload: {
+          'points': points,
+          'polygon_kind': 'manualFence',
+          'origin_doc_type': 'manualFence',
+          'origin_doc_id': widget.deviceId,
+        },
+        businessRef: {
+          'type': 'manualFence',
+          'id': widget.deviceId,
+        },
       );
       if (!mounted) return;
+      setState(() => _lastCommandId = commandId);
       AppFeedback.success('Cerca salva e enfileirada para a matriz.');
     } catch (e) {
       if (!mounted) return;
+      setState(() => _commandStatus = 'failed');
       AppFeedback.warning(
         'Cerca salva, mas falhou o enfileiramento para envio LoRa ($e).',
       );
     }
   }
 
+  String? _buildCommandStatusText() {
+    final propertyId = widget.propertyId?.trim();
+    if (propertyId == null || propertyId.isEmpty) return null;
+    if (_lastCommandId == null && _commandStatus == null) return null;
+    if (_lastCommandId != null) {
+      // Acompanhar via stream (resolvido abaixo no build)
+      return null;
+    }
+    if (_commandStatus != null) {
+      return CloudService.commandStatusLabel(_commandStatus)['label'] as String?;
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final propertyId = widget.propertyId?.trim() ?? '';
     return Scaffold(
       appBar: AppBar(title: const Text('Geofence no mapa')),
       body: Column(
@@ -120,6 +151,54 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
             ),
           ),
           if (_isLoadingSavedFence) const LinearProgressIndicator(minHeight: 2),
+          if (_lastCommandId != null && propertyId.isNotEmpty)
+            StreamBuilder<Map<String, dynamic>?>(
+              stream: context.read<CloudService>().streamCommandStatus(
+                    propertyId: propertyId,
+                    commandId: _lastCommandId!,
+                  ),
+              builder: (context, snapshot) {
+                final data = snapshot.data;
+                final status = data?['status'] as String?;
+                final label = CloudService.commandStatusLabel(status);
+                final text = label['label'] as String;
+                final isTerminal = label['isTerminal'] as bool;
+                final color = isTerminal
+                    ? (status == 'applied' || status == 'success'
+                        ? Colors.green.shade700
+                        : Colors.orange.shade700)
+                    : Colors.blue.shade700;
+                return Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  color: color.withValues(alpha: 0.08),
+                  child: Row(
+                    children: [
+                      if (!isTerminal)
+                        const SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      if (!isTerminal) const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          text,
+                          style: TextStyle(
+                            color: color,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
           Expanded(
             child: FlutterMap(
               options: MapOptions(

@@ -30,7 +30,9 @@
       "Bash(rtk git:*)",
       "Bash(supabase functions:*)",
       "Bash(python3:*)",
-      "Bash(rtk pip:*)"
+      "Bash(rtk pip:*)",
+      "Bash(xargs -I {} bash -c \"echo '=== {} ===' && head -5 {}\")",
+      "Bash(rtk find:*)"
     ]
   }
 }
