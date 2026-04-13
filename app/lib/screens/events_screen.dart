@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../services/auth_service.dart';
-import '../services/firebase_service.dart';
+import '../services/cloud_service.dart';
 
 class EventsScreen extends StatelessWidget {
   const EventsScreen({super.key});
@@ -31,7 +31,7 @@ class EventsScreen extends StatelessWidget {
       );
     }
 
-    final fb = context.read<FirebaseService>();
+    final fb = context.read<CloudService>();
     return Scaffold(
       appBar: AppBar(title: const Text('Eventos e Telemetria')),
       body: StreamBuilder<List<Map<String, dynamic>>>(
@@ -43,7 +43,7 @@ class EventsScreen extends StatelessWidget {
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Text(
-                  'Falha ao carregar eventos do Firestore:\n${snapshot.error}',
+                  'Falha ao carregar eventos do backend:\n${snapshot.error}',
                   textAlign: TextAlign.center,
                 ),
               ),

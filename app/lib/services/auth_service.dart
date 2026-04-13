@@ -1,107 +1,231 @@
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../utils/cloud_compat.dart';
+
+class AuthUser {
+  const AuthUser({
+    required this.uid,
+    this.email,
+  });
+
+  final String uid;
+  final String? email;
+}
 
 class AuthService extends ChangeNotifier {
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
-  User? get user => _auth.currentUser;
+  AuthService({SupabaseClient? client})
+      : _client = client ?? Supabase.instance.client {
+    _authSub = _client.auth.onAuthStateChange.listen((_) {
+      unawaited(_refreshProfile());
+    });
+    unawaited(_refreshProfile());
+  }
+
+  final SupabaseClient _client;
+  StreamSubscription<AuthState>? _authSub;
+
+  AuthUser? _user;
   String? _role;
   bool _profileLoading = false;
 
+  AuthUser? get user => _user;
   String get role => _role ?? 'user';
-  bool get isAdmin => role == 'adm';
+  bool get isAdmin => role == 'adm' || role == 'admin';
   bool get isProfileLoading => _profileLoading;
 
-  AuthService() {
-    _auth.authStateChanges().listen((u) async {
-      if (u == null) {
-        _role = null;
-        notifyListeners();
-        return;
-      }
-      await _loadOrCreateProfile(u);
+  Future<void> _refreshProfile() async {
+    final authUser = _client.auth.currentUser;
+    if (authUser == null) {
+      _user = null;
+      _role = null;
+      _profileLoading = false;
       notifyListeners();
-    });
-  }
+      return;
+    }
 
-  Future<void> _loadOrCreateProfile(User u) async {
     _profileLoading = true;
     notifyListeners();
     try {
-      final ref = _db.collection('users').doc(u.uid);
-      final snap = await ref.get();
-      if (!snap.exists) {
-        await ref.set({
-          'uid': u.uid,
-          'email': u.email?.toLowerCase(),
-          'role': 'user',
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-        _role = 'user';
+      final email = authUser.email?.trim().toLowerCase();
+      final profile = await _client
+          .from('profiles')
+          .select('legacy_uid, email, role')
+          .eq('auth_user_id', authUser.id)
+          .maybeSingle();
+
+      Map<String, dynamic>? effectiveProfile;
+      if (profile == null) {
+        effectiveProfile = await _client
+            .from('profiles')
+            .upsert({
+              'auth_user_id': authUser.id,
+              'legacy_uid': authUser.id,
+              'email': email,
+              'role': 'user',
+            })
+            .select('legacy_uid, email, role')
+            .single();
       } else {
-        final data = snap.data() ?? {};
-        _role = (data['role'] as String?) ?? 'user';
+        effectiveProfile = Map<String, dynamic>.from(profile);
       }
+
+      final legacyUid =
+          (effectiveProfile['legacy_uid'] ?? authUser.id).toString().trim();
+      final normalizedEmail = ((effectiveProfile['email'] ?? email) as String?)
+          ?.trim()
+          .toLowerCase();
+      final resolvedRole =
+          (effectiveProfile['role'] as String?)?.trim().toLowerCase();
+
+      _user = AuthUser(
+        uid: legacyUid.isEmpty ? authUser.id : legacyUid,
+        email: normalizedEmail?.isEmpty == true ? null : normalizedEmail,
+      );
+      _role =
+          resolvedRole == null || resolvedRole.isEmpty ? 'user' : resolvedRole;
+    } on AuthException catch (error) {
+      throw CloudAuthException(
+        code: error.statusCode?.toString() ?? 'auth_error',
+        message: error.message,
+      );
+    } catch (_) {
+      _user = AuthUser(
+        uid: authUser.id,
+        email: authUser.email?.trim().toLowerCase(),
+      );
+      _role = 'user';
     } finally {
       _profileLoading = false;
       notifyListeners();
     }
   }
 
-  Future<void> signIn(String email, String pass) async {
-    await _auth.signInWithEmailAndPassword(
-      email: email.trim().toLowerCase(),
-      password: pass,
+  CloudAuthException _mapAuthException(Object error) {
+    if (error is CloudAuthException) {
+      return error;
+    }
+    if (error is AuthException) {
+      final message = error.message.toLowerCase();
+      if (message.contains('invalid login credentials')) {
+        return CloudAuthException(
+          code: 'invalid-credential',
+          message: error.message,
+        );
+      }
+      if (message.contains('email not confirmed')) {
+        return CloudAuthException(
+          code: 'email-not-confirmed',
+          message: error.message,
+        );
+      }
+      if (message.contains('password should be at least')) {
+        return CloudAuthException(
+          code: 'weak-password',
+          message: error.message,
+        );
+      }
+      if (message.contains('already registered') ||
+          message.contains('user already registered')) {
+        return CloudAuthException(
+          code: 'email-already-in-use',
+          message: error.message,
+        );
+      }
+      if (message.contains('invalid email')) {
+        return CloudAuthException(
+          code: 'invalid-email',
+          message: error.message,
+        );
+      }
+      if (message.contains('over_email_send_rate_limit') ||
+          message.contains('rate limit')) {
+        return CloudAuthException(
+          code: 'too-many-requests',
+          message: error.message,
+        );
+      }
+      return CloudAuthException(
+        code: error.statusCode?.toString() ?? 'auth_error',
+        message: error.message,
+      );
+    }
+    return CloudAuthException(
+      code: 'auth_error',
+      message: error.toString(),
     );
   }
 
+  Future<void> signIn(String email, String pass) async {
+    try {
+      await _client.auth.signInWithPassword(
+        email: email.trim().toLowerCase(),
+        password: pass,
+      );
+      await _refreshProfile();
+    } catch (error) {
+      throw _mapAuthException(error);
+    }
+  }
+
   Future<void> signUp(String email, String pass) async {
-    final cred = await _auth.createUserWithEmailAndPassword(
-      email: email.trim().toLowerCase(),
-      password: pass,
-    );
-    final u = cred.user;
-    if (u != null) {
-      await _db.collection('users').doc(u.uid).set({
-        'uid': u.uid,
-        'email': u.email?.toLowerCase(),
-        'role': 'user',
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-      _role = 'user';
-      notifyListeners();
+    try {
+      await _client.auth.signUp(
+        email: email.trim().toLowerCase(),
+        password: pass,
+      );
+      await _refreshProfile();
+    } catch (error) {
+      throw _mapAuthException(error);
     }
   }
 
   Future<void> updateRole(String uid, String role) async {
-    await _db.collection('users').doc(uid).set({
-      'role': role,
-      'updatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-    if (user?.uid == uid) {
-      _role = role;
+    final normalizedUid = uid.trim();
+    if (normalizedUid.isEmpty) {
+      throw CloudException(
+        plugin: 'supabase',
+        code: 'invalid_uid',
+        message: 'UID invalido.',
+      );
+    }
+    await _client.from('profiles').update(
+        {'role': role.trim().toLowerCase()}).eq('legacy_uid', normalizedUid);
+    if (_user?.uid == normalizedUid) {
+      _role = role.trim().toLowerCase();
       notifyListeners();
     }
   }
 
   Future<void> updateRoleByEmail(String email, String role) async {
     final normalizedEmail = email.trim().toLowerCase();
-    final snap = await _db
-        .collection('users')
-        .where('email', isEqualTo: normalizedEmail)
-        .limit(1)
-        .get();
-
-    if (snap.docs.isEmpty) {
-      throw Exception('Usuario com esse email nao foi encontrado.');
+    final profile = await _client
+        .from('profiles')
+        .select('legacy_uid')
+        .eq('email', normalizedEmail)
+        .maybeSingle();
+    if (profile == null) {
+      throw CloudException(
+        plugin: 'supabase',
+        code: 'user_not_found',
+        message: 'Usuario com esse email nao foi encontrado.',
+      );
     }
-
-    final doc = snap.docs.first;
-    await updateRole(doc.id, role);
+    await updateRole((profile['legacy_uid'] ?? '').toString(), role);
   }
 
-  Future<void> signOut() => _auth.signOut();
+  Future<void> signOut() async {
+    await _client.auth.signOut();
+    _user = null;
+    _role = null;
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    super.dispose();
+  }
 }

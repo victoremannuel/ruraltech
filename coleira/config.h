@@ -106,7 +106,7 @@ constexpr uint32_t VIOLATION_PERSIST_MS = 45000;
 // Sensores
 constexpr uint32_t NO_MOTION_MS = 90000;
 constexpr float MOTION_THRESHOLD_G = 0.20f;
-constexpr uint8_t MIN_SATS = 7;
+constexpr uint8_t MIN_SATS = 0;
 constexpr float OUTLIER_MAX_SPEED = 15.0f;  // m/s
 constexpr uint8_t MEDIAN_WINDOW = 5;
 constexpr float EMA_ALPHA_STOP = 0.2f;
@@ -115,6 +115,8 @@ constexpr uint32_t STOP_DETECT_MS = 30000;
 constexpr float LOCK_RADIUS_M = 5.0f;
 constexpr float GPS_SPEED_MOVE_THRESHOLD_KMPH = 1.2f;
 constexpr bool SMART_GPS_TEST_MODE = false;
+constexpr bool SMART_GPS_PERSISTENCE_ENABLED = cfg_manual::SMART_GPS_PERSISTENCE_ENABLED;
+constexpr bool STORAGE_QUEUE_PERSISTENCE_ENABLED = cfg_manual::STORAGE_QUEUE_PERSISTENCE_ENABLED;
 
 // Persistência
 constexpr uint16_t EEPROM_SIZE = 2048;

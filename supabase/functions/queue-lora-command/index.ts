@@ -3,13 +3,16 @@ import {
   commandExpiryMs,
   computePropertyScopeId,
   corsHeaders,
+  createAdminClient,
   entityMatchesProperty,
   extractQueueKey,
-  getFirestoreDocument,
-  getRtdbValue,
+  getAuthContext,
+  getCollarById,
+  getGatewayById,
+  getPropertyById,
   isTargetReady,
   jsonResponse,
-  listFirestoreCollectionDocuments,
+  listGateways,
   matrixRuntimeIdFromGatewayData,
   normalizeBusinessRef,
   normalizeDeviceIdList,
@@ -18,12 +21,9 @@ import {
   normalizeRole,
   normalizeScopeId,
   normalizeText,
-  patchRtdbRoot,
+  type JsonMap,
   userHasPropertyAccess,
-  verifyFirebaseBearerToken,
-} from "../_shared/firebase.ts";
-
-type JsonMap = Record<string, unknown>;
+} from "../_shared/supabase.ts";
 
 function eventIdFor(commandId: string, status: string): string {
   return `${Date.now()}_${status}_${crypto.randomUUID().slice(0, 8)}_${commandId}`;
@@ -38,7 +38,8 @@ function derivePolygonKind(
   if (command !== "SET_FENCE") return "";
   if (originDocType === "area" || businessRef?.type === "area") return "area";
   if (
-    originDocType === "ruralProperty" || businessRef?.type === "ruralProperty"
+    originDocType === "ruralProperty" || originDocType === "rural_property" ||
+    businessRef?.type === "ruralProperty" || businessRef?.type === "rural_property"
   ) {
     return "property";
   }
@@ -50,7 +51,12 @@ function buildDispatchPayload(
   command: string,
   sourcePayload: JsonMap,
   businessRef: { type: string; id: string } | null,
-): { payload: JsonMap; polygonKind: string; originDocType: string; originDocId: string } {
+): {
+  payload: JsonMap;
+  polygonKind: string;
+  originDocType: string;
+  originDocId: string;
+} {
   const originDocType = normalizeText(
     sourcePayload.origin_doc_type ??
       sourcePayload.originDocType ??
@@ -90,16 +96,17 @@ async function resolveMatrixGateway(
   explicitMatrixGatewayId: string,
   propertyId: string,
   propertyScopeId: string,
-): Promise<{ gatewayId: string; gatewayData: JsonMap } | null> {
+) {
+  const admin = createAdminClient();
   if (explicitMatrixGatewayId) {
-    const matrixData = await getFirestoreDocument(`gateways/${explicitMatrixGatewayId}`);
+    const matrixData = await getGatewayById(admin, explicitMatrixGatewayId);
     if (!matrixData) return null;
     return { gatewayId: explicitMatrixGatewayId, gatewayData: matrixData };
   }
 
-  const gateways = await listFirestoreCollectionDocuments("gateways");
+  const gateways = await listGateways(admin);
   for (const gateway of gateways) {
-    if (gateway.is_matrix !== true) continue;
+    if (gateway.is_matrix !== true && gateway.isMatrix !== true) continue;
     if (!entityMatchesProperty(gateway, propertyId, propertyScopeId)) continue;
     const gatewayId = normalizeId(gateway.id);
     if (!gatewayId) continue;
@@ -114,10 +121,11 @@ async function validateTargets(
   targetDeviceIds: string[],
   targetGatewayIds: string[],
 ): Promise<{ ok: boolean; resultReason: string | null; deviceResults: JsonMap }> {
+  const admin = createAdminClient();
   const deviceResults: JsonMap = {};
 
   for (const deviceId of targetDeviceIds) {
-    const collar = await getFirestoreDocument(`collars/${deviceId}`);
+    const collar = await getCollarById(admin, deviceId);
     if (!collar) {
       return { ok: false, resultReason: `unknown_target_device:${deviceId}`, deviceResults };
     }
@@ -142,7 +150,7 @@ async function validateTargets(
   }
 
   for (const gatewayId of targetGatewayIds) {
-    const gateway = await getFirestoreDocument(`gateways/${gatewayId}`);
+    const gateway = await getGatewayById(admin, gatewayId);
     if (!gateway) {
       return { ok: false, resultReason: `unknown_target_gateway:${gatewayId}`, deviceResults };
     }
@@ -165,6 +173,125 @@ async function validateTargets(
   return { ok: true, resultReason: null, deviceResults };
 }
 
+async function upsertCommandRecords(args: {
+  propertyId: string;
+  propertyScopeId: string;
+  matrixGatewayId: string;
+  matrixRuntimeId: string;
+  queueKey: string;
+  commandId: string;
+  command: string;
+  targetDeviceIds: string[];
+  targetGatewayIds: string[];
+  requestedByUid: string;
+  requestedByRole: string;
+  deviceResults: JsonMap;
+  payload: JsonMap;
+  polygonKind: string;
+  originDocType: string;
+  originDocId: string;
+  businessRef: { type: string; id: string } | null;
+  createdAtMs: number;
+  expiresAtMs: number;
+}) {
+  const admin = createAdminClient();
+  const commandSummary = {
+    property_id: args.propertyId,
+    command_id: args.commandId,
+    command: args.command,
+    status: "queued",
+    property_scope_id: args.propertyScopeId,
+    matrix_gateway_id: args.matrixGatewayId,
+    requested_by_uid: args.requestedByUid,
+    requested_by_role: args.requestedByRole,
+    created_at_ms: args.createdAtMs,
+    updated_at_ms: args.createdAtMs,
+    expires_at_ms: args.expiresAtMs,
+    polygon_kind: args.polygonKind || null,
+    origin_doc_type: args.originDocType || null,
+    origin_doc_id: args.originDocId || null,
+    target_device_ids: args.targetDeviceIds,
+    target_gateway_ids: args.targetGatewayIds,
+    device_results: args.deviceResults,
+    payload: args.payload,
+    raw: {
+      commandId: args.commandId,
+      command: args.command,
+      propertyId: args.propertyId,
+      propertyScopeId: args.propertyScopeId,
+      matrixGatewayId: args.matrixGatewayId,
+      matrixRuntimeId: args.matrixRuntimeId,
+      targetDeviceIds: args.targetDeviceIds,
+      targetGatewayIds: args.targetGatewayIds,
+      requestedByUid: args.requestedByUid,
+      requestedByRole: args.requestedByRole,
+      status: "queued",
+      createdAtMs: args.createdAtMs,
+      updatedAtMs: args.createdAtMs,
+      expiresAtMs: args.expiresAtMs,
+      polygonKind: args.polygonKind || null,
+      originDocType: args.originDocType || null,
+      originDocId: args.originDocId || null,
+      businessRef: args.businessRef,
+      deviceResults: args.deviceResults,
+      payload: args.payload,
+    },
+  };
+  const queuedEventId = eventIdFor(args.commandId, "queued");
+  const queuedEvent = {
+    property_id: args.propertyId,
+    day_key: new Date(args.createdAtMs).toISOString().slice(0, 10).replaceAll("-", ""),
+    event_id: queuedEventId,
+    command_id: args.commandId,
+    status: "queued",
+    received_at_ms: args.createdAtMs,
+    payload: {
+      type: "queued",
+      status: "queued",
+      matrixId: args.matrixRuntimeId,
+      createdAtMs: args.createdAtMs,
+    },
+    raw: {
+      type: "queued",
+      status: "queued",
+      matrixId: args.matrixRuntimeId,
+      createdAtMs: args.createdAtMs,
+    },
+  };
+  const queuePayload = {
+    commandId: args.commandId,
+    command: args.command,
+    propertyId: args.propertyId,
+    propertyScopeId: args.propertyScopeId,
+    matrixGatewayId: args.matrixGatewayId,
+    matrixRuntimeId: args.matrixRuntimeId,
+    targetDeviceIds: args.targetDeviceIds,
+    targetGatewayIds: args.targetGatewayIds,
+    payload: args.payload,
+    requestedByUid: args.requestedByUid,
+    requestedByRole: args.requestedByRole,
+    createdAtMs: args.createdAtMs,
+    expiresAtMs: args.expiresAtMs,
+    ...(args.businessRef ? { businessRef: args.businessRef } : {}),
+  };
+
+  const commandUpsert = await admin.from("property_commands").upsert(commandSummary);
+  if (commandUpsert.error) throw new Error(commandUpsert.error.message);
+
+  const eventInsert = await admin.from("property_command_events").upsert(queuedEvent);
+  if (eventInsert.error) throw new Error(eventInsert.error.message);
+
+  const queueInsert = await admin.from("matrix_command_queues").upsert({
+    runtime_id: args.matrixRuntimeId,
+    queue_key: args.queueKey,
+    command_id: args.commandId,
+    created_at_ms: args.createdAtMs,
+    expires_at_ms: args.expiresAtMs,
+    payload: queuePayload,
+  });
+  if (queueInsert.error) throw new Error(queueInsert.error.message);
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders() });
@@ -174,9 +301,8 @@ Deno.serve(async (request) => {
   }
 
   try {
-    const { uid } = await verifyFirebaseBearerToken(
-      request.headers.get("authorization"),
-    );
+    const admin = createAdminClient();
+    const auth = await getAuthContext(request, admin);
     const body = await request.json() as JsonMap;
     const normalizedCommand = normalizeText(body.command).toUpperCase();
     if (!ALLOWED_COMMANDS.has(normalizedCommand)) {
@@ -188,11 +314,11 @@ Deno.serve(async (request) => {
       return jsonResponse(400, { ok: false, reason: "invalid_property_id" });
     }
 
-    const propertyData = await getFirestoreDocument(`ruralProperties/${propertyId}`);
+    const propertyData = await getPropertyById(admin, propertyId);
     if (!propertyData) {
       return jsonResponse(404, { ok: false, reason: "property_not_found" });
     }
-    const expectedScopeId = normalizeScopeId(propertyData.propertyScopeId) ||
+    const expectedScopeId = normalizeScopeId(propertyData.property_scope_id) ||
       await computePropertyScopeId(propertyId);
     const requestedScopeId = normalizeScopeId(body.propertyScopeId);
     if (requestedScopeId && requestedScopeId !== expectedScopeId) {
@@ -203,11 +329,8 @@ Deno.serve(async (request) => {
       });
     }
 
-    const userData = await getFirestoreDocument(`users/${uid}`);
-    const requestedByRole = normalizeRole(
-      userData?.role ?? body.requestedByRole ?? "user",
-    );
-    if (!userHasPropertyAccess(uid, requestedByRole, propertyData)) {
+    const requestedByRole = normalizeRole(body.requestedByRole ?? auth.role);
+    if (!userHasPropertyAccess(auth.legacyUid, requestedByRole, propertyData)) {
       return jsonResponse(403, { ok: false, reason: "forbidden_property_access" });
     }
 
@@ -221,7 +344,7 @@ Deno.serve(async (request) => {
     }
     const { gatewayId: matrixGatewayId, gatewayData: matrixData } = matrixGateway;
     if (
-      matrixData.is_matrix !== true ||
+      matrixData.is_matrix !== true && matrixData.isMatrix !== true ||
       !entityMatchesProperty(matrixData, propertyId, expectedScopeId)
     ) {
       return jsonResponse(400, { ok: false, reason: "no_matrix_for_property" });
@@ -233,21 +356,33 @@ Deno.serve(async (request) => {
         matrixGatewayId,
         expectedScopeId,
         matrixState: {
-          propertyId: normalizeId(matrixData.propertyId),
+          propertyId: normalizeId(matrixData.property_id ?? matrixData.propertyId),
           propertyScopeId: normalizeScopeId(
-            matrixData.propertyScopeId ??
-              (matrixData.runtimeStatus as JsonMap | undefined)?.propertyScopeId,
+            matrixData.property_scope_id ??
+              matrixData.propertyScopeId ??
+              (matrixData.runtime_status as JsonMap | undefined)?.property_scope_id ??
+              (matrixData.runtime_status as JsonMap | undefined)?.propertyScopeId,
           ),
-          bindingReady: matrixData.bindingReady === true ||
-            ((matrixData.runtimeStatus as JsonMap | undefined)?.bindingReady === true),
-          supportsScopedLora: matrixData.supportsScopedLora === true ||
-            ((matrixData.runtimeStatus as JsonMap | undefined)?.supportsScopedLora === true),
+          bindingReady: matrixData.binding_ready === true ||
+            matrixData.bindingReady === true ||
+            (matrixData.runtime_status as JsonMap | undefined)?.binding_ready === true ||
+            (matrixData.runtime_status as JsonMap | undefined)?.bindingReady === true,
+          supportsScopedLora: matrixData.supports_scoped_lora === true ||
+            matrixData.supportsScopedLora === true ||
+            (matrixData.runtime_status as JsonMap | undefined)?.supports_scoped_lora === true ||
+            (matrixData.runtime_status as JsonMap | undefined)?.supportsScopedLora === true,
         },
       });
     }
 
     const matrixRuntimeId = matrixRuntimeIdFromGatewayData(matrixGatewayId, matrixData);
-    const queueKey = extractQueueKey(await getRtdbValue(`matrixQueueKeys/${matrixRuntimeId}`));
+    const { data: queueKeyRow, error: queueKeyError } = await admin
+      .from("matrix_queue_keys")
+      .select("queue_key")
+      .eq("runtime_id", matrixRuntimeId)
+      .maybeSingle();
+    if (queueKeyError) throw new Error(queueKeyError.message);
+    const queueKey = extractQueueKey(queueKeyRow?.queue_key);
     if (!queueKey) {
       return jsonResponse(409, { ok: false, reason: "missing_matrix_queue_key" });
     }
@@ -282,8 +417,6 @@ Deno.serve(async (request) => {
       return jsonResponse(400, { ok: false, reason: "command_expired" });
     }
 
-    const propertyKey = normalizeText(propertyId).replace(/[.#$\[\]/]/g, "_");
-    const queuedEventId = eventIdFor(commandId, "queued");
     const businessRef = normalizeBusinessRef(body.businessRef);
     const sourcePayload = body.payload && typeof body.payload === "object"
       ? body.payload as JsonMap
@@ -295,59 +428,26 @@ Deno.serve(async (request) => {
       businessRef,
     );
 
-    const commandSummary = {
-      commandId,
-      command: normalizedCommand,
+    await upsertCommandRecords({
       propertyId,
       propertyScopeId: expectedScopeId,
       matrixGatewayId,
       matrixRuntimeId,
+      queueKey,
+      commandId,
+      command: normalizedCommand,
       targetDeviceIds,
       targetGatewayIds,
-      requestedByUid: uid,
+      requestedByUid: auth.legacyUid,
       requestedByRole,
-      status: "queued",
-      resultReason: null,
       deviceResults: targetValidation.deviceResults,
-      createdAtMs: nowMs,
-      updatedAtMs: nowMs,
-      expiresAtMs,
-      completedAtMs: null,
-      polygonKind: dispatchPayload.polygonKind || null,
-      originDocType: dispatchPayload.originDocType || null,
-      originDocId: dispatchPayload.originDocId || null,
-      ...(businessRef ? { businessRef } : {}),
-    };
-
-    const queuedEvent = {
-      type: "queued",
-      status: "queued",
-      reason: null,
-      matrixId: matrixRuntimeId,
-      createdAtMs: nowMs,
-    };
-
-    const queuePayload = {
-      commandId,
-      command: normalizedCommand,
-      propertyId,
-      propertyScopeId: expectedScopeId,
-      matrixGatewayId,
-      matrixRuntimeId,
-      targetDeviceIds,
-      targetGatewayIds,
       payload: dispatchPayload.payload,
-      requestedByUid: uid,
-      requestedByRole,
+      polygonKind: dispatchPayload.polygonKind,
+      originDocType: dispatchPayload.originDocType,
+      originDocId: dispatchPayload.originDocId,
+      businessRef,
       createdAtMs: nowMs,
       expiresAtMs,
-      ...(businessRef ? { businessRef } : {}),
-    };
-
-    await patchRtdbRoot({
-      [`propertyCommands/${propertyKey}/${commandId}`]: commandSummary,
-      [`propertyCommandEvents/${propertyKey}/${commandId}/${queuedEventId}`]: queuedEvent,
-      [`matrixCommandQueues/${matrixRuntimeId}/${queueKey}/${commandId}`]: queuePayload,
     });
 
     return jsonResponse(200, {
@@ -361,8 +461,7 @@ Deno.serve(async (request) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown_error";
-    const status = message.startsWith("missing_bearer_token") ||
-        message.startsWith("invalid_firebase_token")
+    const status = message === "missing_auth_token" || message === "invalid_auth_token"
       ? 401
       : 500;
     return jsonResponse(status, { ok: false, reason: message });

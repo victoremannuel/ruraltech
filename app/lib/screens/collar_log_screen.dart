@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../models/device_model.dart';
-import '../services/firebase_service.dart';
+import '../services/cloud_service.dart';
 import '../utils/polygon_log_preview.dart';
 
 class CollarLogScreen extends StatefulWidget {
@@ -43,7 +43,7 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
     if (propertyId == null || deviceId == null) {
       return Future.value(const <Map<String, dynamic>>[]);
     }
-    return context.read<FirebaseService>().getCollarFirebaseLog(
+    return context.read<CloudService>().getCollarLog(
           propertyId: propertyId,
           deviceId: deviceId,
         );
@@ -193,7 +193,7 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
     final entryId = (entry['id'] ?? '').toString();
     return _previewFutures.putIfAbsent(
       entryId,
-      () => context.read<FirebaseService>().resolvePolygonLogPreview(
+      () => context.read<CloudService>().resolvePolygonLogPreview(
             propertyId: _propertyId!,
             device: widget.device,
             entry: entry,
@@ -291,7 +291,7 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
         child: Padding(
           padding: EdgeInsets.all(16),
           child: Text(
-            'Nenhuma mensagem da coleira foi encontrada no Firebase ainda.',
+            'Nenhuma mensagem da coleira foi encontrada no backend ainda.',
             textAlign: TextAlign.center,
           ),
         ),
@@ -317,7 +317,7 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'Payload recebido no Firebase',
+                  'Payload recebido no backend',
                   style: Theme.of(context).textTheme.labelLarge,
                 ),
               ),
@@ -377,7 +377,7 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Mensagens recebidas no Firebase para a coleira ${widget.device.networkId}.',
+                  'Mensagens recebidas no backend para a coleira ${widget.device.networkId}.',
                 ),
                 const SizedBox(height: 12),
                 Row(
@@ -420,8 +420,8 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
                 : _autoRefresh
                     ? StreamBuilder<List<Map<String, dynamic>>>(
                         stream: context
-                            .read<FirebaseService>()
-                            .streamCollarFirebaseLog(
+                            .read<CloudService>()
+                            .streamCollarLog(
                               propertyId: propertyId,
                               deviceId: deviceId,
                             ),

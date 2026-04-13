@@ -1,0 +1,54 @@
+---- A porta serial /dev/tty.usbserial-59470049741 abriu ----
+ets Jul 29 2019 12:21:46
+
+rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+configsip: 0, SPIWP:0xee
+clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+mode:DIO, clock div:2
+load:0x3fff0030,len:4640
+load:0x40078000,len:15660
+load:0x40080400,len:3164
+entry 0x4008059c
+[I] Boot reset_reason=1
+[I] seqDown restaurado=1460178823 (persistido=1460178822)
+[I] Binding matriz: ready=0 property=- scope=- matrix=- ver=0
+[I] AP ativo: RuralTech-Matriz-000000
+[I] OTA particoes (inicio): running=app0 size=0x1f0000 next=app1 size=0x1f0000
+[I] OTA ativo hostname=ruraltech-matriz
+[W] RTC indisponivel
+[W] SD indisponivel
+[I] LoRa begin ok freq=915.0 bw=125 sf=9 cr=7 sync=0x12
+[I] Anti-replay sem estado salvo; iniciando tabela vazia.
+==== HW CHECKLIST | GATEWAY MATRIX ====
+[CHECK] NVS_SEQ_DOWN             : OK
+[CHECK] OLED_0x3C                : OK (desabilitado em config)
+[CHECK] WIFI_AP_OTA              : OK
+[CHECK] BLE_PRESENCE             : OK
+[CHECK] API_HTTP_WS              : OK (porta 80 + ws:81)
+[CHECK] RTC_DS3231               : OFF
+[W] CHECKLIST RTC_DS3231 OFF: RTC indisponivel; revisar SDA/SCL, VCC, GND e bateria.
+[CHECK] SD_CARD                  : OFF
+[W] CHECKLIST SD_CARD OFF: SD indisponivel; revisar CS/MOSI/MISO/SCK e cartao.
+[CHECK] LORA_RFM95               : OK
+[CHECK] CLOUD_BACKHAUL_CFG       : OK
+=======================================
+[I] Gateway matriz pronto fw=gateway-matriz-1.0.0
+[I] Backhaul Wi-Fi: tentando conectar em VICTOR_E_CAROL
+[I] LoRa RX raw len=159 rssi=-31 snr=11.2
+[I] LoRa RX aceito device=3222380545 type=1 seq=2000001 scope=9FFFC95AA1624895
+[W] scope_reject device=3222380545 msg=1 seq=2000001 scope=9FFFC95AA1624895 ready=0
+[I] LoRa RX raw len=180 rssi=-32 snr=9.0
+[I] LoRa RX aceito device=3222380545 type=2 seq=2000002 scope=9FFFC95AA1624895
+[W] scope_reject device=3222380545 msg=2 seq=2000002 scope=9FFFC95AA1624895 ready=0
+[I] LoRa RX raw len=166 rssi=-33 snr=12.8
+[I] LoRa RX aceito device=3222380545 type=2 seq=2000003 scope=9FFFC95AA1624895
+[W] scope_reject device=3222380545 msg=2 seq=2000003 scope=9FFFC95AA1624895 ready=0
+[I] LoRa RX raw len=159 rssi=-32 snr=11.0
+[I] LoRa RX aceito device=3222380545 type=1 seq=3000001 scope=9FFFC95AA1624895
+[W] scope_reject device=3222380545 msg=1 seq=3000001 scope=9FFFC95AA1624895 ready=0
+[I] LoRa RX raw len=180 rssi=-32 snr=9.2
+[I] LoRa RX aceito device=3222380545 type=2 seq=3000002 scope=9FFFC95AA1624895
+[W] scope_reject device=3222380545 msg=2 seq=3000002 scope=9FFFC95AA1624895 ready=0
+[I] LoRa RX raw len=166 rssi=-32 snr=11.0
+[I] LoRa RX aceito device=3222380545 type=2 seq=3000003 scope=9FFFC95AA1624895
+[W] scope_reject device=3222380545 msg=2 seq=3000003 scope=9FFFC95AA1624895 ready=0

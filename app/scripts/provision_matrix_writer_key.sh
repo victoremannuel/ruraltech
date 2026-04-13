@@ -4,13 +4,14 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Uso:
-  ./scripts/provision_matrix_writer_key.sh --project <firebase_project_id> [opcoes]
+  ./scripts/provision_matrix_writer_key.sh --url <supabase_url> --service-role-key <key> [opcoes]
 
 Opcoes:
-  --project <id>           Projeto Firebase (obrigatorio se nao existir no firebase.json).
-  --matrix-id <id>         Matrix ID para chave em /matrixWriterKeys e /matrixQueueKeys.
-  --writer-key <key>       Writer key que sera liberada nas regras RTDB.
-  --queue-key <key>        Queue key que sera liberada para leitura da fila RTDB.
+  --url <url>              URL base do Supabase.
+  --service-role-key <key> Service role key do projeto.
+  --matrix-id <id>         Matrix runtime ID.
+  --writer-key <key>       Writer key da matriz.
+  --queue-key <key>        Queue key da fila cloud.
   --manual-settings <path> Arquivo manual_settings.h para fallback.
   --local-overrides <path> Arquivo manual_settings.local.h para segredos.
   --dry-run                Apenas imprime o comando sem executar.
@@ -23,7 +24,7 @@ Comportamento padrao:
     Campos: RT_CFG_RTDB_MATRIX_ID / RTDB_MATRIX_ID
             RT_CFG_RTDB_WRITER_KEY / RTDB_WRITER_KEY
             RT_CFG_RTDB_QUEUE_KEY / RTDB_QUEUE_KEY
-  - Le projectId de firebase.json (primeiro encontrado), se --project nao for informado.
+  - Le `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` do ambiente se flags nao forem informadas.
 EOF
 }
 
@@ -33,7 +34,8 @@ REPO_DIR="$(cd "${APP_DIR}/.." && pwd)"
 DEFAULT_MANUAL_SETTINGS="${REPO_DIR}/gateway-matriz/manual_settings.h"
 DEFAULT_LOCAL_OVERRIDES="${REPO_DIR}/gateway-matriz/manual_settings.local.h"
 
-project_id=""
+supabase_url="${SUPABASE_URL:-}"
+service_role_key="${SUPABASE_SERVICE_ROLE_KEY:-}"
 matrix_id=""
 writer_key=""
 queue_key=""
@@ -43,8 +45,12 @@ dry_run=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --project)
-      project_id="${2:-}"
+    --url)
+      supabase_url="${2:-}"
+      shift 2
+      ;;
+    --service-role-key)
+      service_role_key="${2:-}"
       shift 2
       ;;
     --matrix-id)
@@ -83,8 +89,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "${project_id}" && -f "${APP_DIR}/firebase.json" ]]; then
-  project_id="$(sed -nE 's/.*"projectId": "([^"]+)".*/\1/p' "${APP_DIR}/firebase.json" | head -n 1)"
+if [[ -z "${supabase_url}" ]]; then
+  supabase_url="$(
+    sed -nE "s/.*supabaseUrl = String.fromEnvironment\\([^']*defaultValue: '([^']+)'.*/\\1/p" \
+      "${APP_DIR}/lib/config/manual_settings.dart" | head -n 1
+  )"
 fi
 
 extract_macro() {
@@ -140,8 +149,12 @@ if [[ -z "${queue_key}" ]]; then
   queue_key="$(resolve_setting RT_CFG_RTDB_QUEUE_KEY RTDB_QUEUE_KEY)"
 fi
 
-if [[ -z "${project_id}" ]]; then
-  echo "Erro: informe --project <firebase_project_id>." >&2
+if [[ -z "${supabase_url}" ]]; then
+  echo "Erro: informe --url <supabase_url> ou defina SUPABASE_URL." >&2
+  exit 1
+fi
+if [[ -z "${service_role_key}" ]]; then
+  echo "Erro: informe --service-role-key <key> ou defina SUPABASE_SERVICE_ROLE_KEY." >&2
   exit 1
 fi
 if [[ -z "${matrix_id}" ]]; then
@@ -190,48 +203,55 @@ if [[ -z "${matrix_id_sanitized}" ]]; then
 fi
 
 writer_path="/matrixWriterKeys/${matrix_id_sanitized}"
-writer_payload="\"${writer_key}\""
-queue_path="/matrixQueueKeys/${matrix_id_sanitized}"
 queue_updated_at_ms="$(( $(date +%s) * 1000 ))"
+rest_url="${supabase_url%/}/rest/v1/matrix_queue_keys?on_conflict=runtime_id&select=runtime_id,queue_key,writer_key,updated_at_ms"
+validate_url="${supabase_url%/}/rest/v1/matrix_queue_keys?select=runtime_id,queue_key,writer_key,updated_at_ms&runtime_id=eq.${matrix_id_sanitized}"
 queue_payload="$(cat <<EOF
-{
-  "queueKey": "${queue_key}",
-  "matrixRuntimeId": "${matrix_id_sanitized}",
-  "updatedAtMs": ${queue_updated_at_ms},
-  "writer": "gateway_matrix",
-  "writerKey": "${writer_key}"
-}
+[{
+  "runtime_id": "${matrix_id_sanitized}",
+  "queue_key": "${queue_key}",
+  "writer_key": "${writer_key}",
+  "updated_at_ms": ${queue_updated_at_ms},
+  "raw": {
+    "matrixRuntimeId": "${matrix_id_sanitized}",
+    "queueKey": "${queue_key}",
+    "writerKey": "${writer_key}",
+    "updatedAtMs": ${queue_updated_at_ms},
+    "writer": "gateway_matrix"
+  }
+}]
 EOF
 )"
 
-echo "Projeto: ${project_id}"
+echo "Supabase URL: ${supabase_url}"
 echo "Matrix ID (orig): ${matrix_id}"
-echo "Matrix ID (rtdb): ${matrix_id_sanitized}"
-echo "Path RTDB writer: ${writer_path}"
-echo "Path RTDB queue: ${queue_path}"
+echo "Matrix ID (cloud): ${matrix_id_sanitized}"
 echo "Fonte local-overrides: ${local_overrides}"
 echo "Fonte fallback: ${manual_settings}"
-
-if ! command -v firebase >/dev/null 2>&1; then
-  echo "Erro: Firebase CLI nao encontrado no PATH." >&2
-  exit 1
-fi
-
-cmd_writer=(firebase database:set "${writer_path}" --data "${writer_payload}" --project "${project_id}" --force)
-cmd_queue=(firebase database:set "${queue_path}" --data "${queue_payload}" --project "${project_id}" --force)
 if [[ ${dry_run} -eq 1 ]]; then
   echo "Dry-run:"
-  printf '  %q' "${cmd_writer[@]}"
-  echo
-  printf '  %q' "${cmd_queue[@]}"
+  printf '  %q' curl --silent --show-error --fail -X POST "${rest_url}" \
+    -H "apikey: ${service_role_key}" \
+    -H "Authorization: Bearer ${service_role_key}" \
+    -H "Content-Type: application/json" \
+    -H "Prefer: resolution=merge-duplicates,return=representation" \
+    --data "${queue_payload}"
   echo
   exit 0
 fi
 
-"${cmd_writer[@]}"
-"${cmd_queue[@]}"
-echo "Writer key provisionada em ${writer_path}."
-echo "Queue key provisionada em ${queue_path}."
+curl --silent --show-error --fail \
+  -X POST "${rest_url}" \
+  -H "apikey: ${service_role_key}" \
+  -H "Authorization: Bearer ${service_role_key}" \
+  -H "Content-Type: application/json" \
+  -H "Prefer: resolution=merge-duplicates,return=representation" \
+  --data "${queue_payload}"
+echo
+echo "Queue key provisionada para ${matrix_id_sanitized}."
 echo "Validando..."
-firebase database:get "${writer_path}" --project "${project_id}"
-firebase database:get "${queue_path}" --project "${project_id}"
+curl --silent --show-error --fail \
+  -H "apikey: ${service_role_key}" \
+  -H "Authorization: Bearer ${service_role_key}" \
+  "${validate_url}"
+echo

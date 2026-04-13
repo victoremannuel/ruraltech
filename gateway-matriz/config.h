@@ -16,12 +16,16 @@
 #define RT_MATRIX_LOG_LEVEL 2
 #endif
 
+#ifndef RT_MATRIX_DISABLE_LORA_REPLAY_FOR_TESTS
+#define RT_MATRIX_DISABLE_LORA_REPLAY_FOR_TESTS 0
+#endif
+
 // Perfis de diagnostico da matriz:
 //   0 = operacional completo (padrao)
 //   1 = LoRa puro
 //   2 = LoRa + AP local + HTTP /status,/devices,/logs
 //   3 = stage 2 + WS + OTA + BLE
-//   4 = stage 3 + backhaul/cloud/RTDB
+//   4 = stage 3 + backhaul/cloud
 //   5 = stage 4 + SD
 #ifndef RT_MATRIX_DIAG_STAGE
 #define RT_MATRIX_DIAG_STAGE 0
@@ -43,6 +47,8 @@ namespace cfg {
 constexpr char FW_VERSION[] = "gateway-matriz-1.0.0";
 constexpr uint8_t LOG_LEVEL = RT_MATRIX_LOG_LEVEL;
 constexpr uint8_t DIAG_STAGE = RT_MATRIX_DIAG_STAGE;
+constexpr bool DISABLE_LORA_REPLAY_FOR_TESTS =
+    RT_MATRIX_DISABLE_LORA_REPLAY_FOR_TESTS != 0;
 constexpr uint32_t SERIAL_BAUD = 115200;
 constexpr uint16_t TASK_WDT_TIMEOUT_SEC = 30;
 
@@ -67,13 +73,13 @@ constexpr const char* OTA_HOSTNAME = cfg_manual::OTA_HOSTNAME;
 constexpr const char* OTA_PASSWORD = cfg_manual::OTA_PASSWORD;
 constexpr uint32_t OTA_HANDSHAKE_TIMEOUT_MS = 120000;
 
-// Telemetria em nuvem (gateway matriz como escritor direto no RTDB)
-// Configure antes de compilar para habilitar a escrita direta no RTDB.
+// Telemetria em nuvem (gateway matriz como escritor direto no Supabase)
+// Configure antes de compilar para habilitar a escrita direta no backend cloud.
 constexpr bool CLOUD_TELEMETRY_ENABLED = true;
-// Backhaul precisa ter acesso a internet para o gateway matriz escrever no Firebase.
+// Backhaul precisa ter acesso a internet para o gateway matriz escrever no Supabase.
 constexpr const char* BACKHAUL_WIFI_SSID = cfg_manual::BACKHAUL_WIFI_SSID;
 constexpr const char* BACKHAUL_WIFI_PASS = cfg_manual::BACKHAUL_WIFI_PASS;
-constexpr const char* FIREBASE_RTDB_HOST = cfg_manual::FIREBASE_RTDB_HOST;
+constexpr const char* SUPABASE_EDGE_HOST = cfg_manual::SUPABASE_EDGE_HOST;
 constexpr const char* RTDB_MATRIX_ID = cfg_manual::RTDB_MATRIX_ID;
 constexpr const char* RTDB_WRITER_KEY = cfg_manual::RTDB_WRITER_KEY;
 constexpr const char* RTDB_QUEUE_KEY = cfg_manual::RTDB_QUEUE_KEY;

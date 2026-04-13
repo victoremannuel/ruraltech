@@ -6,7 +6,7 @@ import '../models/device_model.dart';
 import '../models/herding_operation_model.dart';
 import '../models/polygon_map_context.dart';
 import '../services/auth_service.dart';
-import '../services/firebase_service.dart';
+import '../services/cloud_service.dart';
 import '../utils/polygon_edit_session.dart';
 import '../utils/top_feedback.dart';
 import '../widgets/polygon_editing_map.dart';
@@ -280,7 +280,7 @@ class _HerdingScreenState extends State<HerdingScreen> {
     Map<String, dynamic> property,
     List<DeviceModel> propertyDevices,
     AuthService auth,
-    FirebaseService firebase,
+    CloudService cloud,
   ) async {
     if (_isSubmitting) return;
     final propertyId = _selectedPropertyId?.trim();
@@ -314,7 +314,7 @@ class _HerdingScreenState extends State<HerdingScreen> {
       return;
     }
 
-    final matrixGatewayId = await firebase.resolveMatrixGatewayIdForProperty(
+    final matrixGatewayId = await cloud.resolveMatrixGatewayIdForProperty(
         propertyId: propertyId);
     if (matrixGatewayId == null || matrixGatewayId.isEmpty) {
       _showFeedback(
@@ -325,7 +325,7 @@ class _HerdingScreenState extends State<HerdingScreen> {
     }
 
     final notifyUserIds =
-        await firebase.getLinkedUserIdsForProperty(propertyId);
+        await cloud.getLinkedUserIdsForProperty(propertyId);
     final ownerUid = _userIdFrom(property['ownerUid']) ??
         _userIdFrom(property['createdByUid']) ??
         uid;
@@ -341,7 +341,7 @@ class _HerdingScreenState extends State<HerdingScreen> {
     setState(() => _isSubmitting = true);
     String? operationId;
     try {
-      operationId = await firebase.createHerdingOperation(
+      operationId = await cloud.createHerdingOperation(
         ownerUid: ownerUid,
         requestedByUid: uid,
         requestedByRole: auth.role,
@@ -352,7 +352,7 @@ class _HerdingScreenState extends State<HerdingScreen> {
         matrixGatewayId: matrixGatewayId,
       );
 
-      final loraCommandId = await firebase.enqueueScopedCommand(
+      final loraCommandId = await cloud.enqueueScopedCommand(
         command: 'SET_HERDING_PLAN',
         propertyId: propertyId,
         requestedByUid: uid,
@@ -381,7 +381,7 @@ class _HerdingScreenState extends State<HerdingScreen> {
         },
         ttl: const Duration(minutes: 20),
       );
-      await firebase.attachLoraCommandToHerdingOperation(
+      await cloud.attachLoraCommandToHerdingOperation(
         operationId: operationId,
         loraCommandId: loraCommandId,
       );
@@ -391,7 +391,7 @@ class _HerdingScreenState extends State<HerdingScreen> {
       _showFeedback('Operacao criada e enfileirada para a matriz.');
     } catch (e) {
       if (operationId != null) {
-        await firebase.markHerdingOperationSubmissionFailed(
+        await cloud.markHerdingOperationSubmissionFailed(
           operationId: operationId,
           reason: e.toString(),
         );
@@ -450,7 +450,7 @@ class _HerdingScreenState extends State<HerdingScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
-    final firebase = context.read<FirebaseService>();
+    final cloud = context.read<CloudService>();
     final uid = auth.user?.uid;
     if (uid == null || uid.trim().isEmpty) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
@@ -459,7 +459,7 @@ class _HerdingScreenState extends State<HerdingScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Solicitar arrebanhamento')),
       body: StreamBuilder<List<Map<String, dynamic>>>(
-        stream: firebase.streamRuralProperties(uid: uid, isAdmin: auth.isAdmin),
+        stream: cloud.streamRuralProperties(uid: uid, isAdmin: auth.isAdmin),
         builder: (context, propertySnap) {
           if (propertySnap.hasError) {
             return Center(
@@ -478,7 +478,7 @@ class _HerdingScreenState extends State<HerdingScreen> {
           }
 
           return StreamBuilder<List<DeviceModel>>(
-            stream: firebase.streamDevices(uid: uid, isAdmin: auth.isAdmin),
+            stream: cloud.streamDevices(uid: uid, isAdmin: auth.isAdmin),
             builder: (context, deviceSnap) {
               if (deviceSnap.hasError) {
                 return Center(
@@ -499,7 +499,7 @@ class _HerdingScreenState extends State<HerdingScreen> {
               final propertyDevices = _devicesForProperty(devices);
 
               return StreamBuilder<List<Map<String, dynamic>>>(
-                stream: firebase.streamAreas(uid: uid, isAdmin: auth.isAdmin),
+                stream: cloud.streamAreas(uid: uid, isAdmin: auth.isAdmin),
                 builder: (context, areaSnap) {
                   if (areaSnap.hasError) {
                     return Center(
@@ -510,7 +510,7 @@ class _HerdingScreenState extends State<HerdingScreen> {
                       areaSnap.data ?? const <Map<String, dynamic>>[]);
 
                   return StreamBuilder<List<Map<String, dynamic>>>(
-                    stream: firebase.streamGateways(
+                    stream: cloud.streamGateways(
                       uid: uid,
                       isAdmin: auth.isAdmin,
                     ),
@@ -527,7 +527,7 @@ class _HerdingScreenState extends State<HerdingScreen> {
                       );
 
                       return StreamBuilder<List<HerdingOperationModel>>(
-                        stream: firebase.streamHerdingOperations(
+                        stream: cloud.streamHerdingOperations(
                           uid: uid,
                           isAdmin: auth.isAdmin,
                         ),
@@ -746,7 +746,7 @@ class _HerdingScreenState extends State<HerdingScreen> {
                                                   selectedProperty,
                                                   propertyDevices,
                                                   auth,
-                                                  firebase,
+                                                  cloud,
                                                 ),
                                         icon: _isSubmitting
                                             ? const SizedBox(

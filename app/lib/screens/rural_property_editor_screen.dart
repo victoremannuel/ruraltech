@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
@@ -11,7 +10,8 @@ import 'package:provider/provider.dart';
 import '../models/device_model.dart';
 import '../models/polygon_map_context.dart';
 import '../services/auth_service.dart';
-import '../services/firebase_service.dart';
+import '../services/cloud_service.dart';
+import '../utils/cloud_compat.dart';
 import '../utils/polygon_edit_session.dart';
 import '../utils/polygon_metrics.dart';
 import '../utils/top_feedback.dart';
@@ -160,7 +160,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
 
     setState(() => _isLoadingUsers = true);
     try {
-      final users = await context.read<FirebaseService>().getUserOptions();
+      final users = await context.read<CloudService>().getUserOptions();
       if (!mounted) return;
       final validUids = users
           .map((user) => (user['uid'] ?? '').trim())
@@ -444,7 +444,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
 
     setState(() => _isSaving = true);
     try {
-      await context.read<FirebaseService>().deleteRuralProperty(id: id);
+      await context.read<CloudService>().deleteRuralProperty(id: id);
       if (!mounted) return;
       Navigator.pop(context, true);
     } catch (e) {
@@ -672,17 +672,17 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
         setState(() => _isSaving = false);
         await _showMessage(
           'Tempo limite',
-          'A gravacao nao respondeu. Verifique internet/firestore e tente novamente.',
+          'A gravacao nao respondeu. Verifique a conexao com a internet e tente novamente.',
         );
       });
 
-      final firebase = context.read<FirebaseService>();
+      final cloud = context.read<CloudService>();
       if (_isEditMode) {
         final id = _editingPropertyId;
         if (id == null || id.isEmpty) {
           throw Exception('id_da_propriedade_invalido');
         }
-        await firebase
+        await cloud
             .updateRuralProperty(
               id: id,
               name: _nameCtrl.text.trim(),
@@ -694,7 +694,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
             )
             .timeout(const Duration(seconds: 15));
       } else {
-        await firebase
+        await cloud
             .addRuralProperty(
               name: _nameCtrl.text.trim(),
               points: points,
@@ -715,10 +715,10 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
             : 'Propriedade rural salva com sucesso.',
       );
       if (mounted) Navigator.pop(context, true);
-    } on FirebaseException catch (e) {
+    } on CloudException catch (e) {
       if (!mounted) return;
       await _showMessage(
-        'Erro Firebase',
+        'Erro de backend',
         '${e.code}: ${e.message ?? 'Falha ao salvar a propriedade.'}',
       );
     } on TimeoutException catch (e) {
@@ -762,7 +762,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
             ownerOptions.any((user) => (user['uid'] ?? '').trim() == ownerUid)
         ? ownerUid
         : null;
-    final firebase = context.read<FirebaseService>();
+    final cloud = context.read<CloudService>();
 
     return Scaffold(
       appBar: AppBar(
@@ -885,7 +885,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
           ),
           Expanded(
             child: StreamBuilder<List<Map<String, dynamic>>>(
-              stream: firebase.streamRuralProperties(
+              stream: cloud.streamRuralProperties(
                 uid: uid,
                 isAdmin: auth.isAdmin,
               ),
@@ -901,7 +901,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
                     propertySnap.data ?? const <Map<String, dynamic>>[];
 
                 return StreamBuilder<List<Map<String, dynamic>>>(
-                  stream: firebase.streamAreas(uid: uid, isAdmin: auth.isAdmin),
+                  stream: cloud.streamAreas(uid: uid, isAdmin: auth.isAdmin),
                   builder: (context, areaSnap) {
                     if (areaSnap.hasError) {
                       return Center(
@@ -913,7 +913,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
                         areaSnap.data ?? const <Map<String, dynamic>>[];
 
                     return StreamBuilder<List<DeviceModel>>(
-                      stream: firebase.streamDevices(
+                      stream: cloud.streamDevices(
                         uid: uid,
                         isAdmin: auth.isAdmin,
                       ),
@@ -929,7 +929,7 @@ class _RuralPropertyEditorScreenState extends State<RuralPropertyEditorScreen> {
                             deviceSnap.data ?? const <DeviceModel>[];
 
                         return StreamBuilder<List<Map<String, dynamic>>>(
-                          stream: firebase.streamGateways(
+                          stream: cloud.streamGateways(
                             uid: uid,
                             isAdmin: auth.isAdmin,
                           ),

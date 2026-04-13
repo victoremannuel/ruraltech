@@ -1,7 +1,25 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../models/device_model.dart';
+import 'cloud_compat.dart';
+
+enum TelemetryFreshness { unknown, fresh, stale }
+
+const _telemetryFreshThreshold = Duration(hours: 24);
+
+TelemetryFreshness resolveTelemetryFreshness(DeviceModel device) {
+  final candidates = [
+    device.positionReceivedAtMs,
+    device.telemetryReceivedAtMs,
+  ].whereType<int>().where((ms) => ms > 0);
+  if (candidates.isEmpty) return TelemetryFreshness.unknown;
+  final best = candidates.reduce((a, b) => a > b ? a : b);
+  final age = DateTime.now()
+      .difference(DateTime.fromMillisecondsSinceEpoch(best));
+  return age <= _telemetryFreshThreshold
+      ? TelemetryFreshness.fresh
+      : TelemetryFreshness.stale;
+}
 
 class DeviceMapTelemetrySample {
   const DeviceMapTelemetrySample({
@@ -61,7 +79,7 @@ bool isValidMapCoordinatePair(double? lat, double? lon) {
 
 DeviceMapTelemetrySample? deviceMapTelemetrySampleFromDevice(
   DeviceModel device, {
-  String source = 'firebase',
+  String source = 'cloud',
 }) {
   final normalizedDeviceId = normalizeMapNumericDeviceId(
     device.loraDeviceId ?? device.deviceId ?? device.id,

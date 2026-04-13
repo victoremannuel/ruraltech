@@ -4,7 +4,8 @@ import 'package:ruraltech_app/utils/device_map_telemetry.dart';
 
 void main() {
   group('Home marker position resolution', () {
-    test('uses gateway sample immediately when it is newer than Firebase', () {
+    test('uses gateway sample immediately when it is newer than cloud state',
+        () {
       final device = DeviceModel(
         id: 'doc-101',
         deviceId: '101',
@@ -40,7 +41,7 @@ void main() {
       expect(resolved.source, 'gateway');
     });
 
-    test('uses event sample immediately when it is newer than Firebase', () {
+    test('uses event sample immediately when it is newer than cloud state', () {
       final device = DeviceModel(
         id: 'doc-101',
         deviceId: '101',
@@ -100,10 +101,11 @@ void main() {
       expect(resolved!.lat, -16.602);
       expect(resolved.lon, -49.202);
       expect(resolved.receivedAtMs, 2600);
-      expect(resolved.source, 'firebase');
+      expect(resolved.source, 'cloud');
     });
 
-    test('keeps newer local sample when Firestore reemits an older point', () {
+    test('keeps newer local sample when cloud state reemits an older point',
+        () {
       final staleDevice = DeviceModel(
         id: 'doc-101',
         deviceId: '101',
@@ -142,7 +144,7 @@ void main() {
       expect(resolved.receivedAtMs, localSample.receivedAtMs);
     });
 
-    test('switches back to Firebase when Firebase becomes newer', () {
+    test('switches back to cloud state when it becomes newer', () {
       final device = DeviceModel(
         id: 'doc-101',
         deviceId: '101',
@@ -175,7 +177,7 @@ void main() {
       expect(resolved!.lat, -16.6015);
       expect(resolved.lon, -49.2015);
       expect(resolved.receivedAtMs, 4000);
-      expect(resolved.source, 'firebase');
+      expect(resolved.source, 'cloud');
     });
   });
 }

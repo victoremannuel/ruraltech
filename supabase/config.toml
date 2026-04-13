@@ -3,5 +3,14 @@ project_id = "nhoewnfuyjbtpklrotbf"
 [functions.queue-lora-command]
 verify_jwt = false
 
-[functions.repair-firebase-mirrors]
+[functions.admin-repair-cloud-state]
 verify_jwt = false
+
+[functions.matrix-cloud]
+verify_jwt = false
+
+[functions.send-push]
+verify_jwt = false
+
+[functions.poll-notifications]
+verify_jwt = true

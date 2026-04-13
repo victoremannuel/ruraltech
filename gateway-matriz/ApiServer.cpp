@@ -31,6 +31,8 @@ extern uint32_t simpleAckWaitDeadlineAtMs;
 extern char simpleAckWaitCommandId[48];
 extern char lastSimpleCommandFeedbackOutcome[24];
 extern uint32_t lastSimpleCommandAckMatchedAtMs;
+void fillBackhaulDiagJson(JsonObject obj);
+void runBackhaulManualDiagnostic();
 
 static ApiServer* g_server = nullptr;
 
@@ -94,7 +96,7 @@ void ApiServer::begin() {
   g_server = this;
   if (cfg::FEATURE_HTTP) {
     http_.on("/status", HTTP_GET, [this]() {
-      StaticJsonDocument<512> doc;
+      StaticJsonDocument<1536> doc;
       doc["ok"] = true;
       doc["service"] = "gateway_matrix";
       doc["fw"] = cfg::FW_VERSION;
@@ -152,6 +154,16 @@ void ApiServer::begin() {
       if (bindingPropertyId[0]) doc["propertyId"] = bindingPropertyId;
       if (bindingPropertyScopeId[0]) doc["propertyScopeId"] = bindingPropertyScopeId;
       if (bindingMatrixGatewayId[0]) doc["matrixGatewayId"] = bindingMatrixGatewayId;
+      fillBackhaulDiagJson(doc["backhaul"].to<JsonObject>());
+      String out;
+      serializeJson(doc, out);
+      http_.send(200, "application/json", out);
+    });
+    http_.on("/diag/backhaul", HTTP_GET, [this]() {
+      StaticJsonDocument<768> doc;
+      runBackhaulManualDiagnostic();
+      doc["ok"] = true;
+      fillBackhaulDiagJson(doc["backhaul"].to<JsonObject>());
       String out;
       serializeJson(doc, out);
       http_.send(200, "application/json", out);

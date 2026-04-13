@@ -23,6 +23,12 @@ inline void prepareSpiBusForLoRa() {
 }  // namespace
 
 void LoRaGateway::loadReplayState() {
+  if (cfg::DISABLE_LORA_REPLAY_FOR_TESTS) {
+    memset(deviceIds_, 0, sizeof(deviceIds_));
+    memset(lastSeqPerDevice_, 0, sizeof(lastSeqPerDevice_));
+    LOGW("ANTI_REPLAY_TEST_MODE=1; estado anti-replay ignorado na inicializacao");
+    return;
+  }
   if (!replayPrefsReady_) return;
   if (replayPrefs_.getBytesLength("state") != sizeof(ReplayStateBlob)) {
     LOGI("Anti-replay sem estado salvo; iniciando tabela vazia.");
@@ -46,6 +52,7 @@ void LoRaGateway::loadReplayState() {
 }
 
 void LoRaGateway::persistReplayState() {
+  if (cfg::DISABLE_LORA_REPLAY_FOR_TESTS) return;
   if (!replayPrefsReady_) return;
 
   ReplayStateBlob blob;
@@ -107,6 +114,9 @@ bool LoRaGateway::begin() {
     return armContinuousReceive();
   }
   loadReplayState();
+  if (cfg::DISABLE_LORA_REPLAY_FOR_TESTS) {
+    LOGW("ANTI_REPLAY_TEST_MODE=1 no gateway-matriz; replays serao aceitos temporariamente");
+  }
   return armContinuousReceive();
 }
 
@@ -184,10 +194,19 @@ bool LoRaGateway::receive(LoRaFrame& frame) {
   }
 
   const uint8_t idx = idxForDevice(frame.deviceId);
-  if (frame.seq <= lastSeqPerDevice_[idx]) {
+  if (!cfg::DISABLE_LORA_REPLAY_FOR_TESTS &&
+      frame.seq <= lastSeqPerDevice_[idx]) {
     setRadioState("rx_replay");
     LOGW("Replay bloqueado device=%lu seq=%lu", frame.deviceId, frame.seq);
     return false;
+  }
+  if (cfg::DISABLE_LORA_REPLAY_FOR_TESTS &&
+      frame.seq <= lastSeqPerDevice_[idx]) {
+    LOGW(
+        "ANTI_REPLAY_TEST_MODE=1 aceitando frame repetido device=%lu seq=%lu last_seq=%lu",
+        (unsigned long)frame.deviceId,
+        (unsigned long)frame.seq,
+        (unsigned long)lastSeqPerDevice_[idx]);
   }
   setRadioState("rx_ok");
   LOGI(
@@ -197,8 +216,10 @@ bool LoRaGateway::receive(LoRaFrame& frame) {
       (unsigned long)frame.seq,
       (unsigned long long)frame.scopeId);
   lastAcceptedRxAtMs_ = millis();
-  lastSeqPerDevice_[idx] = frame.seq;
-  persistReplayState();
+  if (!cfg::DISABLE_LORA_REPLAY_FOR_TESTS) {
+    lastSeqPerDevice_[idx] = frame.seq;
+    persistReplayState();
+  }
   return true;
 }
 

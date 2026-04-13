@@ -68,7 +68,7 @@ Consulte tambem `gateway-matriz/pinagem.md` para a lista detalhada.
 - AP local: `RuralTech-Matriz-<ID6HEX>` / `ruraltechota`
 - HTTP: porta 80 (`/status`, `/devices`, `/logs`)
 - WebSocket: porta 81 (json bidirecional)
-- Cloud queue: stream RTDB em `matrixCommandQueues/<matrixRuntimeId>/<queueKey>` com polling de fallback
+- Cloud queue: leitura da fila Supabase em `matrixCommandQueues/<matrixRuntimeId>/<queueKey>` com polling de fallback
 
 ## Limites LoRa e fragmentação
 - Payload máximo LoRa por frame: `128 bytes`.
@@ -130,6 +130,7 @@ cp gateway-matriz/manual_settings.local.example.h gateway-matriz/manual_settings
   - `RT_CFG_BACKHAUL_WIFI_PASS`
   - `RT_CFG_RTDB_MATRIX_ID`
   - `RT_CFG_RTDB_WRITER_KEY`
+  - `RT_CFG_RTDB_QUEUE_KEY`
 
 ## Atualização de firmware via Wi-Fi (OTA)
 - O gateway matriz inicia com OTA/Wi-Fi ativo por padrão (`wifi_ota_enabled=true`).

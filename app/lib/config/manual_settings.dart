@@ -3,16 +3,15 @@
 class ManualSettings {
   const ManualSettings._();
 
-  // RTDB fallback caso o databaseURL nao esteja definido no FirebaseOptions.
-  static const String firebaseRtdbUrl = String.fromEnvironment(
-    'FIREBASE_RTDB_URL',
-    defaultValue: 'https://ruraltech10-default-rtdb.firebaseio.com',
-  );
-
-  // Supabase usado como backend leve para validacao/queue sem Blaze.
+  // Supabase como backend principal do app.
   static const String supabaseUrl = String.fromEnvironment(
     'SUPABASE_URL',
     defaultValue: 'https://nhoewnfuyjbtpklrotbf.supabase.co',
+  );
+
+  static const String supabaseAnonKey = String.fromEnvironment(
+    'SUPABASE_ANON_KEY',
+    defaultValue: 'sb_publishable_Esa4TxfvLs6Slc_WA5DFUw_RY8H7Uug',
   );
 
   static const String supabasePublishableKey = String.fromEnvironment(
