@@ -39,6 +39,7 @@
 #include "ApiServer.h"
 #include "QueueStreamSupport.h"
 #include "../firmware/shared/command_contract.h"
+#include "../firmware/shared/AreaSyncLogger.h"
 
 LoRaGateway lora;
 BlePresence blePresence;
@@ -1803,6 +1804,20 @@ static void publishEventToCloud(const LoRaFrame& rx) {
   const char* originDocId = pickFirstText(
       eventPayload["origin_doc_id"], eventPayload["originDocId"]);
   if (originDocId[0] != '\0') payload["originDocId"] = originDocId;
+
+  if (strcmp(eventType, "polygon_apply_result") == 0) {
+    const char* cmdId = eventPayload["cmd_id"] | eventPayload["commandId"] | "";
+    const bool applyOk = strcmp(polygonStatus, "success") == 0;
+    if (applyOk) {
+      const int pts = eventPayload["point_count"] | 0;
+      AS_MATRIX_COLLAR_APPLY_SUCCESS(
+          cmdId, rx.deviceId, originDocId, originDocType, originDocId, pts);
+    } else {
+      const char* errCode = eventPayload["error_code"] | "";
+      const char* errStage = eventPayload["error_stage"] | "";
+      AS_MATRIX_COLLAR_APPLY_FAILURE(cmdId, rx.deviceId, errCode, errStage);
+    }
+  }
   if (eventPayload["operation_id"].is<const char*>()) {
     payload["operationId"] = eventPayload["operation_id"].as<const char*>();
   }
@@ -3109,6 +3124,13 @@ static bool dispatchQueuedSimpleCommand(
 
   bool sentAny = false;
   if (!targetDeviceIds.isNull() && targetDeviceIds.size() > 0) {
+    if (strcmp(command, "SET_FENCE") == 0) {
+      AS_MATRIX_DISPATCH_BEGIN(
+          commandId.c_str(),
+          activeSimpleCommand.originDocId,
+          propertyId,
+          (int)targetDeviceIds.size());
+    }
     activeSimpleCommand.targetDeviceCommand = true;
     for (JsonVariantConst rawId : targetDeviceIds) {
       const char* textId = rawId | "";
@@ -3131,7 +3153,15 @@ static bool dispatchQueuedSimpleCommand(
           (unsigned long)deviceId);
       bool ok = false;
       if (strcmp(command, "SET_FENCE") == 0) {
+        AS_MATRIX_LORA_TX_ATTEMPT(commandId.c_str(), deviceId, 0, 1);
         ok = sendFenceCommandChunked(deviceId, payloadDoc.as<JsonVariantConst>(), reason);
+        if (ok) {
+          const int pts = payloadDoc["points"].as<JsonArrayConst>().size();
+          AS_MATRIX_LORA_TX_OK(
+              commandId.c_str(), deviceId, 0, 1, activeSimpleCommand.originDocId, pts);
+        } else {
+          AS_MATRIX_LORA_TX_FAIL(commandId.c_str(), deviceId, reason ? *reason : "unknown");
+        }
       } else if (strcmp(command, "SET_PARAMS") == 0 || strcmp(command, "PING") == 0) {
         const MsgType msgType =
             strcmp(command, "SET_PARAMS") == 0 ? MsgType::SET_PARAMS : MsgType::PING;
@@ -3211,7 +3241,17 @@ static void processNextQueuedCommand() {
   const char* failStatus = nullptr;
   if (!commandId.length() || !command[0]) {
     return;
-  } else if (expiresAtMs != 0 && expiresAtMs <= nowMs) {
+  }
+
+  if (strcmp(command, "SET_FENCE") == 0) {
+    const char* areaId = commandDoc["payload"]["originDocId"] | commandDoc["payload"]["origin_doc_id"] | "";
+    const int targetCount = commandDoc["targetDeviceIds"].as<JsonArrayConst>().size();
+    const int pointCount = commandDoc["payload"]["points"].as<JsonArrayConst>().size();
+    AS_MATRIX_QUEUE_LOADED(
+        commandId.c_str(), areaId, propertyId, propertyScopeId, targetCount, pointCount);
+  }
+
+  if (expiresAtMs != 0 && expiresAtMs <= nowMs) {
     failStatus = "expired";
     failReason = "command_expired";
   } else if (!bindingReady) {
@@ -3231,6 +3271,9 @@ static void processNextQueuedCommand() {
   }
 
   if (failStatus) {
+    if (strcmp(command, "SET_FENCE") == 0) {
+      AS_MATRIX_QUEUE_REJECTED(commandId.c_str(), failReason);
+    }
     publishImmediateMatrixCommandResult(
         commandId.c_str(),
         command,
@@ -3248,6 +3291,11 @@ static void processNextQueuedCommand() {
         commandDoc["targetGatewayIds"].as<JsonArrayConst>());
     deleteQueuedCommand(commandId);
     return;
+  }
+
+  if (strcmp(command, "SET_FENCE") == 0) {
+    const char* areaId = commandDoc["payload"]["originDocId"] | commandDoc["payload"]["origin_doc_id"] | "";
+    AS_MATRIX_QUEUE_ACCEPTED(commandId.c_str(), areaId, propertyId, propertyScopeId);
   }
 
   if (strcmp(command, "SET_HERDING_PLAN") == 0) {
@@ -3874,6 +3922,15 @@ static void handleSimpleCommandFeedback(const LoRaFrame& rx) {
   const char* reason = payload["reason"] | "";
   const char* status = payload["status"] | (rx.msgType == MsgType::ACK ? "completed" : "nacked");
   markActiveSimpleCommandTarget(targetId, rx.msgType == MsgType::ACK, status, reason);
+
+  if (strcmp(activeSimpleCommand.command, "SET_FENCE") == 0) {
+    if (rx.msgType == MsgType::ACK) {
+      AS_MATRIX_ACK_MATCH(commandId, rx.deviceId, status, reason);
+    } else {
+      AS_MATRIX_NACK_MATCH(commandId, rx.deviceId, status, reason);
+    }
+  }
+
   if (rx.msgType == MsgType::NACK) {
     publishSimpleCommandResult("nacked", reason[0] ? reason : "nack");
     clearActiveSimpleCommand();
@@ -3881,6 +3938,9 @@ static void handleSimpleCommandFeedback(const LoRaFrame& rx) {
   }
 
   if (allActiveSimpleTargetsTerminal()) {
+    if (strcmp(activeSimpleCommand.command, "SET_FENCE") == 0) {
+      AS_MATRIX_RESULT_PUBLISHED(commandId, anyActiveSimpleTargetFailed() ? "failed" : "completed");
+    }
     publishSimpleCommandResult(anyActiveSimpleTargetFailed() ? "failed" : "completed", nullptr);
     clearActiveSimpleCommand();
     return;

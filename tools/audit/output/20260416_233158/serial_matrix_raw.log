@@ -1,0 +1,2 @@
+2026-04-17T02:32:19.767440+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-17T02:32:50.066667+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240

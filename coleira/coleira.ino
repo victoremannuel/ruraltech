@@ -39,6 +39,7 @@
 #include "HerdingController.h"
 #include "StateMachine.h"
 #include "../firmware/shared/command_contract.h"
+#include "../firmware/shared/AreaSyncLogger.h"
 
 SensorsManager sensors;
 SmartGps smartGps;
@@ -971,6 +972,7 @@ static bool applyFenceChunkJson(const JsonObject& doc, const char** err) {
         MsgType::SET_FENCE,
         parseScopeIdHex(pickFirstText(doc["scope_id"], doc["property_scope_id"])),
         doc);
+    AS_COLLAR_RX_CHUNK_BEGIN(fenceChunkRx_.audit.commandId, total);
   }
 
   if (!fenceChunkRx_.active) {
@@ -994,8 +996,11 @@ static bool applyFenceChunkJson(const JsonObject& doc, const char** err) {
     fenceChunkRx_.fence.points[fenceChunkRx_.fence.count++] = parsed[i];
   }
   fenceChunkRx_.expectedPart++;
+  AS_COLLAR_RX_CHUNK_APPEND(
+      fenceChunkRx_.audit.commandId, part, total, (int)fenceChunkRx_.fence.count);
 
   if ((uint8_t)part == (uint8_t)(total - 1)) {
+    AS_COLLAR_RX_CHUNK_FINAL(fenceChunkRx_.audit.commandId, (int)fenceChunkRx_.fence.count);
     if (!isValidPolygon(fenceChunkRx_.fence)) {
       resetFenceChunkRx();
       if (err) *err = "invalid_fence_final";
@@ -1007,6 +1012,10 @@ static bool applyFenceChunkJson(const JsonObject& doc, const char** err) {
       if (err) *err = "persist_fence_failed";
       return false;
     }
+    AS_COLLAR_FENCE_APPLY_OK(
+        fenceChunkRx_.audit.commandId,
+        fenceChunkRx_.audit.originDocId,
+        (int)fenceChunkRx_.fence.count);
     logPolygonApplyResult(
         MsgType::SET_FENCE,
         fenceChunkRx_.audit.scopeId,
@@ -1019,6 +1028,7 @@ static bool applyFenceChunkJson(const JsonObject& doc, const char** err) {
         PolygonErrorStage::NONE,
         fenceChunkRx_.fence.count,
         0);
+    AS_COLLAR_AUDIT_EVENT_QUEUED(fenceChunkRx_.audit.commandId);
     resetFenceChunkRx();
   }
   return true;
@@ -1932,6 +1942,16 @@ static void sendCommandFeedback(
   if (cfg::LORA_COMMAND_FEEDBACK_DELAY_MS > 0) {
     delay(cfg::LORA_COMMAND_FEEDBACK_DELAY_MS);
   }
+
+  if (cmd.msgType == MsgType::SET_FENCE) {
+    const char* fbCmdId = commandId && commandId[0] ? commandId : "";
+    if (ok) {
+      AS_COLLAR_ACK_SENT(fbCmdId, status && status[0] ? status : "ok");
+    } else {
+      AS_COLLAR_NACK_SENT(fbCmdId, "nacked", reason && reason[0] ? reason : "unknown");
+    }
+  }
+
   if (!lora.sendFrame(reply)) {
     LOGW("Falha ao enviar %s para cmd=%u seq=%lu",
          ok ? "ACK" : "NACK", (unsigned)cmd.msgType, cmd.seq);
@@ -1973,7 +1993,20 @@ static void applyDownlink(const LoRaFrame& frame) {
     }
   }
 
+  if (frame.msgType == MsgType::SET_FENCE) {
+    AS_COLLAR_RX_FENCE_COMMAND(
+        commandId,
+        auditCtx.originDocId,
+        originDocTypeLabel(auditCtx.originDocType),
+        auditCtx.originDocId,
+        bindingPropertyScopeId_,
+        (unsigned long)cfg::DEVICE_ID);
+  }
+
   if (!bindingReady_) {
+    if (frame.msgType == MsgType::SET_FENCE) {
+      AS_COLLAR_BINDING_MISSING(commandId);
+    }
     if (polygonAuditCommand && frame.scopeId != 0) {
       logPolygonApplyResult(
           frame.msgType,
@@ -1991,6 +2024,9 @@ static void applyDownlink(const LoRaFrame& frame) {
     return;
   }
   if (frame.scopeId == 0 || frame.scopeId != bindingScopeIdValue()) {
+    if (frame.msgType == MsgType::SET_FENCE) {
+      AS_COLLAR_SCOPE_MISMATCH(commandId, bindingPropertyScopeId_, frame.scopeId);
+    }
     if (polygonAuditCommand && frame.scopeId != 0) {
       logPolygonApplyResult(
           frame.msgType,
@@ -2020,6 +2056,9 @@ static void applyDownlink(const LoRaFrame& frame) {
   }
 
   if (!docReady) {
+    if (frame.msgType == MsgType::SET_FENCE) {
+      AS_COLLAR_PARSE_FAIL(commandId, "invalid_json");
+    }
     if (polygonAuditCommand) {
       logPolygonApplyResult(
           frame.msgType,
@@ -2043,6 +2082,9 @@ static void applyDownlink(const LoRaFrame& frame) {
       if (!applyFenceChunkJson(doc.as<JsonObject>(), &err)) {
         const PolygonAuditContext& failureAudit =
             fenceChunkRx_.audit.commandId[0] != '\0' ? fenceChunkRx_.audit : auditCtx;
+        AS_COLLAR_ASSEMBLE_FAIL(
+            failureAudit.commandId[0] ? failureAudit.commandId : commandId,
+            err ? err : "invalid_fence_chunk");
         logPolygonApplyResult(
             MsgType::SET_FENCE,
             failureAudit.scopeId != 0 ? failureAudit.scopeId : frame.scopeId,

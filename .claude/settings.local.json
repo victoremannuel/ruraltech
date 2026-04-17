@@ -34,7 +34,9 @@
       "Bash(xargs -I {} bash -c \"echo '=== {} ===' && head -5 {}\")",
       "Bash(rtk find:*)",
       "Bash(deno test:*)",
-      "WebFetch(domain:supabase.com)"
+      "WebFetch(domain:supabase.com)",
+      "Bash(find /Users/victoremannuel/Documents/dev/ruraltech/gateway* -maxdepth 2 -type f \\\\\\( -name \"*.ino\" -o -name \"*.cpp\" -o -name \"*.h\" \\\\\\))",
+      "Bash(rtk curl *)"
     ]
   }
 }
