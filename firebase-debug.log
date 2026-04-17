@@ -1,0 +1,177 @@
+[debug] [2026-04-02T23:58:07.772Z] ----------------------------------------------------------------------
+[debug] [2026-04-02T23:58:07.776Z] Command:       /usr/local/Cellar/node/25.8.1_1/bin/node /usr/local/bin/firebase projects:list --json
+[debug] [2026-04-02T23:58:07.776Z] CLI Version:   15.11.0
+[debug] [2026-04-02T23:58:07.777Z] Platform:      darwin
+[debug] [2026-04-02T23:58:07.777Z] Node Version:  v25.8.1
+[debug] [2026-04-02T23:58:07.777Z] Time:          Thu Apr 02 2026 20:58:07 GMT-0300 (Brasilia Standard Time)
+[debug] [2026-04-02T23:58:07.777Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2026-04-02T23:58:07.786Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2026-04-02T23:58:07.786Z] > authorizing via signed-in user (ruraltecnologia10@gmail.com)
+[debug] [2026-04-02T23:58:07.791Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-02T23:58:07.791Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-02T23:58:07.795Z] >>> [apiv2][query] GET https://firebase.googleapis.com/v1beta1/projects pageSize=1000
+[debug] [2026-04-02T23:58:08.652Z] <<< [apiv2][status] GET https://firebase.googleapis.com/v1beta1/projects 200
+[debug] [2026-04-02T23:58:08.653Z] <<< [apiv2][body] GET https://firebase.googleapis.com/v1beta1/projects [omitted]
+[info] ┌──────────────────────┬─────────────┬────────────────┬──────────────────────┐
+│ Project Display Name │ Project ID  │ Project Number │ Resource Location ID │
+├──────────────────────┼─────────────┼────────────────┼──────────────────────┤
+│ ruraltech10          │ ruraltech10 │ 872721218590   │ [Not specified]      │
+└──────────────────────┴─────────────┴────────────────┴──────────────────────┘
+[info] 
+[info] 1 project(s) total.
+[debug] [2026-04-02T23:58:48.593Z] ----------------------------------------------------------------------
+[debug] [2026-04-02T23:58:48.597Z] Command:       /usr/local/Cellar/node/25.8.1_1/bin/node /usr/local/bin/firebase login:list
+[debug] [2026-04-02T23:58:48.598Z] CLI Version:   15.11.0
+[debug] [2026-04-02T23:58:48.598Z] Platform:      darwin
+[debug] [2026-04-02T23:58:48.598Z] Node Version:  v25.8.1
+[debug] [2026-04-02T23:58:48.598Z] Time:          Thu Apr 02 2026 20:58:48 GMT-0300 (Brasilia Standard Time)
+[debug] [2026-04-02T23:58:48.598Z] ----------------------------------------------------------------------
+[debug] 
+[info] Logged in as ruraltecnologia10@gmail.com
+[debug] [2026-04-03T00:24:20.597Z] ----------------------------------------------------------------------
+[debug] [2026-04-03T00:24:20.615Z] Command:       /usr/local/Cellar/node/25.8.1_1/bin/node /usr/local/bin/firebase database:set /matrixWriterKeys/matriz_fazenda_01 --data "HXz3wo8uWQWIeHmZ5QLbgyw7QiOHvF3xHvVH56WKjEWsrzbZ5aBPCbHPKPgiNuYG" --project ruraltech10 --force
+[debug] [2026-04-03T00:24:20.615Z] CLI Version:   15.11.0
+[debug] [2026-04-03T00:24:20.615Z] Platform:      darwin
+[debug] [2026-04-03T00:24:20.615Z] Node Version:  v25.8.1
+[debug] [2026-04-03T00:24:20.617Z] Time:          Thu Apr 02 2026 21:24:20 GMT-0300 (Brasilia Standard Time)
+[debug] [2026-04-03T00:24:20.617Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2026-04-03T00:24:24.299Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2026-04-03T00:24:24.304Z] > authorizing via signed-in user (ruraltecnologia10@gmail.com)
+[debug] [2026-04-03T00:24:24.305Z] [iam] checking project ruraltech10 for permissions ["firebase.projects.get","firebasedatabase.instances.update"]
+[debug] [2026-04-03T00:24:24.311Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:24.312Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:24.315Z] >>> [apiv2][query] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions [none]
+[debug] [2026-04-03T00:24:24.316Z] >>> [apiv2][(partial)header] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions  x-goog-user-project=ruraltech10
+[debug] [2026-04-03T00:24:24.316Z] >>> [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions {"permissions":["firebase.projects.get","firebasedatabase.instances.update"]}
+[debug] [2026-04-03T00:24:26.329Z] <<< [apiv2][status] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions 200
+[debug] [2026-04-03T00:24:26.330Z] <<< [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions {"permissions":["firebase.projects.get","firebasedatabase.instances.update"]}
+[debug] [2026-04-03T00:24:26.331Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:26.331Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:26.333Z] >>> [apiv2][query] GET https://firebase.googleapis.com/v1beta1/projects/ruraltech10 [none]
+[debug] [2026-04-03T00:24:26.807Z] <<< [apiv2][status] GET https://firebase.googleapis.com/v1beta1/projects/ruraltech10 200
+[debug] [2026-04-03T00:24:26.807Z] <<< [apiv2][body] GET https://firebase.googleapis.com/v1beta1/projects/ruraltech10 {"projectId":"ruraltech10","projectNumber":"872721218590","displayName":"ruraltech10","name":"projects/ruraltech10","resources":{"hostingSite":"ruraltech10","realtimeDatabaseInstance":"ruraltech10-default-rtdb"},"state":"ACTIVE","etag":"1_01523902-6ec9-467a-a62f-23ffb07b092f"}
+[debug] [2026-04-03T00:24:26.807Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:26.807Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:26.807Z] >>> [apiv2][query] GET https://firebasedatabase.googleapis.com/v1beta/projects/ruraltech10/locations/-/instances/ruraltech10-default-rtdb [none]
+[debug] [2026-04-03T00:24:27.939Z] <<< [apiv2][status] GET https://firebasedatabase.googleapis.com/v1beta/projects/ruraltech10/locations/-/instances/ruraltech10-default-rtdb 200
+[debug] [2026-04-03T00:24:27.940Z] <<< [apiv2][body] GET https://firebasedatabase.googleapis.com/v1beta/projects/ruraltech10/locations/-/instances/ruraltech10-default-rtdb {"name":"projects/872721218590/locations/us-central1/instances/ruraltech10-default-rtdb","project":"projects/872721218590","databaseUrl":"https://ruraltech10-default-rtdb.firebaseio.com","type":"DEFAULT_DATABASE","state":"ACTIVE"}
+[debug] [2026-04-03T00:24:27.944Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:27.946Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:27.946Z] >>> [apiv2][query] PUT https://ruraltech10-default-rtdb.firebaseio.com/matrixWriterKeys/matriz_fazenda_01.json 
+[debug] [2026-04-03T00:24:27.946Z] >>> [apiv2][body] PUT https://ruraltech10-default-rtdb.firebaseio.com/matrixWriterKeys/matriz_fazenda_01.json [stream]
+[debug] [2026-04-03T00:24:28.441Z] <<< [apiv2][status] PUT https://ruraltech10-default-rtdb.firebaseio.com/matrixWriterKeys/matriz_fazenda_01.json 200
+[debug] [2026-04-03T00:24:28.441Z] <<< [apiv2][body] PUT https://ruraltech10-default-rtdb.firebaseio.com/matrixWriterKeys/matriz_fazenda_01.json "HXz3wo8uWQWIeHmZ5QLbgyw7QiOHvF3xHvVH56WKjEWsrzbZ5aBPCbHPKPgiNuYG"
+[info] ✔  Data persisted successfully 
+[info] 
+[info] View data at: https://console.firebase.google.com/project/ruraltech10/database/ruraltech10-default-rtdb/data/matrixWriterKeys/matriz_fazenda_01
+[debug] [2026-04-03T00:24:30.753Z] ----------------------------------------------------------------------
+[debug] [2026-04-03T00:24:30.758Z] Command:       /usr/local/Cellar/node/25.8.1_1/bin/node /usr/local/bin/firebase database:set /matrixQueueKeys/matriz_fazenda_01 --data {
+  "queueKey": "HcTWH2NTTwED761QDPfuTtTOMA9inllJYO9WqmgOXJh6LQmuGjG5DqT3OPl8tHrk",
+  "matrixRuntimeId": "matriz_fazenda_01",
+  "updatedAtMs": 1775175856000,
+  "writer": "gateway_matrix",
+  "writerKey": "HXz3wo8uWQWIeHmZ5QLbgyw7QiOHvF3xHvVH56WKjEWsrzbZ5aBPCbHPKPgiNuYG"
+} --project ruraltech10 --force
+[debug] [2026-04-03T00:24:30.759Z] CLI Version:   15.11.0
+[debug] [2026-04-03T00:24:30.759Z] Platform:      darwin
+[debug] [2026-04-03T00:24:30.759Z] Node Version:  v25.8.1
+[debug] [2026-04-03T00:24:30.759Z] Time:          Thu Apr 02 2026 21:24:30 GMT-0300 (Brasilia Standard Time)
+[debug] [2026-04-03T00:24:30.759Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2026-04-03T00:24:32.741Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2026-04-03T00:24:32.747Z] > authorizing via signed-in user (ruraltecnologia10@gmail.com)
+[debug] [2026-04-03T00:24:32.748Z] [iam] checking project ruraltech10 for permissions ["firebase.projects.get","firebasedatabase.instances.update"]
+[debug] [2026-04-03T00:24:32.750Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:32.751Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:32.758Z] >>> [apiv2][query] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions [none]
+[debug] [2026-04-03T00:24:32.758Z] >>> [apiv2][(partial)header] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions  x-goog-user-project=ruraltech10
+[debug] [2026-04-03T00:24:32.758Z] >>> [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions {"permissions":["firebase.projects.get","firebasedatabase.instances.update"]}
+[debug] [2026-04-03T00:24:33.760Z] <<< [apiv2][status] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions 200
+[debug] [2026-04-03T00:24:33.761Z] <<< [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions {"permissions":["firebase.projects.get","firebasedatabase.instances.update"]}
+[debug] [2026-04-03T00:24:33.761Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:33.762Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:33.764Z] >>> [apiv2][query] GET https://firebase.googleapis.com/v1beta1/projects/ruraltech10 [none]
+[debug] [2026-04-03T00:24:34.201Z] <<< [apiv2][status] GET https://firebase.googleapis.com/v1beta1/projects/ruraltech10 200
+[debug] [2026-04-03T00:24:34.202Z] <<< [apiv2][body] GET https://firebase.googleapis.com/v1beta1/projects/ruraltech10 {"projectId":"ruraltech10","projectNumber":"872721218590","displayName":"ruraltech10","name":"projects/ruraltech10","resources":{"hostingSite":"ruraltech10","realtimeDatabaseInstance":"ruraltech10-default-rtdb"},"state":"ACTIVE","etag":"1_01523902-6ec9-467a-a62f-23ffb07b092f"}
+[debug] [2026-04-03T00:24:34.202Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:34.202Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:34.202Z] >>> [apiv2][query] GET https://firebasedatabase.googleapis.com/v1beta/projects/ruraltech10/locations/-/instances/ruraltech10-default-rtdb [none]
+[debug] [2026-04-03T00:24:35.308Z] <<< [apiv2][status] GET https://firebasedatabase.googleapis.com/v1beta/projects/ruraltech10/locations/-/instances/ruraltech10-default-rtdb 200
+[debug] [2026-04-03T00:24:35.309Z] <<< [apiv2][body] GET https://firebasedatabase.googleapis.com/v1beta/projects/ruraltech10/locations/-/instances/ruraltech10-default-rtdb {"name":"projects/872721218590/locations/us-central1/instances/ruraltech10-default-rtdb","project":"projects/872721218590","databaseUrl":"https://ruraltech10-default-rtdb.firebaseio.com","type":"DEFAULT_DATABASE","state":"ACTIVE"}
+[debug] [2026-04-03T00:24:35.312Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:35.314Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:35.315Z] >>> [apiv2][query] PUT https://ruraltech10-default-rtdb.firebaseio.com/matrixQueueKeys/matriz_fazenda_01.json 
+[debug] [2026-04-03T00:24:35.315Z] >>> [apiv2][body] PUT https://ruraltech10-default-rtdb.firebaseio.com/matrixQueueKeys/matriz_fazenda_01.json [stream]
+[debug] [2026-04-03T00:24:35.736Z] <<< [apiv2][status] PUT https://ruraltech10-default-rtdb.firebaseio.com/matrixQueueKeys/matriz_fazenda_01.json 200
+[debug] [2026-04-03T00:24:35.736Z] <<< [apiv2][body] PUT https://ruraltech10-default-rtdb.firebaseio.com/matrixQueueKeys/matriz_fazenda_01.json {"matrixRuntimeId":"matriz_fazenda_01","queueKey":"HcTWH2NTTwED761QDPfuTtTOMA9inllJYO9WqmgOXJh6LQmuGjG5DqT3OPl8tHrk","updatedAtMs":1775175856000,"writer":"gateway_matrix","writerKey":"HXz3wo8uWQWIeHmZ5QLbgyw7QiOHvF3xHvVH56WKjEWsrzbZ5aBPCbHPKPgiNuYG"}
+[info] ✔  Data persisted successfully 
+[info] 
+[info] View data at: https://console.firebase.google.com/project/ruraltech10/database/ruraltech10-default-rtdb/data/matrixQueueKeys/matriz_fazenda_01
+[debug] [2026-04-03T00:24:37.571Z] ----------------------------------------------------------------------
+[debug] [2026-04-03T00:24:37.577Z] Command:       /usr/local/Cellar/node/25.8.1_1/bin/node /usr/local/bin/firebase database:get /matrixWriterKeys/matriz_fazenda_01 --project ruraltech10
+[debug] [2026-04-03T00:24:37.577Z] CLI Version:   15.11.0
+[debug] [2026-04-03T00:24:37.577Z] Platform:      darwin
+[debug] [2026-04-03T00:24:37.578Z] Node Version:  v25.8.1
+[debug] [2026-04-03T00:24:37.578Z] Time:          Thu Apr 02 2026 21:24:37 GMT-0300 (Brasilia Standard Time)
+[debug] [2026-04-03T00:24:37.578Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2026-04-03T00:24:40.090Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2026-04-03T00:24:40.092Z] > authorizing via signed-in user (ruraltecnologia10@gmail.com)
+[debug] [2026-04-03T00:24:40.092Z] [iam] checking project ruraltech10 for permissions ["firebase.projects.get","firebasedatabase.instances.get"]
+[debug] [2026-04-03T00:24:40.094Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:40.095Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:40.096Z] >>> [apiv2][query] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions [none]
+[debug] [2026-04-03T00:24:40.096Z] >>> [apiv2][(partial)header] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions  x-goog-user-project=ruraltech10
+[debug] [2026-04-03T00:24:40.097Z] >>> [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions {"permissions":["firebase.projects.get","firebasedatabase.instances.get"]}
+[debug] [2026-04-03T00:24:41.096Z] <<< [apiv2][status] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions 200
+[debug] [2026-04-03T00:24:41.096Z] <<< [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions {"permissions":["firebase.projects.get","firebasedatabase.instances.get"]}
+[debug] [2026-04-03T00:24:41.097Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:41.097Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:41.098Z] >>> [apiv2][query] GET https://firebase.googleapis.com/v1beta1/projects/ruraltech10 [none]
+[debug] [2026-04-03T00:24:41.605Z] <<< [apiv2][status] GET https://firebase.googleapis.com/v1beta1/projects/ruraltech10 200
+[debug] [2026-04-03T00:24:41.605Z] <<< [apiv2][body] GET https://firebase.googleapis.com/v1beta1/projects/ruraltech10 {"projectId":"ruraltech10","projectNumber":"872721218590","displayName":"ruraltech10","name":"projects/ruraltech10","resources":{"hostingSite":"ruraltech10","realtimeDatabaseInstance":"ruraltech10-default-rtdb"},"state":"ACTIVE","etag":"1_01523902-6ec9-467a-a62f-23ffb07b092f"}
+[debug] [2026-04-03T00:24:41.606Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:41.606Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:41.607Z] >>> [apiv2][query] GET https://firebasedatabase.googleapis.com/v1beta/projects/ruraltech10/locations/-/instances/ruraltech10-default-rtdb [none]
+[debug] [2026-04-03T00:24:42.616Z] <<< [apiv2][status] GET https://firebasedatabase.googleapis.com/v1beta/projects/ruraltech10/locations/-/instances/ruraltech10-default-rtdb 200
+[debug] [2026-04-03T00:24:42.617Z] <<< [apiv2][body] GET https://firebasedatabase.googleapis.com/v1beta/projects/ruraltech10/locations/-/instances/ruraltech10-default-rtdb {"name":"projects/872721218590/locations/us-central1/instances/ruraltech10-default-rtdb","project":"projects/872721218590","databaseUrl":"https://ruraltech10-default-rtdb.firebaseio.com","type":"DEFAULT_DATABASE","state":"ACTIVE"}
+[debug] [2026-04-03T00:24:42.621Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:42.622Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:42.623Z] >>> [apiv2][query] GET https://ruraltech10-default-rtdb.firebaseio.com/matrixWriterKeys/matriz_fazenda_01.json 
+[debug] [2026-04-03T00:24:43.081Z] <<< [apiv2][status] GET https://ruraltech10-default-rtdb.firebaseio.com/matrixWriterKeys/matriz_fazenda_01.json 200
+[debug] [2026-04-03T00:24:43.081Z] <<< [apiv2][body] GET https://ruraltech10-default-rtdb.firebaseio.com/matrixWriterKeys/matriz_fazenda_01.json [stream]
+[debug] [2026-04-03T00:24:44.874Z] ----------------------------------------------------------------------
+[debug] [2026-04-03T00:24:44.879Z] Command:       /usr/local/Cellar/node/25.8.1_1/bin/node /usr/local/bin/firebase database:get /matrixQueueKeys/matriz_fazenda_01 --project ruraltech10
+[debug] [2026-04-03T00:24:44.880Z] CLI Version:   15.11.0
+[debug] [2026-04-03T00:24:44.880Z] Platform:      darwin
+[debug] [2026-04-03T00:24:44.880Z] Node Version:  v25.8.1
+[debug] [2026-04-03T00:24:44.881Z] Time:          Thu Apr 02 2026 21:24:44 GMT-0300 (Brasilia Standard Time)
+[debug] [2026-04-03T00:24:44.881Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2026-04-03T00:24:47.873Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2026-04-03T00:24:47.875Z] > authorizing via signed-in user (ruraltecnologia10@gmail.com)
+[debug] [2026-04-03T00:24:47.875Z] [iam] checking project ruraltech10 for permissions ["firebase.projects.get","firebasedatabase.instances.get"]
+[debug] [2026-04-03T00:24:47.877Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:47.878Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:47.880Z] >>> [apiv2][query] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions [none]
+[debug] [2026-04-03T00:24:47.880Z] >>> [apiv2][(partial)header] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions  x-goog-user-project=ruraltech10
+[debug] [2026-04-03T00:24:47.880Z] >>> [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions {"permissions":["firebase.projects.get","firebasedatabase.instances.get"]}
+[debug] [2026-04-03T00:24:49.019Z] <<< [apiv2][status] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions 200
+[debug] [2026-04-03T00:24:49.019Z] <<< [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/ruraltech10:testIamPermissions {"permissions":["firebase.projects.get","firebasedatabase.instances.get"]}
+[debug] [2026-04-03T00:24:49.020Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:49.020Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:49.021Z] >>> [apiv2][query] GET https://firebase.googleapis.com/v1beta1/projects/ruraltech10 [none]
+[debug] [2026-04-03T00:24:49.520Z] <<< [apiv2][status] GET https://firebase.googleapis.com/v1beta1/projects/ruraltech10 200
+[debug] [2026-04-03T00:24:49.520Z] <<< [apiv2][body] GET https://firebase.googleapis.com/v1beta1/projects/ruraltech10 {"projectId":"ruraltech10","projectNumber":"872721218590","displayName":"ruraltech10","name":"projects/ruraltech10","resources":{"hostingSite":"ruraltech10","realtimeDatabaseInstance":"ruraltech10-default-rtdb"},"state":"ACTIVE","etag":"1_01523902-6ec9-467a-a62f-23ffb07b092f"}
+[debug] [2026-04-03T00:24:49.520Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:49.521Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:49.521Z] >>> [apiv2][query] GET https://firebasedatabase.googleapis.com/v1beta/projects/ruraltech10/locations/-/instances/ruraltech10-default-rtdb [none]
+[debug] [2026-04-03T00:24:50.551Z] <<< [apiv2][status] GET https://firebasedatabase.googleapis.com/v1beta/projects/ruraltech10/locations/-/instances/ruraltech10-default-rtdb 200
+[debug] [2026-04-03T00:24:50.552Z] <<< [apiv2][body] GET https://firebasedatabase.googleapis.com/v1beta/projects/ruraltech10/locations/-/instances/ruraltech10-default-rtdb {"name":"projects/872721218590/locations/us-central1/instances/ruraltech10-default-rtdb","project":"projects/872721218590","databaseUrl":"https://ruraltech10-default-rtdb.firebaseio.com","type":"DEFAULT_DATABASE","state":"ACTIVE"}
+[debug] [2026-04-03T00:24:50.555Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:50.555Z] Checked if tokens are valid: true, expires at: 1775176948332
+[debug] [2026-04-03T00:24:50.556Z] >>> [apiv2][query] GET https://ruraltech10-default-rtdb.firebaseio.com/matrixQueueKeys/matriz_fazenda_01.json 
+[debug] [2026-04-03T00:24:50.960Z] <<< [apiv2][status] GET https://ruraltech10-default-rtdb.firebaseio.com/matrixQueueKeys/matriz_fazenda_01.json 200
+[debug] [2026-04-03T00:24:50.960Z] <<< [apiv2][body] GET https://ruraltech10-default-rtdb.firebaseio.com/matrixQueueKeys/matriz_fazenda_01.json [stream]

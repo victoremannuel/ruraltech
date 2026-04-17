@@ -33,7 +33,8 @@
       "Bash(rtk pip:*)",
       "Bash(xargs -I {} bash -c \"echo '=== {} ===' && head -5 {}\")",
       "Bash(rtk find:*)",
-      "Bash(deno test:*)"
+      "Bash(deno test:*)",
+      "WebFetch(domain:supabase.com)"
     ]
   }
 }
