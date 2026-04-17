@@ -56,3 +56,4 @@ graphify-out
 **/node_modules
 /scripts/migration/.env
 /scripts/migration/package-lock.json
+*.env
