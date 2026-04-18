@@ -57,6 +57,12 @@ graphify-out
 /scripts/migration/.env
 /scripts/migration/package-lock.json
 *.env
-
+.gitignore
 /brain/graphify-out/
 /brain/copilot/
+/brain/.smart-env/*
+brain/.smart-env/multi/*
+/brain/.obsidian/*
+/brain/copilot/*
+/brain/.smart-env/event_logs/*
+/brain/.smart-env/embedding_models/*
