@@ -9,7 +9,10 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
+import '../components/domain/rt_collar_sheet.dart';
+import '../components/domain/rt_telemetry_grid.dart';
 import '../components/map/rt_map_controls.dart';
+import '../components/primitives/rt_button.dart';
 import '../components/primitives/rt_fab.dart';
 import '../config/manual_settings.dart';
 import '../design/colors.dart';
@@ -1281,38 +1284,90 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _openDeviceMarkerActions(
       BuildContext context, DeviceModel device) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.tune),
-              title: const Text('Comandos da coleira'),
-              subtitle: const Text('Geofence e plano de conducao'),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => DeviceDetailsScreen(device: device),
-                  ),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.edit),
-              title: const Text('Editar coleira'),
-              onTap: () async {
-                Navigator.pop(sheetContext);
-                await _showEditDeviceDialog(context, device);
-              },
-            ),
-          ],
+    final networkId = device.networkId;
+    final liveTelemetry = _latestTelemetryByDeviceId[device.id];
+    final lat = liveTelemetry?.lat ?? device.lat;
+    final lon = liveTelemetry?.lon ?? device.lon;
+    final lastSeenMs = liveTelemetry?.receivedAtMs ??
+        device.telemetryReceivedAtMs ??
+        device.positionReceivedAtMs;
+    final online = lastSeenMs != null &&
+        DateTime.now().millisecondsSinceEpoch - lastSeenMs < 5 * 60 * 1000;
+
+    final entries = <RTTelemetryEntry>[
+      RTTelemetryEntry(
+        label: 'Coordenadas',
+        value: _formatCoordPair(lat, lon),
+        emphasis: true,
+      ),
+      RTTelemetryEntry(
+        label: 'Última telemetria',
+        value: _formatRelativeFromMs(lastSeenMs),
+      ),
+      if (device.hasDailyHealth)
+        RTTelemetryEntry(
+          label: 'Sat / HDOP',
+          value:
+              '${device.healthSatellites ?? '-'} · ${device.healthHdop?.toStringAsFixed(2) ?? '-'}',
         ),
+      if (device.hasDailyHealth && device.healthTemperatureC != null)
+        RTTelemetryEntry(
+          label: 'Temperatura',
+          value: '${device.healthTemperatureC!.toStringAsFixed(1)} °C',
+        ),
+    ];
+
+    await showRTCollarSheet(
+      context,
+      sheet: RTCollarSheet(
+        title: device.name,
+        subtitle: 'ID $networkId',
+        online: online,
+        lastSeenLabel: lastSeenMs == null
+            ? 'Sem registros'
+            : 'Visto ${_formatRelativeFromMs(lastSeenMs)}',
+        entries: entries,
+        actions: [
+          RTCollarSheetAction(
+            icon: Icons.tune,
+            label: 'Comandos',
+            variant: RTButtonVariant.primary,
+            onTap: () {
+              Navigator.of(context).pop();
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => DeviceDetailsScreen(device: device),
+                ),
+              );
+            },
+          ),
+          RTCollarSheetAction(
+            icon: Icons.edit_outlined,
+            label: 'Editar',
+            onTap: () async {
+              Navigator.of(context).pop();
+              await _showEditDeviceDialog(context, device);
+            },
+          ),
+        ],
       ),
     );
+  }
+
+  String _formatCoordPair(double? lat, double? lon) {
+    if (lat == null || lon == null) return 'Sem posição';
+    return '${lat.toStringAsFixed(5)}, ${lon.toStringAsFixed(5)}';
+  }
+
+  String _formatRelativeFromMs(int? ms) {
+    if (ms == null || ms <= 0) return 'sem dados';
+    final diff =
+        DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(ms));
+    if (diff.inSeconds < 60) return 'há poucos segundos';
+    if (diff.inMinutes < 60) return 'há ${diff.inMinutes} min';
+    if (diff.inHours < 24) return 'há ${diff.inHours} h';
+    return 'há ${diff.inDays} d';
   }
 
   Future<void> _openGatewayMarkerActions(

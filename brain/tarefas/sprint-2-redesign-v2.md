@@ -79,9 +79,22 @@ Checklist:
 - [x] `BottomAppBar` interno removido do dashboard
 - [x] `_openPlusActions` substituído por `RTFab`
 - [x] Coluna de FABs substituída por `RTMapControls`
-- [ ] Integração do `RTCollarSheet` no fluxo de tap do marker (próxima sprint)
+- [x] Integração do `RTCollarSheet` no fluxo de tap do marker
 - [ ] Split completo de `dashboard_screen.dart` (adiado — escopo grande)
-- [ ] Commit + push para `claude/implement-design-sprint-1-pMOiT`
+- [x] Commit + push para `claude/implement-design-sprint-1-pMOiT`
+
+## Incremento pós-commit principal
+
+`_openDeviceMarkerActions` migrado de `ListTile` modal para `RTCollarSheet`:
+
+- Resolve `lat/lon/lastSeenMs` priorizando o sample em memória
+  (`_latestTelemetryByDeviceId`) sobre o snapshot do Firestore.
+- `online` derivado de janela de 5 min sobre `lastSeenMs`.
+- Telemetria exibida: coordenadas, última telemetria (relativa), satélites/HDOP
+  e temperatura (quando há `dailyHealth`).
+- Ações: **Comandos** (primary → `DeviceDetailsScreen`) e **Editar** (tonal →
+  `_showEditDeviceDialog`).
+- Helpers `_formatCoordPair` / `_formatRelativeFromMs` extraídos para reuso.
 
 ## Next step
 
