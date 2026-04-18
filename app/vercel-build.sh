@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Defina na Vercel a mesma versão do Flutter que você usa localmente
-: "${FLUTTER_VERSION:=3.24.0}"
+: "${FLUTTER_VERSION:=3.41.7}"
 
 FLUTTER_HOME="$HOME/flutter"
 
@@ -12,9 +11,15 @@ if [ ! -x "$FLUTTER_HOME/bin/flutter" ]; then
   tar -xJf /tmp/flutter.tar.xz -C "$HOME"
 fi
 
+git config --global --add safe.directory "$FLUTTER_HOME"
+
 export PATH="$FLUTTER_HOME/bin:$PATH"
+export CI=true
+
+flutter config --no-analytics
+flutter config --no-cli-animations
+flutter config --enable-web
 
 flutter --version
-flutter config --enable-web
 flutter pub get
 flutter build web --release
