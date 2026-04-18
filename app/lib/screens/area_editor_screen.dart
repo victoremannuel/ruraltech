@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
+import '../components/primitives/rt_button.dart';
+import '../design/colors.dart';
+import '../design/tokens.dart';
+import '../design/typography.dart';
 import '../models/device_model.dart';
 import '../models/polygon_map_context.dart';
 import '../services/auth_service.dart';
@@ -196,8 +200,8 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
     final confirmed = await showDialog<bool>(
           context: context,
           builder: (_) => AlertDialog(
-            title: const Text('Apagar area'),
-            content: const Text('Deseja apagar esta area?'),
+            title: const Text('Apagar área'),
+            content: const Text('Deseja apagar esta área?'),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context, false),
@@ -206,7 +210,7 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
               TextButton(
                 onPressed: () => Navigator.pop(context, true),
                 style: TextButton.styleFrom(
-                  foregroundColor: Colors.red.shade700,
+                  foregroundColor: RTColors.danger,
                 ),
                 child: const Text('Apagar'),
               ),
@@ -300,22 +304,28 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
         selectedProperty == null ? '-' : _propertyLabel(selectedProperty);
 
     return Scaffold(
+      backgroundColor: RTColors.bgAlt,
       appBar: AppBar(
-        title: Text(_isEditMode ? 'Editar area' : 'Nova area (poligono)'),
+        title: Text(_isEditMode ? 'Editar área' : 'Nova área (polígono)'),
         actions: [
           if (_isEditMode)
             IconButton(
               key: const Key('area_delete_button'),
               onPressed: _saving ? null : _delete,
               icon: const Icon(Icons.delete_outline),
-              tooltip: 'Apagar area',
+              tooltip: 'Apagar área',
             ),
         ],
       ),
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(
+              RTSpacing.x4,
+              RTSpacing.x3,
+              RTSpacing.x4,
+              RTSpacing.x2,
+            ),
             child: _loadingProperties
                 ? const LinearProgressIndicator()
                 : _isEditMode
@@ -347,14 +357,58 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
               <Listenable>[_draftController, _linkedDeviceController],
             ),
             builder: (context, _) {
+              final pts = _draftController.points.length;
+              final atLimit = pts >= _maxAreaPoints;
               return Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                color: Colors.green.withValues(alpha: 0.08),
-                child: Text(
-                  'Toque no mapa para adicionar os primeiros pontos. Toque em um ponto para mover e no perimetro para inserir novos pontos. '
-                  'Pontos: ${_draftController.points.length}/$_maxAreaPoints'
-                  ' | Coleiras vinculadas: ${_linkedDeviceController.selectedCount}',
+                padding: const EdgeInsets.fromLTRB(
+                  RTSpacing.x4,
+                  RTSpacing.x2,
+                  RTSpacing.x4,
+                  RTSpacing.x3,
+                ),
+                decoration: BoxDecoration(
+                  color: RTColors.bg,
+                  border: Border(
+                    top: BorderSide(color: RTColors.hairSoft),
+                    bottom: BorderSide(color: RTColors.hairSoft),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        pts == 0
+                            ? 'Toque no mapa para adicionar os primeiros pontos.'
+                            : 'Toque em um ponto para mover, no perímetro para inserir.',
+                        style: RTTypography.bodySmall,
+                      ),
+                    ),
+                    const SizedBox(width: RTSpacing.x3),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text('PONTOS', style: RTTypography.eyebrow),
+                        Text(
+                          '$pts/$_maxAreaPoints',
+                          style: RTTypography.monoLarge.copyWith(
+                            color: atLimit ? RTColors.warn : RTColors.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(width: RTSpacing.x3),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text('VÍNCULOS', style: RTTypography.eyebrow),
+                        Text(
+                          '${_linkedDeviceController.selectedCount}',
+                          style: RTTypography.monoLarge,
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               );
             },
@@ -471,14 +525,30 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
             builder: (context, _) {
               return Container(
                 width: double.infinity,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                color: Colors.green.withValues(alpha: 0.08),
-                child: Text(
-                  'Area da edicao: ${PolygonMetrics.areaTextInline(_draftController.points)}'
-                  ' | Pontos: ${_draftController.points.length}/$_maxAreaPoints'
-                  ' | Vinculos: ${_linkedDeviceController.selectedCount}',
-                  textAlign: TextAlign.center,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: RTSpacing.x4,
+                  vertical: RTSpacing.x2,
+                ),
+                decoration: BoxDecoration(
+                  color: RTColors.bgSubtle,
+                  border: Border(
+                    top: BorderSide(color: RTColors.hairSoft),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      'ÁREA ',
+                      style: RTTypography.eyebrow,
+                    ),
+                    Text(
+                      PolygonMetrics.areaTextInline(_draftController.points),
+                      style: RTTypography.mono.copyWith(
+                        color: RTColors.ink,
+                      ),
+                    ),
+                  ],
                 ),
               );
             },
@@ -486,45 +556,59 @@ class _AreaEditorScreenState extends State<AreaEditorScreen> {
           AnimatedBuilder(
             animation: _draftController,
             builder: (context, _) {
-              return Padding(
-                padding: const EdgeInsets.all(12),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        key: const Key('area_undo_button'),
-                        onPressed: _saving || !_draftController.canUndo
-                            ? null
-                            : _draftController.undo,
-                        child: const Text('Desfazer'),
+              return SafeArea(
+                top: false,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: RTColors.bg,
+                    border: Border(top: BorderSide(color: RTColors.hairSoft)),
+                  ),
+                  padding: const EdgeInsets.fromLTRB(
+                    RTSpacing.x3,
+                    RTSpacing.x3,
+                    RTSpacing.x3,
+                    RTSpacing.x3,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: RTButton(
+                          key: const Key('area_undo_button'),
+                          label: 'Desfazer',
+                          icon: Icons.undo,
+                          variant: RTButtonVariant.ghost,
+                          onPressed: _saving || !_draftController.canUndo
+                              ? null
+                              : _draftController.undo,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton(
-                        key: const Key('area_clear_button'),
-                        onPressed: _saving || _draftController.points.isEmpty
-                            ? null
-                            : _draftController.clear,
-                        child: const Text('Limpar'),
+                      const SizedBox(width: RTSpacing.x2),
+                      Expanded(
+                        child: RTButton(
+                          key: const Key('area_clear_button'),
+                          label: 'Limpar',
+                          icon: Icons.delete_outline,
+                          variant: RTButtonVariant.tonal,
+                          onPressed:
+                              _saving || _draftController.points.isEmpty
+                                  ? null
+                                  : _draftController.clear,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: ElevatedButton(
-                        key: const Key('area_save_button'),
-                        onPressed: _saving ? null : _save,
-                        child: _saving
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Text('Salvar'),
+                      const SizedBox(width: RTSpacing.x2),
+                      Expanded(
+                        flex: 2,
+                        child: RTButton(
+                          key: const Key('area_save_button'),
+                          label: 'Salvar',
+                          icon: Icons.check,
+                          variant: RTButtonVariant.primary,
+                          loading: _saving,
+                          onPressed: _saving ? null : _save,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               );
             },

@@ -142,11 +142,53 @@ de provedor e ajuste de overlays; adiado para Sprint 4/infra.
 - Keys `profile_*_section` / `profile_apply_filters_button` /
   `profile_clear_filters_button` preservadas.
 
+## Incremento: Area editor redesenhado
+
+`AreaEditorScreen` atualizado para os tokens v2, preservando toda a lógica
+de `PolygonEditSessionController` + `LinkedDeviceSelectionController` +
+persistência (`saveArea` / `deleteArea`):
+
+- HUD superior agora estruturado em `Row`: texto instrucional à esquerda +
+  coluna de métricas `PONTOS` (mono `X/32`, warn ao limite) + `VÍNCULOS`
+  (mono com contagem de coleiras ligadas). Substitui o banner verde
+  (`Colors.green.withValues`) por `bg` neutro com borda `hairSoft`.
+- HUD inferior de área trocou o bloco verde por card `bgSubtle` com eyebrow
+  `ÁREA` + métrica mono (ha / m²) alinhada à tipografia v2.
+- Barra de ações em `SafeArea` com `RTButton`:
+  - `Desfazer` → ghost + `undo`
+  - `Limpar` → tonal + `delete_outline`
+  - `Salvar` → primary `flex:2` com `loading: _saving`
+- Dialog de confirmação de exclusão passa a usar `RTColors.danger` no título
+  e ação destrutiva (antes `Colors.red.shade700`).
+- Keys `area_undo_button`, `area_clear_button`, `area_save_button`,
+  `area_delete_button`, `area_property_dropdown` preservadas.
+
+## Incremento: Collar log terminal-style (S4 parcial)
+
+`CollarLogScreen` reescrito em tema escuro "terminal" conforme Sprint 4 do
+handoff, mantendo auto-refresh + manual refresh + preview de polígono:
+
+- Paleta dedicada: `_terminalBg = RTColors.ink`, `_terminalSurface =
+  alphaBlend(white @ 0.04, ink)`, `_terminalBorder = white @ 0.10`,
+  `_terminalInk = white @ 0.92`, `_terminalInkSoft = white @ 0.60`.
+- AppBar escuro, título mono, `IconButton` de refresh manual.
+- `RTFilterChips` (embrulhado em `Theme(data: ThemeData.dark())`) para os
+  filtros de tipo: `Todos`, `Telemetria`, `Saúde`, `Polígono`, `Outros`.
+- Switch AUTO com `activeThumbColor: RTColors.ok`.
+- Cada entrada vira um `ExpansionTile` com `RTBadge` mono (tone derivado de
+  `_toneForEntry`: ok/danger/info/primary/neutral), timestamp mono e bloco
+  de payload em `Colors.black @ 0.35` com texto `RTColors.ok` 11.5pt.
+- Preview de polígono mantido; falhas exibem fundo `danger @ 0.15` + borda
+  `danger @ 0.4`; avisos inline usam `warn`.
+- Helpers novos: `_matchesFilter()`, `_typeTagForEntry()`, `_toneForEntry()`,
+  `_inlineWarning()`. Constantes `_filterAll/Telemetry/Health/Polygon/Other`.
+
 ## Next step
 
-Registrar o commit Sprint 2 e empurrar para a branch. Na próxima sessão: split
-do dashboard em módulos (streams, markers, FAB, controles) e migrar o modal
-atual de seleção de coleira para `RTCollarSheet`.
+Na próxima sessão: split do dashboard em módulos (streams, markers, FAB,
+controles) e migrar cadastros admin (coleira/gateway/repair) do FAB para
+`OperationsScreen`. Pendências de design: herding wizard (S5),
+`rural_property_editor_screen.dart` e `map_point_picker_screen.dart`.
 
 ## Related
 
