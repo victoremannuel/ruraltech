@@ -96,6 +96,32 @@ Checklist:
   `_showEditDeviceDialog`).
 - Helpers `_formatCoordPair` / `_formatRelativeFromMs` extraídos para reuso.
 
+## Incremento: Geofence redesenhado (S6 parcial)
+
+`GeofenceScreen` reescrito com os tokens v2, mantendo a lógica de
+persistência (`saveFence` + `enqueueScopedCommand`):
+
+- HUD no topo substituindo o banner `Colors.green.withValues`: ícone
+  `crop_free` em `primarySoft`, título dinâmico ("Toque no mapa..." →
+  "Polígono pronto para publicar"), eyebrow "VÉRTICES" + contador mono
+  (`X/32`). Contador muda para `warn` quando atinge o limite.
+- Vértices **numerados**: cada marker é um círculo `primaryDeep` 28×28 com
+  shadow `sh2` e número JetBrains Mono centralizado (melhor edição visual
+  do polígono).
+- Linha do polígono passou a usar `primaryDeep` (era `Colors.green.shade700`),
+  com preenchimento `primary @ 0.2`.
+- Barra de ações no rodapé dentro de `SafeArea`:
+  - `Desfazer` → `RTButton` ghost + ícone `undo`
+  - `Limpar` → `RTButton` tonal + ícone `delete_outline`
+  - `Publicar` → `RTButton` primary com `loading` state + `flex:2`
+- Estado de publicação (`_isPublishing`) exibe o spinner do `RTButton`
+  durante a chamada de rede e desabilita o botão.
+- Keys `geofence_undo_button`, `geofence_clear_button`,
+  `geofence_publish_button` preservadas.
+
+Pendente do item S6: tile dark (MapTiler night/custom) — exige mudança
+de provedor e ajuste de overlays; adiado para Sprint 4/infra.
+
 ## Incremento: Perfil redesenhado
 
 - `ProfileScreen` reescrito com tokens v2 (bg `bgAlt`, tipografia Inter Tight,
