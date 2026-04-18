@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:workmanager/workmanager.dart';
 
 import 'config/manual_settings.dart';
+import 'design/theme.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/auth_service.dart';
@@ -125,6 +126,7 @@ class RuralTechApp extends StatelessWidget {
         builder: (context, child) => AppFeedbackHost(
           child: child ?? const SizedBox.shrink(),
         ),
+        theme: buildRuralTechTheme(),
         home: Scaffold(
           appBar: AppBar(title: const Text('RuralTech')),
           body: Padding(
@@ -163,72 +165,7 @@ class RuralTechApp extends StatelessWidget {
         builder: (context, child) => AppFeedbackHost(
           child: child ?? const SizedBox.shrink(),
         ),
-        theme: ThemeData(
-          useMaterial3: true,
-          scaffoldBackgroundColor: Colors.white,
-          colorScheme: const ColorScheme(
-            brightness: Brightness.light,
-            primary: Color(0xFF2F7D3D),
-            onPrimary: Colors.white,
-            secondary: Color(0xFFE7A300),
-            onSecondary: Colors.white,
-            error: Color(0xFFB3261E),
-            onError: Colors.white,
-            surface: Colors.white,
-            onSurface: Color(0xFF173120),
-          ),
-          appBarTheme: const AppBarTheme(
-            backgroundColor: Color(0xFFF2F7F1),
-            foregroundColor: Color(0xFF173120),
-            surfaceTintColor: Colors.transparent,
-            elevation: 0,
-          ),
-          cardTheme: const CardThemeData(
-            color: Colors.white,
-            surfaceTintColor: Colors.transparent,
-            shadowColor: Color(0x22000000),
-          ),
-          inputDecorationTheme: InputDecorationTheme(
-            filled: true,
-            fillColor: const Color(0xFFF6FAF5),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: Color(0xFFB8CFBD)),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: Color(0xFFB8CFBD)),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide:
-                  const BorderSide(color: Color(0xFF2F7D3D), width: 1.4),
-            ),
-          ),
-          elevatedButtonTheme: ElevatedButtonThemeData(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF2F7D3D),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-            ),
-          ),
-          outlinedButtonTheme: OutlinedButtonThemeData(
-            style: OutlinedButton.styleFrom(
-              foregroundColor: const Color(0xFF2F7D3D),
-              side: const BorderSide(color: Color(0xFF2F7D3D)),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-            ),
-          ),
-          textSelectionTheme: const TextSelectionThemeData(
-            cursorColor: Color(0xFF2F7D3D),
-            selectionColor: Color(0x552F7D3D),
-            selectionHandleColor: Color(0xFF2F7D3D),
-          ),
-        ),
+        theme: buildRuralTechTheme(),
         home: Consumer<AuthService>(
           builder: (_, auth, __) => auth.user == null
               ? const LoginScreen()

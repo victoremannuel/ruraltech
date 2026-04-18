@@ -1,6 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../components/domain/rt_action_row.dart';
+import '../components/domain/rt_health_hero.dart';
+import '../components/domain/rt_telemetry_grid.dart';
+import '../components/primitives/rt_card.dart';
+import '../design/colors.dart';
+import '../design/tokens.dart';
+import '../design/typography.dart';
 import '../models/device_model.dart';
 import '../services/cloud_service.dart';
 import 'collar_log_screen.dart';
@@ -16,62 +23,116 @@ class DeviceDetailsScreen extends StatelessWidget {
   String _formatHealthTimestamp() {
     final dt = device.healthReceivedAt;
     if (dt == null) return 'Sem registro';
-    final y = dt.year.toString().padLeft(4, '0');
-    final m = dt.month.toString().padLeft(2, '0');
-    final d = dt.day.toString().padLeft(2, '0');
-    final hh = dt.hour.toString().padLeft(2, '0');
-    final mm = dt.minute.toString().padLeft(2, '0');
-    return '$d/$m/$y $hh:$mm';
+    return _formatDateTime(dt, showSeconds: false);
   }
 
   String _formatTelemetryTimestamp() {
     final dt = device.telemetryReceivedAt;
     if (dt == null) return 'Sem registro no gateway matriz';
+    return _formatDateTime(dt, showSeconds: true);
+  }
+
+  String _formatDateTime(DateTime dt, {required bool showSeconds}) {
     final y = dt.year.toString().padLeft(4, '0');
     final m = dt.month.toString().padLeft(2, '0');
     final d = dt.day.toString().padLeft(2, '0');
     final hh = dt.hour.toString().padLeft(2, '0');
     final mm = dt.minute.toString().padLeft(2, '0');
+    if (!showSeconds) return '$d/$m/$y $hh:$mm';
     final ss = dt.second.toString().padLeft(2, '0');
     return '$d/$m/$y $hh:$mm:$ss';
   }
 
-  String _formatPosition() {
-    final lat = device.lat;
-    final lon = device.lon;
+  String _formatTelemetryTimestampFromMs(int ms) {
+    if (ms <= 0) return 'Sem registro no gateway matriz';
+    return _formatDateTime(
+      DateTime.fromMillisecondsSinceEpoch(ms),
+      showSeconds: true,
+    );
+  }
+
+  String _formatCoord(double? lat, double? lon) {
     if (lat == null || lon == null) return 'Sem posicao';
-    return '$lat, $lon';
+    return '${lat.toStringAsFixed(6)}, ${lon.toStringAsFixed(6)}';
   }
 
-  String _formatPositionFromValues(double? lat, double? lon) {
-    if (lat == null || lon == null) return 'Sem posicao';
-    return '$lat, $lon';
+  String _relativeFromMs(int? ms) {
+    if (ms == null || ms <= 0) return 'sem dados';
+    final diff = DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(ms));
+    if (diff.inSeconds < 60) return 'há poucos segundos';
+    if (diff.inMinutes < 60) return 'há ${diff.inMinutes} min';
+    if (diff.inHours < 24) return 'há ${diff.inHours} h';
+    return 'há ${diff.inDays} d';
   }
 
-  String _healthComponentsSummary() {
-    return [
-      'LoRa ${_boolLabel(device.healthLoRaReady)}',
-      'MPU ${_boolLabel(device.healthMpuReady)}',
-      'MLX ${_boolLabel(device.healthMlxReady)}',
-      'Fila ${_boolLabel(device.healthStorageReady)}',
-    ].join(' | ');
+  @override
+  Widget build(BuildContext context) {
+    final networkId = device.networkId;
+    final loraDeviceId = device.loraDeviceId;
+    final hasValidLoraId = loraDeviceId != null;
+    final hasPropertyBinding =
+        device.propertyId != null && device.propertyId!.trim().isNotEmpty;
+    final canOpenLog = hasValidLoraId && hasPropertyBinding;
+
+    return Scaffold(
+      backgroundColor: RTColors.bgAlt,
+      appBar: AppBar(
+        title: Text(device.name),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.more_horiz),
+            onPressed: () {},
+            tooltip: 'Mais',
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(
+          RTSpacing.x4,
+          RTSpacing.x3,
+          RTSpacing.x4,
+          RTSpacing.x8,
+        ),
+        children: [
+          _buildHero(networkId),
+          const SizedBox(height: RTSpacing.x4),
+          _buildPositionCard(context),
+          const SizedBox(height: RTSpacing.x4),
+          if (device.hasDailyHealth) ...[
+            _buildGpsBusGrid(),
+            const SizedBox(height: RTSpacing.x4),
+          ],
+          _buildActions(context, hasValidLoraId, canOpenLog, loraDeviceId),
+        ],
+      ),
+    );
   }
 
-  String _healthGpsSummary() {
-    final sats = device.healthSatellites?.toString() ?? '-';
-    final hdop = device.healthHdop?.toStringAsFixed(2) ?? '-';
-    final i2c = device.healthI2cDevices?.toString() ?? '-';
-    return [
-      'UART ${_boolLabel(device.healthGpsUartReady)}',
-      'NMEA ${_boolLabel(device.healthGpsNmeaSeen)}',
-      'Fix ${device.healthGpsFixValid ? 'OK' : 'Sem fix'}',
-      'Sat $sats',
-      'HDOP $hdop',
-      'I2C $i2c',
-    ].join(' | ');
+  Widget _buildHero(String networkId) {
+    final components = <RTHealthComponent>[
+      RTHealthComponent(label: 'LoRa', ok: device.healthLoRaReady),
+      RTHealthComponent(label: 'MPU', ok: device.healthMpuReady),
+      RTHealthComponent(label: 'MLX', ok: device.healthMlxReady),
+      RTHealthComponent(label: 'Fila', ok: device.healthStorageReady),
+    ];
+    final hasHealth = device.hasDailyHealth;
+    final title = hasHealth
+        ? (device.isHealthOk ? 'Todos sistemas operacionais' : 'Atenção necessária')
+        : 'Sem relatório diário';
+    final subtitle = hasHealth
+        ? 'Última saúde reportada em ${_formatHealthTimestamp()}'
+        : 'Aguardando primeiro report diário da coleira.';
+    return RTHealthHero(
+      title: title,
+      subtitle: subtitle,
+      components: hasHealth ? components : const [],
+      online: device.telemetryReceivedAtMs != null,
+      lastSeenLabel:
+          'ID $networkId · ${_relativeFromMs(device.telemetryReceivedAtMs)}',
+    );
   }
 
-  Widget _buildLatestPositionTile(BuildContext context) {
+  Widget _buildPositionCard(BuildContext context) {
     final propertyId = device.propertyId?.trim();
     final deviceId = device.loraDeviceId;
     CloudService? cloud;
@@ -80,29 +141,14 @@ class DeviceDetailsScreen extends StatelessWidget {
     } catch (_) {
       cloud = null;
     }
-    final fallbackPosition = _formatPosition();
+    final fallbackPosition = _formatCoord(device.lat, device.lon);
     final fallbackTimestamp = _formatTelemetryTimestamp();
 
     if (propertyId == null ||
         propertyId.isEmpty ||
         deviceId == null ||
         cloud == null) {
-      return ListTile(
-        title: const Text('Última posição'),
-        subtitle: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(child: Text(fallbackPosition)),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Text(
-                fallbackTimestamp,
-                textAlign: TextAlign.end,
-              ),
-            ),
-          ],
-        ),
-      );
+      return _positionGrid(fallbackPosition, fallbackTimestamp);
     }
 
     return StreamBuilder<Map<String, dynamic>?>(
@@ -115,86 +161,80 @@ class DeviceDetailsScreen extends StatelessWidget {
         final liveLat = live?['lat'] as double?;
         final liveLon = live?['lon'] as double?;
         final liveTimestampMs = live?['telemetryReceivedAtMs'] as int?;
-        final position =
-            _formatPositionFromValues(liveLat, liveLon) == 'Sem posicao'
-                ? fallbackPosition
-                : _formatPositionFromValues(liveLat, liveLon);
+        final position = liveLat != null && liveLon != null
+            ? _formatCoord(liveLat, liveLon)
+            : fallbackPosition;
         final timestamp = liveTimestampMs == null || liveTimestampMs <= 0
             ? fallbackTimestamp
             : _formatTelemetryTimestampFromMs(liveTimestampMs);
-
-        return ListTile(
-          title: const Text('Última posição'),
-          subtitle: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: Text(position)),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Text(
-                  timestamp,
-                  textAlign: TextAlign.end,
-                ),
-              ),
-            ],
-          ),
-        );
+        return _positionGrid(position, timestamp);
       },
     );
   }
 
-  String _formatTelemetryTimestampFromMs(int ms) {
-    if (ms <= 0) return 'Sem registro no gateway matriz';
-    final dt = DateTime.fromMillisecondsSinceEpoch(ms);
-    final y = dt.year.toString().padLeft(4, '0');
-    final m = dt.month.toString().padLeft(2, '0');
-    final d = dt.day.toString().padLeft(2, '0');
-    final hh = dt.hour.toString().padLeft(2, '0');
-    final mm = dt.minute.toString().padLeft(2, '0');
-    final ss = dt.second.toString().padLeft(2, '0');
-    return '$d/$m/$y $hh:$mm:$ss';
+  Widget _positionGrid(String position, String timestamp) {
+    return RTTelemetryGrid(
+      title: 'Última posição',
+      entries: [
+        RTTelemetryEntry(label: 'Coordenadas', value: position, emphasis: true),
+        RTTelemetryEntry(label: 'Registro na matriz', value: timestamp),
+      ],
+    );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final networkId = device.networkId;
-    final loraDeviceId = device.loraDeviceId;
-    final hasValidLoraId = loraDeviceId != null;
-    final hasPropertyBinding =
-        device.propertyId != null && device.propertyId!.trim().isNotEmpty;
-    final canOpenLog = hasValidLoraId && hasPropertyBinding;
-    return Scaffold(
-      appBar: AppBar(title: Text('Dispositivo ${device.name}')),
-      body: ListView(
+  Widget _buildGpsBusGrid() {
+    final sats = device.healthSatellites?.toString() ?? '-';
+    final hdop = device.healthHdop?.toStringAsFixed(2) ?? '-';
+    final i2c = device.healthI2cDevices?.toString() ?? '-';
+    final entries = <RTTelemetryEntry>[
+      RTTelemetryEntry(label: 'UART GPS', value: _boolLabel(device.healthGpsUartReady)),
+      RTTelemetryEntry(label: 'NMEA', value: _boolLabel(device.healthGpsNmeaSeen)),
+      RTTelemetryEntry(
+        label: 'Fix',
+        value: device.healthGpsFixValid ? 'OK' : 'Sem fix',
+      ),
+      RTTelemetryEntry(label: 'Satélites', value: sats),
+      RTTelemetryEntry(label: 'HDOP', value: hdop),
+      RTTelemetryEntry(label: 'I2C', value: i2c),
+    ];
+    return RTTelemetryGrid(
+      title: 'GPS e barramento',
+      entries: entries,
+    );
+  }
+
+  Widget _buildActions(
+    BuildContext context,
+    bool hasValidLoraId,
+    bool canOpenLog,
+    String? loraDeviceId,
+  ) {
+    return RTCard(
+      padding: EdgeInsets.zero,
+      child: Column(
         children: [
-          ListTile(title: const Text('ID'), subtitle: Text(networkId)),
-          _buildLatestPositionTile(context),
-          ListTile(
-            title: const Text('Saude diaria'),
-            subtitle: Text(device.healthSummary),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              RTSpacing.x3,
+              RTSpacing.x3,
+              RTSpacing.x3,
+              0,
+            ),
+            child: Row(
+              children: [
+                Text(
+                  'AÇÕES OPERACIONAIS',
+                  style: RTTypography.eyebrow,
+                ),
+              ],
+            ),
           ),
-          if (device.hasDailyHealth)
-            ListTile(
-              title: const Text('Ultimo relatorio'),
-              subtitle: Text(_formatHealthTimestamp()),
-            ),
-          if (device.hasDailyHealth)
-            ListTile(
-              title: const Text('Componentes'),
-              subtitle: Text(_healthComponentsSummary()),
-            ),
-          if (device.hasDailyHealth)
-            ListTile(
-              title: const Text('GPS e barramento'),
-              subtitle: Text(_healthGpsSummary()),
-            ),
-          ListTile(
-            title: const Text('Configurar Geofence'),
-            subtitle: hasValidLoraId
-                ? null
-                : const Text(
-                    'ID LoRa invalido. Edite a coleira e informe um ID numerico.',
-                  ),
+          RTActionRow(
+            title: 'Configurar Geofence',
+            description: hasValidLoraId
+                ? 'Desenhar perímetro no mapa'
+                : 'ID LoRa inválido. Edite a coleira e informe um ID numérico.',
+            icon: Icons.crop_free,
             enabled: hasValidLoraId,
             onTap: !hasValidLoraId
                 ? null
@@ -202,7 +242,7 @@ class DeviceDetailsScreen extends StatelessWidget {
                       context,
                       MaterialPageRoute(
                         builder: (_) => GeofenceScreen(
-                          deviceId: loraDeviceId,
+                          deviceId: loraDeviceId!,
                           propertyId: device.propertyId,
                           gatewayId: device.gatewayId,
                           initialLat: device.lat,
@@ -211,13 +251,13 @@ class DeviceDetailsScreen extends StatelessWidget {
                       ),
                     ),
           ),
-          ListTile(
-            title: const Text('Plano de Condução'),
-            subtitle: hasValidLoraId
-                ? null
-                : const Text(
-                    'ID LoRa invalido. Edite a coleira e informe um ID numerico.',
-                  ),
+          Divider(height: 1, color: RTColors.hairSoft),
+          RTActionRow(
+            title: 'Plano de Condução',
+            description: hasValidLoraId
+                ? 'Arrebanhar para área-alvo'
+                : 'ID LoRa inválido. Edite a coleira e informe um ID numérico.',
+            icon: Icons.route_outlined,
             enabled: hasValidLoraId,
             onTap: !hasValidLoraId
                 ? null
@@ -225,7 +265,7 @@ class DeviceDetailsScreen extends StatelessWidget {
                       context,
                       MaterialPageRoute(
                         builder: (_) => HerdingScreen(
-                          initialDeviceId: loraDeviceId,
+                          initialDeviceId: loraDeviceId!,
                           initialPropertyId: device.propertyId,
                           initialLat: device.lat,
                           initialLon: device.lon,
@@ -233,16 +273,13 @@ class DeviceDetailsScreen extends StatelessWidget {
                       ),
                     ),
           ),
-          ListTile(
-            leading: const Icon(Icons.receipt_long),
-            title: const Text('Abrir log da coleira'),
-            subtitle: canOpenLog
-                ? const Text(
-                    'Mensagens recebidas no backend pela matriz.',
-                  )
-                : const Text(
-                    'A coleira precisa ter propriedade vinculada e ID LoRa valido.',
-                  ),
+          Divider(height: 1, color: RTColors.hairSoft),
+          RTActionRow(
+            title: 'Abrir log da coleira',
+            description: canOpenLog
+                ? 'Mensagens recebidas pela matriz'
+                : 'A coleira precisa ter propriedade vinculada e ID LoRa válido.',
+            icon: Icons.receipt_long_outlined,
             enabled: canOpenLog,
             onTap: !canOpenLog
                 ? null
@@ -253,6 +290,7 @@ class DeviceDetailsScreen extends StatelessWidget {
                       ),
                     ),
           ),
+          const SizedBox(height: RTSpacing.x2),
         ],
       ),
     );
