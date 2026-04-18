@@ -132,3 +132,4 @@
 "event_logs:embedding:progress": {"key":"embedding:progress","ct":118,"first_at":1775923826331,"last_at":1776042555645,"class_name":"EventLog","event_sources":{"process_embed_queue":118}},
 "event_logs:embedding:completed": {"key":"embedding:completed","ct":59,"first_at":1775923838829,"last_at":1776042555645,"class_name":"EventLog","event_sources":{"process_embed_queue":59}},
 "event_logs:sources:reimport_completed": {"key":"sources:reimport_completed","ct":60,"first_at":1775924552867,"last_at":1776042555675,"class_name":"EventLog","event_sources":{"run_re_import":60}},
+"event_logs:sources:deleted": {"key":"sources:deleted","ct":40,"first_at":1775925321096,"last_at":1776478427776,"class_name":"EventLog","event_sources":{"obsidian:vault.delete":40}},
