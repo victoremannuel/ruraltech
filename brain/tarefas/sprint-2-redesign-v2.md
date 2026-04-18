@@ -96,6 +96,26 @@ Checklist:
   `_showEditDeviceDialog`).
 - Helpers `_formatCoordPair` / `_formatRelativeFromMs` extraídos para reuso.
 
+## Incremento: Perfil redesenhado
+
+- `ProfileScreen` reescrito com tokens v2 (bg `bgAlt`, tipografia Inter Tight,
+  escala de spacing 4-based).
+- Card de identidade com avatar em `primarySoft` + email + badge ADMIN/OPERADOR
+  (`RTBadge` tone accent/neutral).
+- 4 seções de filtro em `RTCard` + `ExpansionTile` temático (sem divisores
+  default, leading icon em container `bgSubtle`, subtitle resumindo
+  "N de N selecionados").
+- Botões `Aplicar filtros` (primary) e `Limpar filtros` (ghost) agora ocupam
+  width completo via `RTButton.fullWidth`.
+- **Bug fix crítico do Sprint 2**: removido `Navigator.pop(context)` que,
+  sob o novo `IndexedStack` do `HomeShell`, saía para o login. Substituído
+  por `AppFeedback.success('Filtros aplicados ao mapa.')` — usuário troca de
+  aba via bottom nav.
+- Novo botão `Sair da conta` (danger variant) na seção "Conta", reduzindo
+  dependência do AppBar do dashboard para logout.
+- Keys `profile_*_section` / `profile_apply_filters_button` /
+  `profile_clear_filters_button` preservadas.
+
 ## Next step
 
 Registrar o commit Sprint 2 e empurrar para a branch. Na próxima sessão: split
