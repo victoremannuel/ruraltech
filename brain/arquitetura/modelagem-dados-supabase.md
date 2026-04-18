@@ -316,8 +316,10 @@ Schema Postgres do Supabase com 21 tabelas, RLS em todas, Realtime em 12.
 
 ## Related
 
+[[ruraltech]]
 [[regras-negocio]]
 [[fluxos-comunicacao-ponta-a-ponta]]
 [[requisitos]]
+[[visao-geral]]
 
 #arquitetura #ruraltech 

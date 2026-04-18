@@ -88,8 +88,10 @@ Regras que governam o comportamento do sistema, independentes de implementação
 
 ## Related
 
+[[ruraltech]]
 [[requisitos]]
 [[fluxos-comunicacao-ponta-a-ponta]]
 [[modelagem-dados-supabase]]
+[[visao-geral]]
 
 #arquitetura #ruraltech 

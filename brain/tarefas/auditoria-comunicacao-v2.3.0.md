@@ -911,6 +911,20 @@ Marcar a tarefa como concluída somente se todas estas condições forem verdade
 
 ---
 
+## Related
+
+[[ruraltech]]
+[[visao-geral]]
+[[fluxo-comandos]]
+[[fluxos-comunicacao-ponta-a-ponta]]
+[[modelagem-dados-supabase]]
+[[migracao-supabase]]
+[[auditoria-comunicacao-v2.3.1]]
+[[auditoria-comunicacao-v2.3.2]]
+[[AUDIT_TELEMETRY_COMMAND_PIPELINE]]
+
+---
+
 # 14) Notas e Pendências
 
 ---

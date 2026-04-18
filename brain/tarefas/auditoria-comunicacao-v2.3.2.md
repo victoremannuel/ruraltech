@@ -1,5 +1,7 @@
 # PROMPT OPERACIONAL — Auditoria do Pipeline Telemetria / Comandos [[AUDIT_TELEMETRY_COMMAND_PIPELINE]] RuralTech [[ruraltech]] v2.3.1 [[auditoria-comunicacao-v2.3.1]]
 
+**Notas relacionadas:** [[fluxo-comandos]] [[fluxos-comunicacao-ponta-a-ponta]] [[modelagem-dados-supabase]] [[migracao-supabase]] [[auditoria-app-mapa-gateway]]
+
 **Data base:** 2026-04-12  
 **Objetivo deste arquivo:** servir ao mesmo tempo como relatório de auditoria já executada **e** como prompt operacional para o Claude Code continuar a validação end-to-end sem redescobrir o problema do zero.
 

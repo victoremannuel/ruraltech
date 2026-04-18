@@ -47,5 +47,9 @@ Sistema em 3 camadas físicas (coleira → gateway → cloud) com app de gestão
 [[modelagem-dados-supabase]]
 [[uiux-telas]]
 [[fluxos-comunicacao-ponta-a-ponta]]
+[[stack-tecnologico]]
+[[convencoes-codigo]]
+[[padroes-implementacao]]
+[[migracao-supabase]]
 
 #projetos #ruraltech 

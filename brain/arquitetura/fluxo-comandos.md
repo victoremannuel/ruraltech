@@ -51,8 +51,10 @@ App salva areas.perimeter + linkedDeviceIds (Supabase)
 
 ## Related
 
+[[ruraltech]]
 [[visao-geral]]
 [[fluxos-comunicacao-ponta-a-ponta]]
 [[modelagem-dados-supabase]]
+[[regras-negocio]]
 
 #arquitetura #ruraltech
