@@ -117,6 +117,13 @@ constexpr float GPS_SPEED_MOVE_THRESHOLD_KMPH = 1.2f;
 constexpr bool SMART_GPS_TEST_MODE = false;
 constexpr bool SMART_GPS_PERSISTENCE_ENABLED = cfg_manual::SMART_GPS_PERSISTENCE_ENABLED;
 constexpr bool STORAGE_QUEUE_PERSISTENCE_ENABLED = cfg_manual::STORAGE_QUEUE_PERSISTENCE_ENABLED;
+// Deep sleep deve permanecer habilitado por padrao em producao e ser
+// desabilitavel por configuracao manual em bancada.
+constexpr bool DEEP_SLEEP_ENABLED = cfg_manual::DEEP_SLEEP_ENABLED;
+constexpr uint32_t DEEP_SLEEP_PREPARE_DELAY_MS = 20;
+constexpr uint32_t DEEP_SLEEP_ARM_DELAY_MS = 10;
+// Flag temporaria de bancada para isolar panic no dreno de eventos pendentes.
+constexpr bool DEBUG_DISABLE_PENDING_EVENT_DRAIN = false;
 
 // Persistência
 constexpr uint16_t EEPROM_SIZE = 2048;
@@ -134,6 +141,11 @@ constexpr uint8_t EVENT_ERROR_CODE_MAX_LEN = 32;
 constexpr float FENCE_WARNING_METERS = 20.0f;
 
 // Criptografia (MVP: chave estática por device; em produção provisionar seguro)
+// IDs logicos de compatibilidade: diagnostico operacional apenas.
+// Nao substituem as chaves reais AES/HMAC.
+constexpr uint16_t LORA_PROTO_VERSION = 1;
+constexpr uint16_t LORA_KEY_ID = 1;
+constexpr uint16_t LORA_RADIO_PROFILE_ID = 9151;
 constexpr uint8_t AES_KEY[16] = {0x31,0x62,0x13,0x44,0x75,0x26,0x57,0x98,0xA9,0xBA,0xCB,0xDC,0xED,0x0F,0x11,0x22};
 constexpr uint8_t HMAC_KEY[32] = {
   0x21,0x43,0x65,0x87,0x09,0xAB,0xCD,0xEF,0x10,0x32,0x54,0x76,0x98,0xBA,0xDC,0xFE,

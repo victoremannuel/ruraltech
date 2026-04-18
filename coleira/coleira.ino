@@ -82,6 +82,7 @@ bool supportsScopedLora_ = true;
 GpsData lastGpsForStatus_;
 bool hasLastGpsForStatus_ = false;
 uint32_t lastHealthReportDayKey_ = 0;
+uint32_t pendingHealthReportDayKey_ = 0;
 bool storageReady_ = false;
 bool loraReady_ = false;
 bool lastLoRaTxOk_ = false;
@@ -110,6 +111,7 @@ static void logPolygonApplyResult(
     int32_t phaseCount = 0);
 static void copyStringToBuffer(char* dst, size_t dstSize, const char* src);
 static const char* eventTypeLabel(EventType type);
+static bool eventUsesOperationId(EventType type);
 static const char* commandLabel(MsgType type);
 static const char* polygonKindLabel(PolygonKind kind);
 static const char* originDocTypeLabel(OriginDocType type);
@@ -138,6 +140,12 @@ static void refreshBlePositionForOnboarding();
 static void printBootChecklist(bool bleInitOk, bool storageOk, bool loraOk);
 static void runSmartGpsSelfTest();
 static uint32_t gpsDayKey(const GpsData& gps);
+static void logLoopCheckpoint(const char* step);
+static void logPendingEventCheckpoint(
+    const char* step,
+    const EventRecord& pending,
+    const LoRaFrame& ev);
+static void flushDeferredHealthReportDayKey();
 static void persistHealthReportDayKey(uint32_t dayKey);
 static uint32_t loadPersistedHealthReportDayKey();
 static bool sendDailyHealthReport(const Telemetry& t, uint32_t intervalMs);
@@ -240,6 +248,32 @@ static void recordBootStage(const char* stage) {
       (unsigned long)freeHeap,
       (unsigned long)bootMinFreeHeap_,
       heapOk ? 1 : 0);
+}
+
+static void logLoopCheckpoint(const char* step) {
+  LOGI(
+      "LOOP checkpoint=%s free_heap=%lu min_heap=%lu",
+      step ? step : "-",
+      (unsigned long)ESP.getFreeHeap(),
+      (unsigned long)ESP.getMinFreeHeap());
+}
+
+static void logPendingEventCheckpoint(
+    const char* step,
+    const EventRecord& pending,
+    const LoRaFrame& ev) {
+  LOGI(
+      "LOOP checkpoint=%s event=%s type=%u d1=%ld d2=%ld payload=%u msg=%u seq=%lu free_heap=%lu min_heap=%lu",
+      step ? step : "-",
+      eventTypeLabel(pending.type),
+      (unsigned)pending.type,
+      (long)pending.d1,
+      (long)pending.d2,
+      (unsigned)ev.payloadLen,
+      (unsigned)ev.msgType,
+      (unsigned long)ev.seq,
+      (unsigned long)ESP.getFreeHeap(),
+      (unsigned long)ESP.getMinFreeHeap());
 }
 
 static void incrementBootCounter() {
@@ -394,6 +428,12 @@ static const char* eventTypeLabel(EventType type) {
       return "polygon_apply_result";
   }
   return "event";
+}
+
+static bool eventUsesOperationId(EventType type) {
+  return type == EventType::HERD_START ||
+         type == EventType::HERD_PHASE_CHANGE ||
+         type == EventType::HERD_DONE;
 }
 
 static const char* polygonKindLabel(PolygonKind kind) {
@@ -643,6 +683,9 @@ static void configureStatusServerRoutes() {
     doc["ota"] = cfg::OTA_ENABLED;
     doc["wifi_ota_enabled"] = wifiOtaEnabled;
     doc["ota_mode_active"] = otaModeActive;
+    doc["protoVersion"] = cfg::LORA_PROTO_VERSION;
+    doc["keyId"] = cfg::LORA_KEY_ID;
+    doc["radioProfileId"] = cfg::LORA_RADIO_PROFILE_ID;
     doc["maintenanceWindowActive"] = maintenanceWindowActive_;
     doc["supportsScopedLora"] = supportsScopedLora_;
     doc["bindingReady"] = bindingReady_;
@@ -653,6 +696,12 @@ static void configureStatusServerRoutes() {
     doc["rebootCounter"] = rebootCounter_;
     doc["freeHeap"] = ESP.getFreeHeap();
     doc["minFreeHeap"] = bootMinFreeHeap_;
+    doc["loraTxCount"] = lora.txCount();
+    doc["loraTxFailCount"] = lora.txFailCount();
+    doc["loraDecryptFailCount"] = lora.decryptFailCount();
+    doc["loraNonceMismatchCount"] = lora.nonceMismatchCount();
+    doc["loraReplayRejectCount"] = lora.replayRejectCount();
+    doc["lastAcceptedSeq"] = lora.lastAcceptedSeq();
     if (bindingPropertyId_[0]) doc["propertyId"] = bindingPropertyId_;
     if (bindingPropertyScopeId_[0]) doc["propertyScopeId"] = bindingPropertyScopeId_;
     if (bindingMatrixGatewayId_[0]) doc["matrixGatewayId"] = bindingMatrixGatewayId_;
@@ -814,6 +863,12 @@ static bool persistHerdingPlan(const HerdingPlan& plan) {
 static void persistHealthReportDayKey(uint32_t dayKey) {
   if (!beginPrefs() || dayKey == 0) return;
   prefs_.putULong(cfg::PREF_KEY_HEALTH_DAY, dayKey);
+}
+
+static void flushDeferredHealthReportDayKey() {
+  if (pendingHealthReportDayKey_ == 0) return;
+  persistHealthReportDayKey(pendingHealthReportDayKey_);
+  pendingHealthReportDayKey_ = 0;
 }
 
 static bool loadPersistedFence(Polygon* outFence) {
@@ -1370,6 +1425,22 @@ static void printBootChecklist(bool bleInitOk, bool storageOk, bool loraOk) {
       "[MODE ] %-24s : %s\n",
       "WIFI_OTA_ENABLED",
       wifiOtaEnabled ? "true" : "false");
+  Serial.printf(
+      "[MODE ] %-24s : %u\n",
+      "PROTO_VERSION",
+      (unsigned)cfg::LORA_PROTO_VERSION);
+  Serial.printf(
+      "[MODE ] %-24s : %u\n",
+      "KEY_ID",
+      (unsigned)cfg::LORA_KEY_ID);
+  Serial.printf(
+      "[MODE ] %-24s : %u\n",
+      "RADIO_PROFILE",
+      (unsigned)cfg::LORA_RADIO_PROFILE_ID);
+  Serial.printf(
+      "[MODE ] %-24s : %s\n",
+      "BINDING_READY",
+      bindingReady_ ? "true" : "false");
   checklistLine(
       "STATUS_HTTP_80",
       true,
@@ -1723,6 +1794,7 @@ static bool sendDailyHealthReport(const Telemetry& t, uint32_t intervalMs) {
   payload["hf"] = buildHealthFlags(t, fallbackScheduleUsed);
   if (dayKey != 0) payload["dk"] = dayKey;
   payload["scope_id"] = bindingPropertyScopeId_;
+  const size_t payloadBytes = measureJson(payload);
 
   LoRaFrame health;
   health.deviceId = cfg::DEVICE_ID;
@@ -1731,9 +1803,16 @@ static bool sendDailyHealthReport(const Telemetry& t, uint32_t intervalMs) {
   health.seq = nextLoRaSeq();
   health.timestamp = t.gps.gpsTime ? t.gps.gpsTime : millis() / 1000;
   randomNonce(health.nonce);
+  if (payloadBytes == 0 || payloadBytes > sizeof(health.payload)) {
+    LOGW("Health report diario invalido bytes=%u", (unsigned)payloadBytes);
+    return false;
+  }
   health.payloadLen = serializeJson(payload, health.payload, sizeof(health.payload));
-  if (health.payloadLen == 0) {
-    LOGW("Health report diario vazio; envio ignorado");
+  if (health.payloadLen == 0 || health.payloadLen > sizeof(health.payload)) {
+    LOGW(
+        "Health report diario invalido payload=%u bytes=%u",
+        (unsigned)health.payloadLen,
+        (unsigned)payloadBytes);
     return false;
   }
   if (!lora.sendFrame(health)) {
@@ -1743,7 +1822,7 @@ static bool sendDailyHealthReport(const Telemetry& t, uint32_t intervalMs) {
 
   if (dayKey != 0) {
     lastHealthReportDayKey_ = dayKey;
-    persistHealthReportDayKey(dayKey);
+    pendingHealthReportDayKey_ = dayKey;
   }
   healthFallbackAccumMs_ = 0;
   LOGI("Health report diario enviado (day=%lu fallback=%d)",
@@ -1769,6 +1848,11 @@ static uint8_t buildTelemetryPayload(const Telemetry& t, uint8_t* out, size_t ma
   if (isfinite(t.gps.speedKmph)) doc["sp"] = t.gps.speedKmph;
   if (isfinite(t.gps.hdop)) doc["hd"] = t.gps.hdop;
   if (t.gps.sats > 0) doc["sa"] = t.gps.sats;
+  const size_t payloadBytes = measureJson(doc);
+  if (payloadBytes == 0 || payloadBytes > max) {
+    LOGW("Telemetria invalida bytes=%u max=%u", (unsigned)payloadBytes, (unsigned)max);
+    return 0;
+  }
   return serializeJson(doc, out, max);
 }
 
@@ -2461,6 +2545,15 @@ void setup() {
   printBootChecklist(bleInitOk, storageReady_, loraReady_);
   recordBootStage("ready");
 
+  LOGI(
+      "Coleira boot fw=%s device_id=%lu proto_version=%u key_id=%u radio_profile=%u bindingReady=%d wifi_ota_enabled=%d",
+      cfg::FW_VERSION,
+      (unsigned long)cfg::DEVICE_ID,
+      (unsigned)cfg::LORA_PROTO_VERSION,
+      (unsigned)cfg::LORA_KEY_ID,
+      (unsigned)cfg::LORA_RADIO_PROFILE_ID,
+      bindingReady_ ? 1 : 0,
+      wifiOtaEnabled ? 1 : 0);
   LOGI("Coleira inicializada: id=%lu fw=%s", cfg::DEVICE_ID, cfg::FW_VERSION);
   // Garante que o primeiro ciclo de telemetria só roda após o intervalo normal,
   // mesmo após SW_CPU_RESET (panic), onde a DRAM não é zerada e lastCycle poderia
@@ -2522,6 +2615,7 @@ void loop() {
   }
   lastCycle = now;
 
+  logLoopCheckpoint("before_sensors_read");
   const Telemetry rawTelemetry = sensors.readTelemetry(stateMachine.mode(), now / 1000, lora.lastRssi(), lora.lastSnr());
   const bool movingByGpsSpeed =
       rawTelemetry.gps.valid &&
@@ -2530,6 +2624,7 @@ void loop() {
       rawTelemetry.gps.speedKmph >= cfg::GPS_SPEED_MOVE_THRESHOLD_KMPH;
   const bool movingForSmartFix = rawTelemetry.moving || movingByGpsSpeed;
   const SmartFixResult smartFix = smartGps.update(rawTelemetry.gps, movingForSmartFix, now);
+  logLoopCheckpoint("after_smart_gps");
 
   Telemetry t = rawTelemetry;
   t.gps = smartFix.officialFix;
@@ -2570,6 +2665,7 @@ void loop() {
 
   const bool inside = geofence.isInside(t.gps);
   const bool nearBoundary = geofence.isNearBoundary(t.gps, cfg::FENCE_WARNING_METERS);
+  logLoopCheckpoint("before_geofence");
 
   if (nearBoundary && inside) {
     safety.beep(1);
@@ -2594,6 +2690,7 @@ void loop() {
   wasInside = inside;
 
   EventRecord herdEvent;
+  logLoopCheckpoint("before_herding");
   if (herding.updateWithGps(t.gps, &herdEvent)) {
     if (herdEvent.type == EventType::HERD_DONE) {
       promoteCompletedHerdingFence();
@@ -2606,6 +2703,7 @@ void loop() {
   }
 
   if (bindingReady_) {
+    logLoopCheckpoint("before_uplink_build");
     LoRaFrame uplink;
     uplink.deviceId = cfg::DEVICE_ID;
     uplink.scopeId = bindingScopeIdValue();
@@ -2615,20 +2713,25 @@ void loop() {
     randomNonce(uplink.nonce);
     uplink.payloadLen = buildTelemetryPayload(t, uplink.payload, sizeof(uplink.payload));
 
+    logLoopCheckpoint("before_lora_send");
     lastLoRaTxOk_ = uplink.payloadLen > 0 && lora.sendFrame(uplink);
+    logLoopCheckpoint("after_lora_send");
     if (!lastLoRaTxOk_) {
       LOGW("Falha envio telemetria; permanece em fila local.");
     }
   } else {
     lastLoRaTxOk_ = false;
   }
+  logLoopCheckpoint("before_send_daily_health");
   sendDailyHealthReport(t, stateMachine.intervalMs());
+  logLoopCheckpoint("after_send_daily_health");
 
   LoRaFrame down;
   const uint32_t rxWindowMs = otaSessionLikelyActive
                                   ? cfg::OTA_UPLOAD_RX_WINDOW_MS
                                   : cfg::RX_WINDOW_MS;
   bool handledDownlink = false;
+  logLoopCheckpoint("before_lora_receive");
   if (lora.receiveFrame(down, rxWindowMs)) {
     applyDownlink(down);
     handledDownlink = true;
@@ -2640,64 +2743,86 @@ void loop() {
 
   EventRecord pending;
   uint8_t eventBudget = otaSessionLikelyActive ? cfg::OTA_UPLOAD_EVENT_BURST : 0xFF;
-  while (!handledDownlink && bindingReady_ && storage.popEvent(pending)) {
-    LoRaFrame ev;
-    ev.deviceId = cfg::DEVICE_ID;
-    ev.scopeId = pending.scopeId != 0 ? pending.scopeId : bindingScopeIdValue();
-    ev.msgType = MsgType::EVENT;
-    ev.seq = nextLoRaSeq();
-    ev.timestamp = pending.ts;
-    randomNonce(ev.nonce);
-    StaticJsonDocument<384> d;
-    d["type"] = eventTypeLabel(pending.type);
-    d["event_type"] = eventTypeLabel(pending.type);
-    d["event_code"] = (int)pending.type;
-    d["d1"] = pending.d1;
-    d["d2"] = pending.d2;
-    d["scope_id"] = scopeIdToHex(ev.scopeId);
-    if (pending.type != EventType::POLYGON_APPLY_RESULT &&
-        pending.payload.operationId[0] != '\0') {
-      d["operation_id"] = pending.payload.operationId;
+  logLoopCheckpoint("before_pending_events");
+  if (!cfg::DEBUG_DISABLE_PENDING_EVENT_DRAIN) {
+    while (!handledDownlink && bindingReady_ && storage.popEvent(pending)) {
+      LoRaFrame ev;
+      ev.deviceId = cfg::DEVICE_ID;
+      ev.scopeId = pending.scopeId != 0 ? pending.scopeId : bindingScopeIdValue();
+      ev.msgType = MsgType::EVENT;
+      ev.seq = nextLoRaSeq();
+      ev.timestamp = pending.ts;
+      randomNonce(ev.nonce);
+      StaticJsonDocument<384> d;
+      d["type"] = eventTypeLabel(pending.type);
+      d["event_type"] = eventTypeLabel(pending.type);
+      d["event_code"] = (int)pending.type;
+      d["d1"] = pending.d1;
+      d["d2"] = pending.d2;
+      d["scope_id"] = scopeIdToHex(ev.scopeId);
+      if (eventUsesOperationId(pending.type) &&
+          pending.payload.operationId[0] != '\0') {
+        d["operation_id"] = pending.payload.operationId;
+      }
+      if (pending.type == EventType::HERD_PHASE_CHANGE) {
+        d["phase_index"] = pending.d1;
+      } else if (pending.type == EventType::POLYGON_APPLY_RESULT) {
+        d["status"] = polygonApplyStatusLabel(pending.auditStatus);
+        d["command"] = commandLabel(
+            pending.polygonKind == PolygonKind::HERDING
+                ? MsgType::SET_HERDING_PLAN
+                : MsgType::SET_FENCE);
+        d["polygon_kind"] = polygonKindLabel(pending.polygonKind);
+        d["origin_doc_type"] = originDocTypeLabel(pending.originDocType);
+        if (pending.payload.audit.originDocId[0] != '\0') {
+          d["origin_doc_id"] = pending.payload.audit.originDocId;
+        }
+        if (pending.payload.audit.commandId[0] != '\0') {
+          d["cmd_id"] = pending.payload.audit.commandId;
+        }
+        if (pending.d1 > 0) d["point_count"] = pending.d1;
+        if (pending.d2 > 0) d["phase_count"] = pending.d2;
+        if (pending.auditStatus == PolygonApplyStatus::FAILURE &&
+            pending.payload.audit.errorCode[0] != '\0') {
+          d["error_code"] = pending.payload.audit.errorCode;
+        }
+        const char* errorStage = polygonErrorStageLabel(pending.errorStage);
+        if (errorStage[0] != '\0') {
+          d["error_stage"] = errorStage;
+        }
+        if (pending.originDocType == OriginDocType::HERDING_OPERATION &&
+            pending.payload.audit.originDocId[0] != '\0') {
+          d["operation_id"] = pending.payload.audit.originDocId;
+        }
+      }
+      const size_t eventPayloadBytes = measureJson(d);
+      if (eventPayloadBytes == 0 || eventPayloadBytes > sizeof(ev.payload)) {
+        LOGW(
+            "Evento LoRa invalido type=%u bytes=%u",
+            (unsigned)pending.type,
+            (unsigned)eventPayloadBytes);
+        continue;
+      }
+      ev.payloadLen = serializeJson(d, ev.payload, sizeof(ev.payload));
+      if (ev.payloadLen == 0 || ev.payloadLen > sizeof(ev.payload)) {
+        LOGW(
+            "Evento LoRa truncado type=%u payload=%u",
+            (unsigned)pending.type,
+            (unsigned)ev.payloadLen);
+        continue;
+      }
+      if (!lora.sendFrame(ev)) break;
+      logPendingEventCheckpoint("after_pending_event_send", pending, ev);
+      if (otaSessionLikelyActive) {
+        if (--eventBudget == 0) break;
+        ArduinoOTA.handle();
+        delay(2);
+      }
     }
-    if (pending.type == EventType::HERD_PHASE_CHANGE) {
-      d["phase_index"] = pending.d1;
-    } else if (pending.type == EventType::POLYGON_APPLY_RESULT) {
-      d["status"] = polygonApplyStatusLabel(pending.auditStatus);
-      d["command"] = commandLabel(
-          pending.polygonKind == PolygonKind::HERDING
-              ? MsgType::SET_HERDING_PLAN
-              : MsgType::SET_FENCE);
-      d["polygon_kind"] = polygonKindLabel(pending.polygonKind);
-      d["origin_doc_type"] = originDocTypeLabel(pending.originDocType);
-      if (pending.payload.audit.originDocId[0] != '\0') {
-        d["origin_doc_id"] = pending.payload.audit.originDocId;
-      }
-      if (pending.payload.audit.commandId[0] != '\0') {
-        d["cmd_id"] = pending.payload.audit.commandId;
-      }
-      if (pending.d1 > 0) d["point_count"] = pending.d1;
-      if (pending.d2 > 0) d["phase_count"] = pending.d2;
-      if (pending.auditStatus == PolygonApplyStatus::FAILURE &&
-          pending.payload.audit.errorCode[0] != '\0') {
-        d["error_code"] = pending.payload.audit.errorCode;
-      }
-      const char* errorStage = polygonErrorStageLabel(pending.errorStage);
-      if (errorStage[0] != '\0') {
-        d["error_stage"] = errorStage;
-      }
-      if (pending.originDocType == OriginDocType::HERDING_OPERATION &&
-          pending.payload.audit.originDocId[0] != '\0') {
-        d["operation_id"] = pending.payload.audit.originDocId;
-      }
-    }
-    ev.payloadLen = serializeJson(d, ev.payload, sizeof(ev.payload));
-    if (!lora.sendFrame(ev)) break;
-    if (otaSessionLikelyActive) {
-      if (--eventBudget == 0) break;
-      ArduinoOTA.handle();
-      delay(2);
-    }
+  } else {
+    LOGW("Pending event drain desabilitado para bancada");
   }
+  logLoopCheckpoint("after_pending_events_loop");
 
   // Com Wi-Fi/OTA ativo, permanece online continuamente para manutenção remota.
   if (wifiOtaEnabled) {
@@ -2706,6 +2831,23 @@ void loop() {
   }
 
   // Em LoRa-only, usa deep sleep para economia de energia.
+  flushDeferredHealthReportDayKey();
+  logLoopCheckpoint("before_deep_sleep_prepare");
+  if (!cfg::DEEP_SLEEP_ENABLED) {
+    LOGW("Deep sleep desabilitado por configuracao de bancada");
+    delay(200);
+    return;
+  }
+  lora.prepareForDeepSleep();
+  logLoopCheckpoint("after_deep_sleep_prepare");
+  if (cfg::DEEP_SLEEP_PREPARE_DELAY_MS > 0) {
+    delay(cfg::DEEP_SLEEP_PREPARE_DELAY_MS);
+  }
+  logLoopCheckpoint("before_deep_sleep_arm");
   esp_sleep_enable_timer_wakeup((uint64_t)stateMachine.intervalMs() * 1000ULL);
+  if (cfg::DEEP_SLEEP_ARM_DELAY_MS > 0) {
+    delay(cfg::DEEP_SLEEP_ARM_DELAY_MS);
+  }
+  logLoopCheckpoint("before_deep_sleep_start");
   esp_deep_sleep_start();
 }

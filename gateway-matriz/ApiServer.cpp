@@ -102,6 +102,9 @@ void ApiServer::begin() {
       doc["fw"] = cfg::FW_VERSION;
       doc["diagStage"] = cfg::DIAG_STAGE;
       doc["diagProfile"] = cfg::DIAG_PROFILE_NAME;
+      doc["protoVersion"] = cfg::LORA_PROTO_VERSION;
+      doc["keyId"] = cfg::LORA_KEY_ID;
+      doc["radioProfileId"] = cfg::LORA_RADIO_PROFILE_ID;
       const String apSsid = WiFi.softAPSSID();
       doc["ap_ssid"] = apSsid.isEmpty() ? String(cfg::AP_SSID) : apSsid;
       doc["ap_ip"] = WiFi.softAPIP().toString();
@@ -139,6 +142,11 @@ void ApiServer::begin() {
       doc["lastLoraAcceptedRxAtMs"] = lora.lastAcceptedRxAtMs();
       doc["loraRxArmCount"] = lora.rxArmCount();
       doc["loraTxCount"] = lora.txCount();
+      doc["loraTxFailCount"] = lora.txFailCount();
+      doc["loraDecryptFailCount"] = lora.decryptFailCount();
+      doc["loraNonceMismatchCount"] = lora.nonceMismatchCount();
+      doc["loraReplayRejectCount"] = lora.replayRejectCount();
+      doc["lastAcceptedSeq"] = lora.lastAcceptedSeq();
       doc["lastLoraIrqFlags"] = lora.lastIrqFlags();
       doc["lastLoraState"] = lora.lastRadioState();
       doc["acceptedUplinkQueueDepth"] = acceptedUplinkQueueCount;

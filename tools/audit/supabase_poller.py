@@ -75,10 +75,10 @@ def fetch_command_events(command_id: str) -> list:
 
 
 def fetch_matrix_queue(property_id: str, command_id: str) -> list:
+    # Tabela não tem property_id nem status — filtra por command_id quando disponível
     params: dict = {
-        "select": "command_id,command,status,property_id,created_at",
-        "property_id": f"eq.{property_id}",
-        "order": "created_at.desc",
+        "select": "command_id,runtime_id,queue_key,created_at_ms,expires_at_ms,payload,created_at",
+        "order": "created_at_ms.desc",
         "limit": "5",
     }
     if command_id:

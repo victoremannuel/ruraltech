@@ -1,0 +1,660 @@
+2026-04-17T21:30:56.757484+00:00  [I] LoRa TX ok type=1 seq=280000001 target=3222380545 scope=9FFFC95AA1624895 bytes=158
+2026-04-17T21:30:58.020514+00:00  [I] LoRa TX ok type=2 seq=280000002 target=3222380545 scope=9FFFC95AA1624895 bytes=180
+2026-04-17T21:30:58.028701+00:00  Guru Meditation Error: Core  1 panic'ed (LoadProhibited). Exception was unhandled.
+2026-04-17T21:30:58.028779+00:00  
+2026-04-17T21:30:58.031486+00:00  Core  1 register dump:
+2026-04-17T21:30:58.037151+00:00  PC      : 0x40189354  PS      : 0x00060730  A0      : 0x800fd679  A1      : 0x3ffd07c0
+2026-04-17T21:30:58.045346+00:00  A2      : 0xffffffff  A3      : 0x00000040  A4      : 0x3ffd08dc  A5      : 0x00000000
+2026-04-17T21:30:58.053580+00:00  A6      : 0x00ff0000  A7      : 0xff000000  A8      : 0x0145189c  A9      : 0x0000007d
+2026-04-17T21:30:58.063437+00:00  A10     : 0x3ffd0b84  A11     : 0x00001040  A12     : 0x3ffd08dc  A13     : 0x00000020
+2026-04-17T21:30:58.070139+00:00  A14     : 0x3ffd0860  A15     : 0x0000abab  SAR     : 0x00000000  EXCCAUSE: 0x0000001c
+2026-04-17T21:30:58.078373+00:00  EXCVADDR: 0x014518ac  LBEG    : 0x40089a7d  LEND    : 0x40089a8e  LCOUNT  : 0xfffffff7
+2026-04-17T21:30:58.078588+00:00  
+2026-04-17T21:30:58.078634+00:00  
+2026-04-17T21:30:58.100472+00:00  Backtrace: 0x40189351:0x3ffd07c0 0x400fd676:0x3ffd07e0 0x400fe2b5:0x3ffd0850 0x400fea0f:0x3ffd08a0 0x400ff143:0x3ffd0920 0x400fcabf:0x3ffd0940 0x400e5add:0x3ffd0970 0x400e5b01:0x3ffd0990 0x400dad8e:0x3ffd09b0 0x400f0c28:0x3ffd3120 0x4008d2a1:0x3ffd3140
+2026-04-17T21:30:58.100588+00:00  
+2026-04-17T21:30:58.100652+00:00  
+2026-04-17T21:30:58.100684+00:00  
+2026-04-17T21:30:58.100713+00:00  
+2026-04-17T21:30:58.103202+00:00  ELF file SHA256: b15e5c5a4
+2026-04-17T21:30:58.103259+00:00  
+2026-04-17T21:30:58.230205+00:00  Rebooting...
+2026-04-17T21:30:58.232782+00:00  ets Jul 29 2019 12:21:46
+2026-04-17T21:30:58.232845+00:00  
+2026-04-17T21:30:58.238332+00:00  rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+2026-04-17T21:30:58.238520+00:00  configsip: 0, SPIWP:0xee
+2026-04-17T21:30:58.246692+00:00  clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+2026-04-17T21:30:58.246853+00:00  mode:DIO, clock div:2
+2026-04-17T21:30:58.249488+00:00  load:0x3fff0030,len:4640
+2026-04-17T21:30:58.252322+00:00  load:0x40078000,len:15660
+2026-04-17T21:30:58.256821+00:00  load:0x40080400,len:3164
+2026-04-17T21:30:58.256990+00:00  entry 0x4008059c
+2026-04-17T21:30:58.734787+00:00  [I] Boot reset_reason=4
+2026-04-17T21:30:58.740235+00:00  [I] BOOT stage=serial free_heap=225412 min_heap=222464 heap_ok=1
+2026-04-17T21:30:58.747025+00:00  [I] BOOT stage=wdt free_heap=225444 min_heap=222464 heap_ok=1
+2026-04-17T21:30:58.755917+00:00  [I] BOOT stage=prefs_counter free_heap=225372 min_heap=222464 heap_ok=1
+2026-04-17T21:30:58.764233+00:00  [W] Seq uplink restaurado next=281000001 hi=0 reboot=281 (persistencia write-through desabilitada)
+2026-04-17T21:30:58.772690+00:00  [I] Binding coleira: ready=1 property=T0xeG8WQHwJRI6H3t7vr scope=9FFFC95AA1624895 matrix=192.168.4.1 ver=1
+2026-04-17T21:30:58.778178+00:00  [I] BOOT stage=load_config free_heap=225372 min_heap=222464 heap_ok=1
+2026-04-17T21:30:58.786289+00:00  [I] BOOT stage=wifi_event free_heap=225324 min_heap=222464 heap_ok=1
+2026-04-17T21:30:58.791734+00:00  [I] BOOT stage=status_routes free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:30:58.797305+00:00  [I] BOOT stage=wifi_ota free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:30:58.803094+00:00  [I] BOOT stage=status_server free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:30:58.810281+00:00  [I] BOOT stage=sensors_begin free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:30:59.915314+00:00  
+2026-04-17T21:30:59.919372+00:00  ========================================
+2026-04-17T21:30:59.922433+00:00  Calculating gyro offsets
+2026-04-17T21:31:02.818644+00:00  DO NOT MOVE MPU6050...
+2026-04-17T21:31:02.818754+00:00  Done!
+2026-04-17T21:31:02.818831+00:00  X : 0.26
+2026-04-17T21:31:02.818905+00:00  Y : -0.43
+2026-04-17T21:31:02.821401+00:00  Z : 1.09
+2026-04-17T21:31:02.824180+00:00  Program will start after 3 seconds
+2026-04-17T21:31:03.832154+00:00  ========================================
+2026-04-17T21:31:05.826213+00:00  [I] BOOT stage=safety_begin free_heap=220472 min_heap=220420 heap_ok=1
+2026-04-17T21:31:05.831797+00:00  [I] BOOT stage=storage_begin free_heap=220472 min_heap=220332 heap_ok=1
+2026-04-17T21:31:05.837330+00:00  [W] StorageQueue: persistencia EEPROM desabilitada; usando fila em RAM
+2026-04-17T21:31:05.842858+00:00  [I] BOOT stage=smart_gps_begin free_heap=220472 min_heap=220328 heap_ok=1
+2026-04-17T21:31:05.851126+00:00  [W] SmartGps: persistencia last_good_fix desabilitada por configuracao
+2026-04-17T21:31:05.856868+00:00  [I] BOOT stage=lora_begin free_heap=220472 min_heap=220328 heap_ok=1
+2026-04-17T21:31:05.873578+00:00  [I] Anti-replay downlink restaurado last_seq=0
+2026-04-17T21:31:06.226829+00:00  [I] BOOT stage=checklist free_heap=220152 min_heap=220100 heap_ok=1
+2026-04-17T21:31:06.229808+00:00  ==== HW CHECKLIST | COLEIRA ====
+2026-04-17T21:31:06.232436+00:00  [CHECK] NVS_CONFIG               : OK
+2026-04-17T21:31:06.235192+00:00  [CHECK] SEQ_UPLINK_NVS           : OFF
+2026-04-17T21:31:06.240843+00:00  [W] CHECKLIST SEQ_UPLINK_NVS OFF: Seq uplink sem persistencia; revisar NVS.
+2026-04-17T21:31:06.246202+00:00  [CHECK] WIFI_OTA_SERVICE         : OK
+2026-04-17T21:31:06.248932+00:00  [MODE ] WIFI_OTA_ENABLED         : false
+2026-04-17T21:31:06.254451+00:00  [CHECK] STATUS_HTTP_80           : OK (/status habilitado)
+2026-04-17T21:31:06.260000+00:00  [CHECK] BLE_PRESENCE             : OK (desabilitado em config)
+2026-04-17T21:31:06.262775+00:00  [CHECK] GPS_UART                 : OK
+2026-04-17T21:31:06.271102+00:00  [CHECK] GPS_BOOT_RX              : OK (baud=9600 bytes=75 nmea=$2 sample=$GPRMC,213059.00,A,1640.)
+2026-04-17T21:31:06.279307+00:00  [CHECK] GPS_NMEA                 : OK (lat=-16.675411 lon=-49.485052 sats=0 hdop=99.90)
+2026-04-17T21:31:06.284834+00:00  [CHECK] I2C_BUS_SCAN             : OK (found=2 [0x5A,0x68])
+2026-04-17T21:31:06.287739+00:00  [CHECK] MPU6050_I2C              : OK (addr=0x68)
+2026-04-17T21:31:06.290458+00:00  [CHECK] MPU6050_DRIVER           : OK
+2026-04-17T21:31:06.295872+00:00  [CHECK] MLX90614_I2C             : OK
+2026-04-17T21:31:06.298633+00:00  [CHECK] MLX90614_DRIVER          : OK
+2026-04-17T21:31:06.304280+00:00  [CHECK] EEPROM_QUEUE             : OK (RAM-only; persistencia off)
+2026-04-17T21:31:06.307003+00:00  [CHECK] LORA_RFM95               : OK
+2026-04-17T21:31:06.309982+00:00  ================================
+2026-04-17T21:31:06.315278+00:00  [I] BOOT stage=ready free_heap=219688 min_heap=219528 heap_ok=1
+2026-04-17T21:31:06.321056+00:00  [I] Coleira inicializada: id=3222380545 fw=coleira-1.0.0
+2026-04-17T21:34:07.731489+00:00  [I] LoRa TX ok type=1 seq=281000001 target=3222380545 scope=9FFFC95AA1624895 bytes=161
+2026-04-17T21:34:08.994795+00:00  [I] LoRa TX ok type=2 seq=281000002 target=3222380545 scope=9FFFC95AA1624895 bytes=180
+2026-04-17T21:34:09.003223+00:00  Guru Meditation Error: Core  1 panic'ed (LoadProhibited). Exception was unhandled.
+2026-04-17T21:34:09.003412+00:00  
+2026-04-17T21:34:09.005853+00:00  Core  1 register dump:
+2026-04-17T21:34:09.011843+00:00  PC      : 0x40189354  PS      : 0x00060730  A0      : 0x800fd679  A1      : 0x3ffd07c0
+2026-04-17T21:34:09.019924+00:00  A2      : 0xffffffff  A3      : 0x00000040  A4      : 0x3ffd08dc  A5      : 0x00000000
+2026-04-17T21:34:09.028049+00:00  A6      : 0x00ff0000  A7      : 0xff000000  A8      : 0x0145a1b8  A9      : 0x0000007d
+2026-04-17T21:34:09.036231+00:00  A10     : 0x3ffd0b84  A11     : 0x00001040  A12     : 0x3ffd08dc  A13     : 0x00000020
+2026-04-17T21:34:09.044241+00:00  A14     : 0x3ffd0860  A15     : 0x0000abab  SAR     : 0x00000000  EXCCAUSE: 0x0000001c
+2026-04-17T21:34:09.052633+00:00  EXCVADDR: 0x0145a1c8  LBEG    : 0x40089a7d  LEND    : 0x40089a8e  LCOUNT  : 0xfffffff7
+2026-04-17T21:34:09.052792+00:00  
+2026-04-17T21:34:09.052871+00:00  
+2026-04-17T21:34:09.074722+00:00  Backtrace: 0x40189351:0x3ffd07c0 0x400fd676:0x3ffd07e0 0x400fe2b5:0x3ffd0850 0x400fea0f:0x3ffd08a0 0x400ff143:0x3ffd0920 0x400fcabf:0x3ffd0940 0x400e5add:0x3ffd0970 0x400e5b01:0x3ffd0990 0x400dad8e:0x3ffd09b0 0x400f0c28:0x3ffd3120 0x4008d2a1:0x3ffd3140
+2026-04-17T21:34:09.074997+00:00  
+2026-04-17T21:34:09.075193+00:00  
+2026-04-17T21:34:09.075278+00:00  
+2026-04-17T21:34:09.075339+00:00  
+2026-04-17T21:34:09.077289+00:00  ELF file SHA256: b15e5c5a4
+2026-04-17T21:34:09.077400+00:00  
+2026-04-17T21:34:09.206110+00:00  Rebooting...
+2026-04-17T21:34:09.208749+00:00  ets Jul 29 2019 12:21:46
+2026-04-17T21:34:09.208865+00:00  
+2026-04-17T21:34:09.214425+00:00  rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+2026-04-17T21:34:09.214984+00:00  configsip: 0, SPIWP:0xee
+2026-04-17T21:34:09.222709+00:00  clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+2026-04-17T21:34:09.223272+00:00  mode:DIO, clock div:2
+2026-04-17T21:34:09.225879+00:00  load:0x3fff0030,len:4640
+2026-04-17T21:34:09.228478+00:00  load:0x40078000,len:15660
+2026-04-17T21:34:09.233025+00:00  load:0x40080400,len:3164
+2026-04-17T21:34:09.233453+00:00  entry 0x4008059c
+2026-04-17T21:34:09.710646+00:00  [I] Boot reset_reason=4
+2026-04-17T21:34:09.716081+00:00  [I] BOOT stage=serial free_heap=225412 min_heap=222464 heap_ok=1
+2026-04-17T21:34:09.722951+00:00  [I] BOOT stage=wdt free_heap=225444 min_heap=222464 heap_ok=1
+2026-04-17T21:34:09.731805+00:00  [I] BOOT stage=prefs_counter free_heap=225372 min_heap=222464 heap_ok=1
+2026-04-17T21:34:09.740526+00:00  [W] Seq uplink restaurado next=282000001 hi=0 reboot=282 (persistencia write-through desabilitada)
+2026-04-17T21:34:09.748303+00:00  [I] Binding coleira: ready=1 property=T0xeG8WQHwJRI6H3t7vr scope=9FFFC95AA1624895 matrix=192.168.4.1 ver=1
+2026-04-17T21:34:09.754572+00:00  [I] BOOT stage=load_config free_heap=225372 min_heap=222464 heap_ok=1
+2026-04-17T21:34:09.762037+00:00  [I] BOOT stage=wifi_event free_heap=225324 min_heap=222464 heap_ok=1
+2026-04-17T21:34:09.767875+00:00  [I] BOOT stage=status_routes free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:34:09.773274+00:00  [I] BOOT stage=wifi_ota free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:34:09.778796+00:00  [I] BOOT stage=status_server free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:34:09.786200+00:00  [I] BOOT stage=sensors_begin free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:34:10.910875+00:00  
+2026-04-17T21:34:10.913786+00:00  ========================================
+2026-04-17T21:34:10.917874+00:00  Calculating gyro offsets
+2026-04-17T21:34:13.814506+00:00  DO NOT MOVE MPU6050...
+2026-04-17T21:34:13.814664+00:00  Done!
+2026-04-17T21:34:13.814794+00:00  X : 0.26
+2026-04-17T21:34:13.814923+00:00  Y : -0.43
+2026-04-17T21:34:13.817255+00:00  Z : 1.08
+2026-04-17T21:34:13.819953+00:00  Program will start after 3 seconds
+2026-04-17T21:34:14.827383+00:00  ========================================
+2026-04-17T21:34:16.822163+00:00  [I] BOOT stage=safety_begin free_heap=220472 min_heap=220420 heap_ok=1
+2026-04-17T21:34:16.827862+00:00  [I] BOOT stage=storage_begin free_heap=220472 min_heap=220332 heap_ok=1
+2026-04-17T21:34:16.833623+00:00  [W] StorageQueue: persistencia EEPROM desabilitada; usando fila em RAM
+2026-04-17T21:34:16.838999+00:00  [I] BOOT stage=smart_gps_begin free_heap=220472 min_heap=220328 heap_ok=1
+2026-04-17T21:34:16.847265+00:00  [W] SmartGps: persistencia last_good_fix desabilitada por configuracao
+2026-04-17T21:34:16.852910+00:00  [I] BOOT stage=lora_begin free_heap=220472 min_heap=220328 heap_ok=1
+2026-04-17T21:34:16.869536+00:00  [I] Anti-replay downlink restaurado last_seq=0
+2026-04-17T21:34:17.222684+00:00  [I] BOOT stage=checklist free_heap=220152 min_heap=220100 heap_ok=1
+2026-04-17T21:34:17.225404+00:00  ==== HW CHECKLIST | COLEIRA ====
+2026-04-17T21:34:17.228150+00:00  [CHECK] NVS_CONFIG               : OK
+2026-04-17T21:34:17.230994+00:00  [CHECK] SEQ_UPLINK_NVS           : OFF
+2026-04-17T21:34:17.236610+00:00  [W] CHECKLIST SEQ_UPLINK_NVS OFF: Seq uplink sem persistencia; revisar NVS.
+2026-04-17T21:34:17.241981+00:00  [CHECK] WIFI_OTA_SERVICE         : OK
+2026-04-17T21:34:17.244738+00:00  [MODE ] WIFI_OTA_ENABLED         : false
+2026-04-17T21:34:17.250304+00:00  [CHECK] STATUS_HTTP_80           : OK (/status habilitado)
+2026-04-17T21:34:17.255718+00:00  [CHECK] BLE_PRESENCE             : OK (desabilitado em config)
+2026-04-17T21:34:17.258534+00:00  [CHECK] GPS_UART                 : OK
+2026-04-17T21:34:17.266843+00:00  [CHECK] GPS_BOOT_RX              : OK (baud=9600 bytes=75 nmea=$2 sample=$GPRMC,213410.00,A,1640.)
+2026-04-17T21:34:17.275123+00:00  [CHECK] GPS_NMEA                 : OK (lat=-16.675401 lon=-49.484986 sats=0 hdop=99.90)
+2026-04-17T21:34:17.280577+00:00  [CHECK] I2C_BUS_SCAN             : OK (found=2 [0x5A,0x68])
+2026-04-17T21:34:17.283478+00:00  [CHECK] MPU6050_I2C              : OK (addr=0x68)
+2026-04-17T21:34:17.286219+00:00  [CHECK] MPU6050_DRIVER           : OK
+2026-04-17T21:34:17.291647+00:00  [CHECK] MLX90614_I2C             : OK
+2026-04-17T21:34:17.294386+00:00  [CHECK] MLX90614_DRIVER          : OK
+2026-04-17T21:34:17.300533+00:00  [CHECK] EEPROM_QUEUE             : OK (RAM-only; persistencia off)
+2026-04-17T21:34:17.302722+00:00  [CHECK] LORA_RFM95               : OK
+2026-04-17T21:34:17.305471+00:00  ================================
+2026-04-17T21:34:17.310965+00:00  [I] BOOT stage=ready free_heap=219688 min_heap=219528 heap_ok=1
+2026-04-17T21:34:17.316806+00:00  [I] Coleira inicializada: id=3222380545 fw=coleira-1.0.0
+2026-04-17T21:37:18.736176+00:00  [I] LoRa TX ok type=1 seq=282000001 target=3222380545 scope=9FFFC95AA1624895 bytes=160
+2026-04-17T21:37:19.999331+00:00  [I] LoRa TX ok type=2 seq=282000002 target=3222380545 scope=9FFFC95AA1624895 bytes=180
+2026-04-17T21:37:20.007585+00:00  Guru Meditation Error: Core  1 panic'ed (LoadProhibited). Exception was unhandled.
+2026-04-17T21:37:20.007789+00:00  
+2026-04-17T21:37:20.010394+00:00  Core  1 register dump:
+2026-04-17T21:37:20.016901+00:00  PC      : 0x40189354  PS      : 0x00060730  A0      : 0x800fd679  A1      : 0x3ffd07c0
+2026-04-17T21:37:20.024628+00:00  A2      : 0xffffffff  A3      : 0x00000040  A4      : 0x3ffd08dc  A5      : 0x00000000
+2026-04-17T21:37:20.032568+00:00  A6      : 0x00ff0000  A7      : 0xff000000  A8      : 0x01461b34  A9      : 0x0000007d
+2026-04-17T21:37:20.040607+00:00  A10     : 0x3ffd0b84  A11     : 0x00001040  A12     : 0x3ffd08dc  A13     : 0x00000020
+2026-04-17T21:37:20.049115+00:00  A14     : 0x3ffd0860  A15     : 0x0000abab  SAR     : 0x00000000  EXCCAUSE: 0x0000001c
+2026-04-17T21:37:20.057710+00:00  EXCVADDR: 0x01461b44  LBEG    : 0x40089a7d  LEND    : 0x40089a8e  LCOUNT  : 0xfffffff7
+2026-04-17T21:37:20.058224+00:00  
+2026-04-17T21:37:20.058295+00:00  
+2026-04-17T21:37:20.079307+00:00  Backtrace: 0x40189351:0x3ffd07c0 0x400fd676:0x3ffd07e0 0x400fe2b5:0x3ffd0850 0x400fea0f:0x3ffd08a0 0x400ff143:0x3ffd0920 0x400fcabf:0x3ffd0940 0x400e5add:0x3ffd0970 0x400e5b01:0x3ffd0990 0x400dad8e:0x3ffd09b0 0x400f0c28:0x3ffd3120 0x4008d2a1:0x3ffd3140
+2026-04-17T21:37:20.079640+00:00  
+2026-04-17T21:37:20.079734+00:00  
+2026-04-17T21:37:20.079811+00:00  
+2026-04-17T21:37:20.079904+00:00  
+2026-04-17T21:37:20.081892+00:00  ELF file SHA256: b15e5c5a4
+2026-04-17T21:37:20.081961+00:00  
+2026-04-17T21:37:20.212280+00:00  Rebooting...
+2026-04-17T21:37:20.217155+00:00  ets Jul 29 2019 12:21:46
+2026-04-17T21:37:20.217250+00:00  
+2026-04-17T21:37:20.221627+00:00  rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+2026-04-17T21:37:20.226384+00:00  configsip: 0, SPIWP:0xee
+2026-04-17T21:37:20.228724+00:00  clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+2026-04-17T21:37:20.229714+00:00  mode:DIO, clock div:2
+2026-04-17T21:37:20.232926+00:00  load:0x3fff0030,len:4640
+2026-04-17T21:37:20.233865+00:00  load:0x40078000,len:15660
+2026-04-17T21:37:20.240865+00:00  load:0x40080400,len:3164
+2026-04-17T21:37:20.245101+00:00  entry 0x4008059c
+2026-04-17T21:37:20.716555+00:00  [I] Boot reset_reason=4
+2026-04-17T21:37:20.720191+00:00  [I] BOOT stage=serial free_heap=225412 min_heap=222464 heap_ok=1
+2026-04-17T21:37:20.726972+00:00  [I] BOOT stage=wdt free_heap=225444 min_heap=222464 heap_ok=1
+2026-04-17T21:37:20.735943+00:00  [I] BOOT stage=prefs_counter free_heap=225372 min_heap=222464 heap_ok=1
+2026-04-17T21:37:20.744475+00:00  [W] Seq uplink restaurado next=283000001 hi=0 reboot=283 (persistencia write-through desabilitada)
+2026-04-17T21:37:20.752729+00:00  [I] Binding coleira: ready=1 property=T0xeG8WQHwJRI6H3t7vr scope=9FFFC95AA1624895 matrix=192.168.4.1 ver=1
+2026-04-17T21:37:20.758324+00:00  [I] BOOT stage=load_config free_heap=225372 min_heap=222464 heap_ok=1
+2026-04-17T21:37:20.766354+00:00  [I] BOOT stage=wifi_event free_heap=225324 min_heap=222464 heap_ok=1
+2026-04-17T21:37:20.774043+00:00  [I] BOOT stage=status_routes free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:37:20.777499+00:00  [I] BOOT stage=wifi_ota free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:37:20.782968+00:00  [I] BOOT stage=status_server free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:37:20.790199+00:00  [I] BOOT stage=sensors_begin free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:37:21.905671+00:00  
+2026-04-17T21:37:21.908808+00:00  ========================================
+2026-04-17T21:37:21.912837+00:00  Calculating gyro offsets
+2026-04-17T21:37:24.809142+00:00  DO NOT MOVE MPU6050...
+2026-04-17T21:37:24.809303+00:00  Done!
+2026-04-17T21:37:24.809431+00:00  X : 0.26
+2026-04-17T21:37:24.809563+00:00  Y : -0.42
+2026-04-17T21:37:24.811858+00:00  Z : 1.08
+2026-04-17T21:37:24.814612+00:00  Program will start after 3 seconds
+2026-04-17T21:37:25.820658+00:00  ========================================
+2026-04-17T21:37:27.816661+00:00  [I] BOOT stage=safety_begin free_heap=220472 min_heap=220420 heap_ok=1
+2026-04-17T21:37:27.822171+00:00  [I] BOOT stage=storage_begin free_heap=220472 min_heap=220332 heap_ok=1
+2026-04-17T21:37:27.827914+00:00  [W] StorageQueue: persistencia EEPROM desabilitada; usando fila em RAM
+2026-04-17T21:37:27.833331+00:00  [I] BOOT stage=smart_gps_begin free_heap=220472 min_heap=220328 heap_ok=1
+2026-04-17T21:37:27.841443+00:00  [W] SmartGps: persistencia last_good_fix desabilitada por configuracao
+2026-04-17T21:37:27.847267+00:00  [I] BOOT stage=lora_begin free_heap=220472 min_heap=220328 heap_ok=1
+2026-04-17T21:37:27.864157+00:00  [I] Anti-replay downlink restaurado last_seq=0
+2026-04-17T21:37:28.217264+00:00  [I] BOOT stage=checklist free_heap=220152 min_heap=220100 heap_ok=1
+2026-04-17T21:37:28.220106+00:00  ==== HW CHECKLIST | COLEIRA ====
+2026-04-17T21:37:28.222947+00:00  [CHECK] NVS_CONFIG               : OK
+2026-04-17T21:37:28.225954+00:00  [CHECK] SEQ_UPLINK_NVS           : OFF
+2026-04-17T21:37:28.233044+00:00  [W] CHECKLIST SEQ_UPLINK_NVS OFF: Seq uplink sem persistencia; revisar NVS.
+2026-04-17T21:37:28.236667+00:00  [CHECK] WIFI_OTA_SERVICE         : OK
+2026-04-17T21:37:28.246653+00:00  [MODE ] WIFI_OTA_ENABLED         : false
+2026-04-17T21:37:28.247810+00:00  [CHECK] STATUS_HTTP_80           : OK (/status habilitado)
+2026-04-17T21:37:28.250786+00:00  [CHECK] BLE_PRESENCE             : OK (desabilitado em config)
+2026-04-17T21:37:28.253198+00:00  [CHECK] GPS_UART                 : OK
+2026-04-17T21:37:28.261641+00:00  [CHECK] GPS_BOOT_RX              : OK (baud=9600 bytes=70 nmea=$2 sample=$GPRMC,213721.00,A,1640.)
+2026-04-17T21:37:28.269837+00:00  [CHECK] GPS_NMEA                 : OK (lat=-16.675390 lon=-49.485049 sats=0 hdop=99.90)
+2026-04-17T21:37:28.275698+00:00  [CHECK] I2C_BUS_SCAN             : OK (found=2 [0x5A,0x68])
+2026-04-17T21:37:28.279213+00:00  [CHECK] MPU6050_I2C              : OK (addr=0x68)
+2026-04-17T21:37:28.281028+00:00  [CHECK] MPU6050_DRIVER           : OK
+2026-04-17T21:37:28.286214+00:00  [CHECK] MLX90614_I2C             : OK
+2026-04-17T21:37:28.289086+00:00  [CHECK] MLX90614_DRIVER          : OK
+2026-04-17T21:37:28.294554+00:00  [CHECK] EEPROM_QUEUE             : OK (RAM-only; persistencia off)
+2026-04-17T21:37:28.297383+00:00  [CHECK] LORA_RFM95               : OK
+2026-04-17T21:37:28.300212+00:00  ================================
+2026-04-17T21:37:28.305760+00:00  [I] BOOT stage=ready free_heap=219888 min_heap=219728 heap_ok=1
+2026-04-17T21:37:28.311414+00:00  [I] Coleira inicializada: id=3222380545 fw=coleira-1.0.0
+2026-04-17T21:40:29.735950+00:00  [I] LoRa TX ok type=1 seq=283000001 target=3222380545 scope=9FFFC95AA1624895 bytes=161
+2026-04-17T21:40:30.998940+00:00  [I] LoRa TX ok type=2 seq=283000002 target=3222380545 scope=9FFFC95AA1624895 bytes=180
+2026-04-17T21:40:31.007014+00:00  Guru Meditation Error: Core  1 panic'ed (LoadProhibited). Exception was unhandled.
+2026-04-17T21:40:31.007080+00:00  
+2026-04-17T21:40:31.009760+00:00  Core  1 register dump:
+2026-04-17T21:40:31.015411+00:00  PC      : 0x40189354  PS      : 0x00060730  A0      : 0x800fd679  A1      : 0x3ffd07c0
+2026-04-17T21:40:31.023648+00:00  A2      : 0xffffffff  A3      : 0x00000040  A4      : 0x3ffd08dc  A5      : 0x00000000
+2026-04-17T21:40:31.031946+00:00  A6      : 0x00ff0000  A7      : 0xff000000  A8      : 0x014694b0  A9      : 0x0000007d
+2026-04-17T21:40:31.040166+00:00  A10     : 0x3ffd0b84  A11     : 0x00001040  A12     : 0x3ffd08dc  A13     : 0x00000020
+2026-04-17T21:40:31.048406+00:00  A14     : 0x3ffd0860  A15     : 0x0000abab  SAR     : 0x00000000  EXCCAUSE: 0x0000001c
+2026-04-17T21:40:31.056680+00:00  EXCVADDR: 0x014694c0  LBEG    : 0x40089a7d  LEND    : 0x40089a8e  LCOUNT  : 0xfffffff7
+2026-04-17T21:40:31.056760+00:00  
+2026-04-17T21:40:31.056798+00:00  
+2026-04-17T21:40:31.078748+00:00  Backtrace: 0x40189351:0x3ffd07c0 0x400fd676:0x3ffd07e0 0x400fe2b5:0x3ffd0850 0x400fea0f:0x3ffd08a0 0x400ff143:0x3ffd0920 0x400fcabf:0x3ffd0940 0x400e5add:0x3ffd0970 0x400e5b01:0x3ffd0990 0x400dad8e:0x3ffd09b0 0x400f0c28:0x3ffd3120 0x4008d2a1:0x3ffd3140
+2026-04-17T21:40:31.078862+00:00  
+2026-04-17T21:40:31.078896+00:00  
+2026-04-17T21:40:31.078926+00:00  
+2026-04-17T21:40:31.078955+00:00  
+2026-04-17T21:40:31.081609+00:00  ELF file SHA256: b15e5c5a4
+2026-04-17T21:40:31.081682+00:00  
+2026-04-17T21:40:31.209769+00:00  Rebooting...
+2026-04-17T21:40:31.212435+00:00  ets Jul 29 2019 12:21:46
+2026-04-17T21:40:31.212506+00:00  
+2026-04-17T21:40:31.218044+00:00  rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+2026-04-17T21:40:31.218392+00:00  configsip: 0, SPIWP:0xee
+2026-04-17T21:40:31.226343+00:00  clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+2026-04-17T21:40:31.226537+00:00  mode:DIO, clock div:2
+2026-04-17T21:40:31.229180+00:00  load:0x3fff0030,len:4640
+2026-04-17T21:40:31.231966+00:00  load:0x40078000,len:15660
+2026-04-17T21:40:31.236491+00:00  load:0x40080400,len:3164
+2026-04-17T21:40:31.236646+00:00  entry 0x4008059c
+2026-04-17T21:40:31.730563+00:00  [I] Boot reset_reason=4
+2026-04-17T21:40:31.731975+00:00  [I] BOOT stage=serial free_heap=225412 min_heap=222464 heap_ok=1
+2026-04-17T21:40:31.732904+00:00  [I] BOOT stage=wdt free_heap=225444 min_heap=222464 heap_ok=1
+2026-04-17T21:40:31.736574+00:00  [I] BOOT stage=prefs_counter free_heap=225372 min_heap=222464 heap_ok=1
+2026-04-17T21:40:31.744398+00:00  [W] Seq uplink restaurado next=284000001 hi=0 reboot=284 (persistencia write-through desabilitada)
+2026-04-17T21:40:31.755725+00:00  [I] Binding coleira: ready=1 property=T0xeG8WQHwJRI6H3t7vr scope=9FFFC95AA1624895 matrix=192.168.4.1 ver=1
+2026-04-17T21:40:31.758117+00:00  [I] BOOT stage=load_config free_heap=225372 min_heap=222464 heap_ok=1
+2026-04-17T21:40:31.765663+00:00  [I] BOOT stage=wifi_event free_heap=225324 min_heap=222464 heap_ok=1
+2026-04-17T21:40:31.771250+00:00  [I] BOOT stage=status_routes free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:40:31.777149+00:00  [I] BOOT stage=wifi_ota free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:40:31.782719+00:00  [I] BOOT stage=status_server free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:40:31.792262+00:00  [I] BOOT stage=sensors_begin free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:40:32.904836+00:00  
+2026-04-17T21:40:32.907631+00:00  ========================================
+2026-04-17T21:40:32.911777+00:00  Calculating gyro offsets
+2026-04-17T21:40:35.808345+00:00  DO NOT MOVE MPU6050...
+2026-04-17T21:40:35.808449+00:00  Done!
+2026-04-17T21:40:35.808534+00:00  X : 0.26
+2026-04-17T21:40:35.808606+00:00  Y : -0.42
+2026-04-17T21:40:35.811108+00:00  Z : 1.08
+2026-04-17T21:40:35.814105+00:00  Program will start after 3 seconds
+2026-04-17T21:40:36.817690+00:00  ========================================
+2026-04-17T21:40:38.816024+00:00  [I] BOOT stage=safety_begin free_heap=220472 min_heap=220420 heap_ok=1
+2026-04-17T21:40:38.821483+00:00  [I] BOOT stage=storage_begin free_heap=220472 min_heap=220332 heap_ok=1
+2026-04-17T21:40:38.826991+00:00  [W] StorageQueue: persistencia EEPROM desabilitada; usando fila em RAM
+2026-04-17T21:40:38.832642+00:00  [I] BOOT stage=smart_gps_begin free_heap=220472 min_heap=220328 heap_ok=1
+2026-04-17T21:40:38.841285+00:00  [W] SmartGps: persistencia last_good_fix desabilitada por configuracao
+2026-04-17T21:40:38.846600+00:00  [I] BOOT stage=lora_begin free_heap=220472 min_heap=220328 heap_ok=1
+2026-04-17T21:40:38.863280+00:00  [I] Anti-replay downlink restaurado last_seq=0
+2026-04-17T21:40:39.217339+00:00  [I] BOOT stage=checklist free_heap=220152 min_heap=220100 heap_ok=1
+2026-04-17T21:40:39.219302+00:00  ==== HW CHECKLIST | COLEIRA ====
+2026-04-17T21:40:39.223250+00:00  [CHECK] NVS_CONFIG               : OK
+2026-04-17T21:40:39.225105+00:00  [CHECK] SEQ_UPLINK_NVS           : OFF
+2026-04-17T21:40:39.230730+00:00  [W] CHECKLIST SEQ_UPLINK_NVS OFF: Seq uplink sem persistencia; revisar NVS.
+2026-04-17T21:40:39.235904+00:00  [CHECK] WIFI_OTA_SERVICE         : OK
+2026-04-17T21:40:39.238798+00:00  [MODE ] WIFI_OTA_ENABLED         : false
+2026-04-17T21:40:39.245106+00:00  [CHECK] STATUS_HTTP_80           : OK (/status habilitado)
+2026-04-17T21:40:39.249800+00:00  [CHECK] BLE_PRESENCE             : OK (desabilitado em config)
+2026-04-17T21:40:39.252570+00:00  [CHECK] GPS_UART                 : OK
+2026-04-17T21:40:39.260862+00:00  [CHECK] GPS_BOOT_RX              : OK (baud=9600 bytes=71 nmea=$2 sample=$GPRMC,214032.00,A,1640.)
+2026-04-17T21:40:39.269275+00:00  [CHECK] GPS_NMEA                 : OK (lat=-16.675413 lon=-49.485041 sats=0 hdop=99.90)
+2026-04-17T21:40:39.274558+00:00  [CHECK] I2C_BUS_SCAN             : OK (found=2 [0x5A,0x68])
+2026-04-17T21:40:39.278029+00:00  [CHECK] MPU6050_I2C              : OK (addr=0x68)
+2026-04-17T21:40:39.280429+00:00  [CHECK] MPU6050_DRIVER           : OK
+2026-04-17T21:40:39.285549+00:00  [CHECK] MLX90614_I2C             : OK
+2026-04-17T21:40:39.288342+00:00  [CHECK] MLX90614_DRIVER          : OK
+2026-04-17T21:40:39.295145+00:00  [CHECK] EEPROM_QUEUE             : OK (RAM-only; persistencia off)
+2026-04-17T21:40:39.296739+00:00  [CHECK] LORA_RFM95               : OK
+2026-04-17T21:40:39.299435+00:00  ================================
+2026-04-17T21:40:39.304939+00:00  [I] BOOT stage=ready free_heap=219888 min_heap=219728 heap_ok=1
+2026-04-17T21:40:39.310876+00:00  [I] Coleira inicializada: id=3222380545 fw=coleira-1.0.0
+2026-04-17T21:43:40.726980+00:00  [I] LoRa TX ok type=1 seq=284000001 target=3222380545 scope=9FFFC95AA1624895 bytes=158
+2026-04-17T21:43:41.990279+00:00  [I] LoRa TX ok type=2 seq=284000002 target=3222380545 scope=9FFFC95AA1624895 bytes=180
+2026-04-17T21:43:41.998457+00:00  Guru Meditation Error: Core  1 panic'ed (LoadProhibited). Exception was unhandled.
+2026-04-17T21:43:41.998526+00:00  
+2026-04-17T21:43:42.001154+00:00  Core  1 register dump:
+2026-04-17T21:43:42.006850+00:00  PC      : 0x40189354  PS      : 0x00060730  A0      : 0x800fd679  A1      : 0x3ffd07c0
+2026-04-17T21:43:42.015062+00:00  A2      : 0xffffffff  A3      : 0x00000040  A4      : 0x3ffd08dc  A5      : 0x00000000
+2026-04-17T21:43:42.023319+00:00  A6      : 0x00ff0000  A7      : 0xff000000  A8      : 0x01470e2c  A9      : 0x0000007d
+2026-04-17T21:43:42.045593+00:00  A10     : 0x3ffd0b84  A11     : 0x00001040  A12     : 0x3ffd08dc  A13     : 0x00000020
+2026-04-17T21:43:42.071090+00:00  A14     : 0x3ffd0860  A15     : 0x0000abab  SAR     : 0x00000000  EXCCAUSE: 0x0000001c
+2026-04-17T21:43:42.073234+00:00  EXCVADDR: 0x01470e3c  LBEG    : 0x40089a7d  LEND    : 0x40089a8e  LCOUNT  : 0xfffffff7
+2026-04-17T21:43:42.073406+00:00  
+2026-04-17T21:43:42.073957+00:00  
+2026-04-17T21:43:42.078589+00:00  Backtrace: 0x40189351:0x3ffd07c0 0x400fd676:0x3ffd07e0 0x400fe2b5:0x3ffd0850 0x400fea0f:0x3ffd08a0 0x400ff143:0x3ffd0920 0x400fcabf:0x3ffd0940 0x400e5add:0x3ffd0970 0x400e5b01:0x3ffd0990 0x400dad8e:0x3ffd09b0 0x400f0c28:0x3ffd3120 0x4008d2a1:0x3ffd3140
+2026-04-17T21:43:42.078736+00:00  
+2026-04-17T21:43:42.078789+00:00  
+2026-04-17T21:43:42.078837+00:00  
+2026-04-17T21:43:42.078886+00:00  
+2026-04-17T21:43:42.079166+00:00  ELF file SHA256: b15e5c5a4
+2026-04-17T21:43:42.079216+00:00  
+2026-04-17T21:43:42.202007+00:00  Rebooting...
+2026-04-17T21:43:42.205664+00:00  ets Jul 29 2019 12:21:46
+2026-04-17T21:43:42.205751+00:00  
+2026-04-17T21:43:42.210193+00:00  rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+2026-04-17T21:43:42.210377+00:00  configsip: 0, SPIWP:0xee
+2026-04-17T21:43:42.218644+00:00  clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+2026-04-17T21:43:42.218889+00:00  mode:DIO, clock div:2
+2026-04-17T21:43:42.221520+00:00  load:0x3fff0030,len:4640
+2026-04-17T21:43:42.224121+00:00  load:0x40078000,len:15660
+2026-04-17T21:43:42.228577+00:00  load:0x40080400,len:3164
+2026-04-17T21:43:42.228713+00:00  entry 0x4008059c
+2026-04-17T21:43:42.706301+00:00  [I] Boot reset_reason=4
+2026-04-17T21:43:42.712098+00:00  [I] BOOT stage=serial free_heap=225412 min_heap=222464 heap_ok=1
+2026-04-17T21:43:42.718368+00:00  [I] BOOT stage=wdt free_heap=225444 min_heap=222464 heap_ok=1
+2026-04-17T21:43:42.727544+00:00  [I] BOOT stage=prefs_counter free_heap=225372 min_heap=222464 heap_ok=1
+2026-04-17T21:43:42.735773+00:00  [W] Seq uplink restaurado next=285000001 hi=0 reboot=285 (persistencia write-through desabilitada)
+2026-04-17T21:43:42.744140+00:00  [I] Binding coleira: ready=1 property=T0xeG8WQHwJRI6H3t7vr scope=9FFFC95AA1624895 matrix=192.168.4.1 ver=1
+2026-04-17T21:43:42.749674+00:00  [I] BOOT stage=load_config free_heap=225372 min_heap=222464 heap_ok=1
+2026-04-17T21:43:42.757816+00:00  [I] BOOT stage=wifi_event free_heap=225324 min_heap=222464 heap_ok=1
+2026-04-17T21:43:42.763396+00:00  [I] BOOT stage=status_routes free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:43:42.768989+00:00  [I] BOOT stage=wifi_ota free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:43:42.774541+00:00  [I] BOOT stage=status_server free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:43:42.781695+00:00  [I] BOOT stage=sensors_begin free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:43:43.896926+00:00  
+2026-04-17T21:43:43.899783+00:00  ========================================
+2026-04-17T21:43:43.903970+00:00  Calculating gyro offsets
+2026-04-17T21:43:46.800477+00:00  DO NOT MOVE MPU6050...
+2026-04-17T21:43:46.800575+00:00  Done!
+2026-04-17T21:43:46.800653+00:00  X : 0.26
+2026-04-17T21:43:46.800782+00:00  Y : -0.43
+2026-04-17T21:43:46.803190+00:00  Z : 1.08
+2026-04-17T21:43:46.805984+00:00  Program will start after 3 seconds
+2026-04-17T21:43:47.811588+00:00  ========================================
+2026-04-17T21:43:49.808371+00:00  [I] BOOT stage=safety_begin free_heap=220472 min_heap=220420 heap_ok=1
+2026-04-17T21:43:49.812796+00:00  [I] BOOT stage=storage_begin free_heap=220472 min_heap=220332 heap_ok=1
+2026-04-17T21:43:49.819026+00:00  [W] StorageQueue: persistencia EEPROM desabilitada; usando fila em RAM
+2026-04-17T21:43:49.823911+00:00  [I] BOOT stage=smart_gps_begin free_heap=220472 min_heap=220328 heap_ok=1
+2026-04-17T21:43:49.832849+00:00  [W] SmartGps: persistencia last_good_fix desabilitada por configuracao
+2026-04-17T21:43:49.837771+00:00  [I] BOOT stage=lora_begin free_heap=220472 min_heap=220328 heap_ok=1
+2026-04-17T21:43:49.855076+00:00  [I] Anti-replay downlink restaurado last_seq=0
+2026-04-17T21:43:50.237674+00:00  [I] BOOT stage=checklist free_heap=220152 min_heap=220100 heap_ok=1
+2026-04-17T21:43:50.238334+00:00  ==== HW CHECKLIST | COLEIRA ====
+2026-04-17T21:43:50.239152+00:00  [CHECK] NVS_CONFIG               : OK
+2026-04-17T21:43:50.239616+00:00  [CHECK] SEQ_UPLINK_NVS           : OFF
+2026-04-17T21:43:50.243182+00:00  [W] CHECKLIST SEQ_UPLINK_NVS OFF: Seq uplink sem persistencia; revisar NVS.
+2026-04-17T21:43:50.243844+00:00  [CHECK] WIFI_OTA_SERVICE         : OK
+2026-04-17T21:43:50.246212+00:00  [MODE ] WIFI_OTA_ENABLED         : false
+2026-04-17T21:43:50.246952+00:00  [CHECK] STATUS_HTTP_80           : OK (/status habilitado)
+2026-04-17T21:43:50.260252+00:00  [CHECK] BLE_PRESENCE             : OK (desabilitado em config)
+2026-04-17T21:43:50.261338+00:00  [CHECK] GPS_UART                 : OK
+2026-04-17T21:43:50.262615+00:00  [CHECK] GPS_BOOT_RX              : OK (baud=9600 bytes=71 nmea=$2 sample=$GPRMC,214343.00,A,1640.)
+2026-04-17T21:43:50.263491+00:00  [CHECK] GPS_NMEA                 : OK (lat=-16.675441 lon=-49.485034 sats=0 hdop=99.90)
+2026-04-17T21:43:50.266931+00:00  [CHECK] I2C_BUS_SCAN             : OK (found=2 [0x5A,0x68])
+2026-04-17T21:43:50.268767+00:00  [CHECK] MPU6050_I2C              : OK (addr=0x68)
+2026-04-17T21:43:50.274621+00:00  [CHECK] MPU6050_DRIVER           : OK
+2026-04-17T21:43:50.276770+00:00  [CHECK] MLX90614_I2C             : OK
+2026-04-17T21:43:50.279523+00:00  [CHECK] MLX90614_DRIVER          : OK
+2026-04-17T21:43:50.285205+00:00  [CHECK] EEPROM_QUEUE             : OK (RAM-only; persistencia off)
+2026-04-17T21:43:50.287999+00:00  [CHECK] LORA_RFM95               : OK
+2026-04-17T21:43:50.290680+00:00  ================================
+2026-04-17T21:43:50.296113+00:00  [I] BOOT stage=ready free_heap=219688 min_heap=219528 heap_ok=1
+2026-04-17T21:43:50.301939+00:00  [I] Coleira inicializada: id=3222380545 fw=coleira-1.0.0
+2026-04-17T21:46:51.719733+00:00  [I] LoRa TX ok type=1 seq=285000001 target=3222380545 scope=9FFFC95AA1624895 bytes=161
+2026-04-17T21:46:52.982004+00:00  [I] LoRa TX ok type=2 seq=285000002 target=3222380545 scope=9FFFC95AA1624895 bytes=180
+2026-04-17T21:46:52.989893+00:00  Guru Meditation Error: Core  1 panic'ed (LoadProhibited). Exception was unhandled.
+2026-04-17T21:46:52.990009+00:00  
+2026-04-17T21:46:52.992561+00:00  Core  1 register dump:
+2026-04-17T21:46:52.998456+00:00  PC      : 0x40189354  PS      : 0x00060730  A0      : 0x800fd679  A1      : 0x3ffd07c0
+2026-04-17T21:46:53.006718+00:00  A2      : 0xffffffff  A3      : 0x00000040  A4      : 0x3ffd08dc  A5      : 0x00000000
+2026-04-17T21:46:53.014862+00:00  A6      : 0x00ff0000  A7      : 0xff000000  A8      : 0x014787a8  A9      : 0x0000007d
+2026-04-17T21:46:53.023094+00:00  A10     : 0x3ffd0b84  A11     : 0x00001040  A12     : 0x3ffd08dc  A13     : 0x00000020
+2026-04-17T21:46:53.031251+00:00  A14     : 0x3ffd0860  A15     : 0x0000abab  SAR     : 0x00000000  EXCCAUSE: 0x0000001c
+2026-04-17T21:46:53.039419+00:00  EXCVADDR: 0x014787b8  LBEG    : 0x40089a7d  LEND    : 0x40089a8e  LCOUNT  : 0xfffffff7
+2026-04-17T21:46:53.039555+00:00  
+2026-04-17T21:46:53.039639+00:00  
+2026-04-17T21:46:53.061587+00:00  Backtrace: 0x40189351:0x3ffd07c0 0x400fd676:0x3ffd07e0 0x400fe2b5:0x3ffd0850 0x400fea0f:0x3ffd08a0 0x400ff143:0x3ffd0920 0x400fcabf:0x3ffd0940 0x400e5add:0x3ffd0970 0x400e5b01:0x3ffd0990 0x400dad8e:0x3ffd09b0 0x400f0c28:0x3ffd3120 0x4008d2a1:0x3ffd3140
+2026-04-17T21:46:53.062906+00:00  
+2026-04-17T21:46:53.063248+00:00  
+2026-04-17T21:46:53.063348+00:00  
+2026-04-17T21:46:53.063425+00:00  
+2026-04-17T21:46:53.064251+00:00  ELF file SHA256: b15e5c5a4
+2026-04-17T21:46:53.064360+00:00  
+2026-04-17T21:46:53.191463+00:00  Rebooting...
+2026-04-17T21:46:53.194197+00:00  ets Jul 29 2019 12:21:46
+2026-04-17T21:46:53.196091+00:00  
+2026-04-17T21:46:53.199714+00:00  rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+2026-04-17T21:46:53.200104+00:00  configsip: 0, SPIWP:0xee
+2026-04-17T21:46:53.211491+00:00  clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+2026-04-17T21:46:53.211906+00:00  mode:DIO, clock div:2
+2026-04-17T21:46:53.212281+00:00  load:0x3fff0030,len:4640
+2026-04-17T21:46:53.213787+00:00  load:0x40078000,len:15660
+2026-04-17T21:46:53.218091+00:00  load:0x40080400,len:3164
+2026-04-17T21:46:53.218366+00:00  entry 0x4008059c
+2026-04-17T21:46:53.695856+00:00  [I] Boot reset_reason=4
+2026-04-17T21:46:53.701667+00:00  [I] BOOT stage=serial free_heap=225412 min_heap=222464 heap_ok=1
+2026-04-17T21:46:53.707912+00:00  [I] BOOT stage=wdt free_heap=225444 min_heap=222464 heap_ok=1
+2026-04-17T21:46:53.717053+00:00  [I] BOOT stage=prefs_counter free_heap=225372 min_heap=222464 heap_ok=1
+2026-04-17T21:46:53.725338+00:00  [W] Seq uplink restaurado next=286000001 hi=0 reboot=286 (persistencia write-through desabilitada)
+2026-04-17T21:46:53.733756+00:00  [I] Binding coleira: ready=1 property=T0xeG8WQHwJRI6H3t7vr scope=9FFFC95AA1624895 matrix=192.168.4.1 ver=1
+2026-04-17T21:46:53.739305+00:00  [I] BOOT stage=load_config free_heap=225372 min_heap=222464 heap_ok=1
+2026-04-17T21:46:53.747289+00:00  [I] BOOT stage=wifi_event free_heap=225324 min_heap=222464 heap_ok=1
+2026-04-17T21:46:53.752905+00:00  [I] BOOT stage=status_routes free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:46:53.758466+00:00  [I] BOOT stage=wifi_ota free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:46:53.764081+00:00  [I] BOOT stage=status_server free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:46:53.771359+00:00  [I] BOOT stage=sensors_begin free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:46:54.897390+00:00  
+2026-04-17T21:46:54.900202+00:00  ========================================
+2026-04-17T21:46:54.904397+00:00  Calculating gyro offsets
+2026-04-17T21:46:57.800959+00:00  DO NOT MOVE MPU6050...
+2026-04-17T21:46:57.801304+00:00  Done!
+2026-04-17T21:46:57.801735+00:00  X : 0.26
+2026-04-17T21:46:57.801922+00:00  Y : -0.42
+2026-04-17T21:46:57.803725+00:00  Z : 1.08
+2026-04-17T21:46:57.806555+00:00  Program will start after 3 seconds
+2026-04-17T21:46:58.815965+00:00  ========================================
+2026-04-17T21:47:00.808855+00:00  [I] BOOT stage=safety_begin free_heap=220472 min_heap=220420 heap_ok=1
+2026-04-17T21:47:00.814235+00:00  [I] BOOT stage=storage_begin free_heap=220472 min_heap=220332 heap_ok=1
+2026-04-17T21:47:00.819790+00:00  [W] StorageQueue: persistencia EEPROM desabilitada; usando fila em RAM
+2026-04-17T21:47:00.825788+00:00  [I] BOOT stage=smart_gps_begin free_heap=220472 min_heap=220328 heap_ok=1
+2026-04-17T21:47:00.833440+00:00  [W] SmartGps: persistencia last_good_fix desabilitada por configuracao
+2026-04-17T21:47:00.839168+00:00  [I] BOOT stage=lora_begin free_heap=220472 min_heap=220328 heap_ok=1
+2026-04-17T21:47:00.855893+00:00  [I] Anti-replay downlink restaurado last_seq=0
+2026-04-17T21:47:01.210535+00:00  [I] BOOT stage=checklist free_heap=220152 min_heap=220100 heap_ok=1
+2026-04-17T21:47:01.211975+00:00  ==== HW CHECKLIST | COLEIRA ====
+2026-04-17T21:47:01.214682+00:00  [CHECK] NVS_CONFIG               : OK
+2026-04-17T21:47:01.217677+00:00  [CHECK] SEQ_UPLINK_NVS           : OFF
+2026-04-17T21:47:01.223450+00:00  [W] CHECKLIST SEQ_UPLINK_NVS OFF: Seq uplink sem persistencia; revisar NVS.
+2026-04-17T21:47:01.228509+00:00  [CHECK] WIFI_OTA_SERVICE         : OK
+2026-04-17T21:47:01.231266+00:00  [MODE ] WIFI_OTA_ENABLED         : false
+2026-04-17T21:47:01.236831+00:00  [CHECK] STATUS_HTTP_80           : OK (/status habilitado)
+2026-04-17T21:47:01.242338+00:00  [CHECK] BLE_PRESENCE             : OK (desabilitado em config)
+2026-04-17T21:47:01.245189+00:00  [CHECK] GPS_UART                 : OK
+2026-04-17T21:47:01.253550+00:00  [CHECK] GPS_BOOT_RX              : OK (baud=9600 bytes=71 nmea=$2 sample=$GPRMC,214654.00,A,1640.)
+2026-04-17T21:47:01.263584+00:00  [CHECK] GPS_NMEA                 : OK (lat=-16.675421 lon=-49.485072 sats=0 hdop=99.90)
+2026-04-17T21:47:01.267144+00:00  [CHECK] I2C_BUS_SCAN             : OK (found=2 [0x5A,0x68])
+2026-04-17T21:47:01.269993+00:00  [CHECK] MPU6050_I2C              : OK (addr=0x68)
+2026-04-17T21:47:01.272898+00:00  [CHECK] MPU6050_DRIVER           : OK
+2026-04-17T21:47:01.278182+00:00  [CHECK] MLX90614_I2C             : OK
+2026-04-17T21:47:01.281017+00:00  [CHECK] MLX90614_DRIVER          : OK
+2026-04-17T21:47:01.286530+00:00  [CHECK] EEPROM_QUEUE             : OK (RAM-only; persistencia off)
+2026-04-17T21:47:01.289772+00:00  [CHECK] LORA_RFM95               : OK
+2026-04-17T21:47:01.292184+00:00  ================================
+2026-04-17T21:47:01.297703+00:00  [I] BOOT stage=ready free_heap=219888 min_heap=219728 heap_ok=1
+2026-04-17T21:47:01.303960+00:00  [I] Coleira inicializada: id=3222380545 fw=coleira-1.0.0
+2026-04-17T21:50:02.703509+00:00  [I] LoRa TX ok type=1 seq=286000001 target=3222380545 scope=9FFFC95AA1624895 bytes=158
+2026-04-17T21:50:03.966548+00:00  [I] LoRa TX ok type=2 seq=286000002 target=3222380545 scope=9FFFC95AA1624895 bytes=180
+2026-04-17T21:50:03.974688+00:00  Guru Meditation Error: Core  1 panic'ed (LoadProhibited). Exception was unhandled.
+2026-04-17T21:50:03.974777+00:00  
+2026-04-17T21:50:03.977504+00:00  Core  1 register dump:
+2026-04-17T21:50:03.983140+00:00  PC      : 0x40189354  PS      : 0x00060730  A0      : 0x800fd679  A1      : 0x3ffd07c0
+2026-04-17T21:50:03.992830+00:00  A2      : 0xffffffff  A3      : 0x00000040  A4      : 0x3ffd08dc  A5      : 0x00000000
+2026-04-17T21:50:03.999692+00:00  A6      : 0x00ff0000  A7      : 0xff000000  A8      : 0x014810c4  A9      : 0x0000007d
+2026-04-17T21:50:04.007941+00:00  A10     : 0x3ffd0b84  A11     : 0x00001040  A12     : 0x3ffd08dc  A13     : 0x00000020
+2026-04-17T21:50:04.016250+00:00  A14     : 0x3ffd0860  A15     : 0x0000abab  SAR     : 0x00000000  EXCCAUSE: 0x0000001c
+2026-04-17T21:50:04.024415+00:00  EXCVADDR: 0x014810d4  LBEG    : 0x40089a7d  LEND    : 0x40089a8e  LCOUNT  : 0xfffffff7
+2026-04-17T21:50:04.024559+00:00  
+2026-04-17T21:50:04.024646+00:00  
+2026-04-17T21:50:04.046665+00:00  Backtrace: 0x40189351:0x3ffd07c0 0x400fd676:0x3ffd07e0 0x400fe2b5:0x3ffd0850 0x400fea0f:0x3ffd08a0 0x400ff143:0x3ffd0920 0x400fcabf:0x3ffd0940 0x400e5add:0x3ffd0970 0x400e5b01:0x3ffd0990 0x400dad8e:0x3ffd09b0 0x400f0c28:0x3ffd3120 0x4008d2a1:0x3ffd3140
+2026-04-17T21:50:04.046884+00:00  
+2026-04-17T21:50:04.046958+00:00  
+2026-04-17T21:50:04.047022+00:00  
+2026-04-17T21:50:04.047083+00:00  
+2026-04-17T21:50:04.049511+00:00  ELF file SHA256: b15e5c5a4
+2026-04-17T21:50:04.049596+00:00  
+2026-04-17T21:50:04.178314+00:00  Rebooting...
+2026-04-17T21:50:04.179864+00:00  ets Jul 29 2019 12:21:46
+2026-04-17T21:50:04.179987+00:00  
+2026-04-17T21:50:04.185413+00:00  rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+2026-04-17T21:50:04.186132+00:00  configsip: 0, SPIWP:0xee
+2026-04-17T21:50:04.193944+00:00  clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+2026-04-17T21:50:04.194300+00:00  mode:DIO, clock div:2
+2026-04-17T21:50:04.197020+00:00  load:0x3fff0030,len:4640
+2026-04-17T21:50:04.199575+00:00  load:0x40078000,len:15660
+2026-04-17T21:50:04.204025+00:00  load:0x40080400,len:3164
+2026-04-17T21:50:04.204424+00:00  entry 0x4008059c
+2026-04-17T21:50:04.681711+00:00  [I] Boot reset_reason=4
+2026-04-17T21:50:04.687219+00:00  [I] BOOT stage=serial free_heap=225412 min_heap=222464 heap_ok=1
+2026-04-17T21:50:04.693759+00:00  [I] BOOT stage=wdt free_heap=225444 min_heap=222464 heap_ok=1
+2026-04-17T21:50:04.702776+00:00  [I] BOOT stage=prefs_counter free_heap=225372 min_heap=222464 heap_ok=1
+2026-04-17T21:50:04.711249+00:00  [W] Seq uplink restaurado next=287000001 hi=0 reboot=287 (persistencia write-through desabilitada)
+2026-04-17T21:50:04.719283+00:00  [I] Binding coleira: ready=1 property=T0xeG8WQHwJRI6H3t7vr scope=9FFFC95AA1624895 matrix=192.168.4.1 ver=1
+2026-04-17T21:50:04.724881+00:00  [I] BOOT stage=load_config free_heap=225372 min_heap=222464 heap_ok=1
+2026-04-17T21:50:04.733019+00:00  [I] BOOT stage=wifi_event free_heap=225324 min_heap=222464 heap_ok=1
+2026-04-17T21:50:04.738604+00:00  [I] BOOT stage=status_routes free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:50:04.744244+00:00  [I] BOOT stage=wifi_ota free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:50:04.749827+00:00  [I] BOOT stage=status_server free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:50:04.757051+00:00  [I] BOOT stage=sensors_begin free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:50:05.882009+00:00  
+2026-04-17T21:50:05.884808+00:00  ========================================
+2026-04-17T21:50:05.888955+00:00  Calculating gyro offsets
+2026-04-17T21:50:08.785596+00:00  DO NOT MOVE MPU6050...
+2026-04-17T21:50:08.785703+00:00  Done!
+2026-04-17T21:50:08.785772+00:00  X : 0.26
+2026-04-17T21:50:08.785841+00:00  Y : -0.43
+2026-04-17T21:50:08.788333+00:00  Z : 1.08
+2026-04-17T21:50:08.791150+00:00  Program will start after 3 seconds
+2026-04-17T21:50:09.798438+00:00  ========================================
+2026-04-17T21:50:11.793158+00:00  [I] BOOT stage=safety_begin free_heap=220472 min_heap=220420 heap_ok=1
+2026-04-17T21:50:11.798722+00:00  [I] BOOT stage=storage_begin free_heap=220472 min_heap=220332 heap_ok=1
+2026-04-17T21:50:11.804377+00:00  [W] StorageQueue: persistencia EEPROM desabilitada; usando fila em RAM
+2026-04-17T21:50:11.809853+00:00  [I] BOOT stage=smart_gps_begin free_heap=220472 min_heap=220328 heap_ok=1
+2026-04-17T21:50:11.817982+00:00  [W] SmartGps: persistencia last_good_fix desabilitada por configuracao
+2026-04-17T21:50:11.823880+00:00  [I] BOOT stage=lora_begin free_heap=220472 min_heap=220328 heap_ok=1
+2026-04-17T21:50:11.840333+00:00  [I] Anti-replay downlink restaurado last_seq=0
+2026-04-17T21:50:12.193747+00:00  [I] BOOT stage=checklist free_heap=220152 min_heap=220100 heap_ok=1
+2026-04-17T21:50:12.196582+00:00  ==== HW CHECKLIST | COLEIRA ====
+2026-04-17T21:50:12.199352+00:00  [CHECK] NVS_CONFIG               : OK
+2026-04-17T21:50:12.202169+00:00  [CHECK] SEQ_UPLINK_NVS           : OFF
+2026-04-17T21:50:12.208261+00:00  [W] CHECKLIST SEQ_UPLINK_NVS OFF: Seq uplink sem persistencia; revisar NVS.
+2026-04-17T21:50:12.213096+00:00  [CHECK] WIFI_OTA_SERVICE         : OK
+2026-04-17T21:50:12.215871+00:00  [MODE ] WIFI_OTA_ENABLED         : false
+2026-04-17T21:50:12.221795+00:00  [CHECK] STATUS_HTTP_80           : OK (/status habilitado)
+2026-04-17T21:50:12.226869+00:00  [CHECK] BLE_PRESENCE             : OK (desabilitado em config)
+2026-04-17T21:50:12.229922+00:00  [CHECK] GPS_UART                 : OK
+2026-04-17T21:50:12.238050+00:00  [CHECK] GPS_BOOT_RX              : OK (baud=9600 bytes=72 nmea=$2 sample=$GPRMC,215005.00,A,1640.)
+2026-04-17T21:50:12.246253+00:00  [CHECK] GPS_NMEA                 : OK (lat=-16.675378 lon=-49.485075 sats=0 hdop=99.90)
+2026-04-17T21:50:12.251810+00:00  [CHECK] I2C_BUS_SCAN             : OK (found=2 [0x5A,0x68])
+2026-04-17T21:50:12.257877+00:00  [CHECK] MPU6050_I2C              : OK (addr=0x68)
+2026-04-17T21:50:12.258442+00:00  [CHECK] MPU6050_DRIVER           : OK
+2026-04-17T21:50:12.262917+00:00  [CHECK] MLX90614_I2C             : OK
+2026-04-17T21:50:12.265576+00:00  [CHECK] MLX90614_DRIVER          : OK
+2026-04-17T21:50:12.271144+00:00  [CHECK] EEPROM_QUEUE             : OK (RAM-only; persistencia off)
+2026-04-17T21:50:12.273856+00:00  [CHECK] LORA_RFM95               : OK
+2026-04-17T21:50:12.276647+00:00  ================================
+2026-04-17T21:50:12.282172+00:00  [I] BOOT stage=ready free_heap=219888 min_heap=219728 heap_ok=1
+2026-04-17T21:50:12.287909+00:00  [I] Coleira inicializada: id=3222380545 fw=coleira-1.0.0
+2026-04-17T21:53:13.698982+00:00  [I] LoRa TX ok type=1 seq=287000001 target=3222380545 scope=9FFFC95AA1624895 bytes=159
+2026-04-17T21:53:14.962111+00:00  [I] LoRa TX ok type=2 seq=287000002 target=3222380545 scope=9FFFC95AA1624895 bytes=180
+2026-04-17T21:53:14.970063+00:00  Guru Meditation Error: Core  1 panic'ed (LoadProhibited). Exception was unhandled.
+2026-04-17T21:53:14.970173+00:00  
+2026-04-17T21:53:14.972501+00:00  Core  1 register dump:
+2026-04-17T21:53:14.978311+00:00  PC      : 0x40189354  PS      : 0x00060730  A0      : 0x800fd679  A1      : 0x3ffd07c0
+2026-04-17T21:53:14.987062+00:00  A2      : 0xffffffff  A3      : 0x00000040  A4      : 0x3ffd08dc  A5      : 0x00000000
+2026-04-17T21:53:14.996510+00:00  A6      : 0x00ff0000  A7      : 0xff000000  A8      : 0x01488a40  A9      : 0x0000007d
+2026-04-17T21:53:15.003806+00:00  A10     : 0x3ffd0b84  A11     : 0x00001040  A12     : 0x3ffd08dc  A13     : 0x00000020
+2026-04-17T21:53:15.011836+00:00  A14     : 0x3ffd0860  A15     : 0x0000abab  SAR     : 0x00000000  EXCCAUSE: 0x0000001c
+2026-04-17T21:53:15.019582+00:00  EXCVADDR: 0x01488a50  LBEG    : 0x40089a7d  LEND    : 0x40089a8e  LCOUNT  : 0xfffffff7
+2026-04-17T21:53:15.019720+00:00  
+2026-04-17T21:53:15.019803+00:00  
+2026-04-17T21:53:15.041520+00:00  Backtrace: 0x40189351:0x3ffd07c0 0x400fd676:0x3ffd07e0 0x400fe2b5:0x3ffd0850 0x400fea0f:0x3ffd08a0 0x400ff143:0x3ffd0920 0x400fcabf:0x3ffd0940 0x400e5add:0x3ffd0970 0x400e5b01:0x3ffd0990 0x400dad8e:0x3ffd09b0 0x400f0c28:0x3ffd3120 0x4008d2a1:0x3ffd3140
+2026-04-17T21:53:15.041703+00:00  
+2026-04-17T21:53:15.041769+00:00  
+2026-04-17T21:53:15.041824+00:00  
+2026-04-17T21:53:15.041876+00:00  
+2026-04-17T21:53:15.044181+00:00  ELF file SHA256: b15e5c5a4
+2026-04-17T21:53:15.044282+00:00  
+2026-04-17T21:53:15.173424+00:00  Rebooting...
+2026-04-17T21:53:15.176069+00:00  ets Jul 29 2019 12:21:46
+2026-04-17T21:53:15.176162+00:00  
+2026-04-17T21:53:15.181660+00:00  rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+2026-04-17T21:53:15.182021+00:00  configsip: 0, SPIWP:0xee
+2026-04-17T21:53:15.189913+00:00  clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+2026-04-17T21:53:15.190912+00:00  mode:DIO, clock div:2
+2026-04-17T21:53:15.192958+00:00  load:0x3fff0030,len:4640
+2026-04-17T21:53:15.195581+00:00  load:0x40078000,len:15660
+2026-04-17T21:53:15.199987+00:00  load:0x40080400,len:3164
+2026-04-17T21:53:15.200260+00:00  entry 0x4008059c
+2026-04-17T21:53:15.677705+00:00  [I] Boot reset_reason=4
+2026-04-17T21:53:15.683795+00:00  [I] BOOT stage=serial free_heap=225412 min_heap=222464 heap_ok=1
+2026-04-17T21:53:15.689959+00:00  [I] BOOT stage=wdt free_heap=225444 min_heap=222464 heap_ok=1
+2026-04-17T21:53:15.698895+00:00  [I] BOOT stage=prefs_counter free_heap=225372 min_heap=222464 heap_ok=1
+2026-04-17T21:53:15.707143+00:00  [W] Seq uplink restaurado next=288000001 hi=0 reboot=288 (persistencia write-through desabilitada)
+2026-04-17T21:53:15.715530+00:00  [I] Binding coleira: ready=1 property=T0xeG8WQHwJRI6H3t7vr scope=9FFFC95AA1624895 matrix=192.168.4.1 ver=1
+2026-04-17T21:53:15.721066+00:00  [I] BOOT stage=load_config free_heap=225372 min_heap=222464 heap_ok=1
+2026-04-17T21:53:15.729138+00:00  [I] BOOT stage=wifi_event free_heap=225324 min_heap=222464 heap_ok=1
+2026-04-17T21:53:15.734798+00:00  [I] BOOT stage=status_routes free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:53:15.740330+00:00  [I] BOOT stage=wifi_ota free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:53:15.745948+00:00  [I] BOOT stage=status_server free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:53:15.753279+00:00  [I] BOOT stage=sensors_begin free_heap=225060 min_heap=222464 heap_ok=1
+2026-04-17T21:53:16.879461+00:00  
+2026-04-17T21:53:16.882123+00:00  ========================================
+2026-04-17T21:53:16.886373+00:00  Calculating gyro offsets
+2026-04-17T21:53:19.783292+00:00  DO NOT MOVE MPU6050...
+2026-04-17T21:53:19.783694+00:00  Done!
+2026-04-17T21:53:19.783863+00:00  X : 0.26
+2026-04-17T21:53:19.784509+00:00  Y : -0.43
+2026-04-17T21:53:19.785683+00:00  Z : 1.08
+2026-04-17T21:53:19.788753+00:00  Program will start after 3 seconds
+2026-04-17T21:53:20.805070+00:00  ========================================
+2026-04-17T21:53:22.790853+00:00  [I] BOOT stage=safety_begin free_heap=220472 min_heap=220420 heap_ok=1
+2026-04-17T21:53:22.798141+00:00  [I] BOOT stage=storage_begin free_heap=220472 min_heap=220332 heap_ok=1
+2026-04-17T21:53:22.803581+00:00  [W] StorageQueue: persistencia EEPROM desabilitada; usando fila em RAM
+2026-04-17T21:53:22.810486+00:00  [I] BOOT stage=smart_gps_begin free_heap=220472 min_heap=220328 heap_ok=1
+2026-04-17T21:53:22.815405+00:00  [W] SmartGps: persistencia last_good_fix desabilitada por configuracao
+2026-04-17T21:53:22.821432+00:00  [I] BOOT stage=lora_begin free_heap=220472 min_heap=220328 heap_ok=1
+2026-04-17T21:53:23.005350+00:00  [I] Anti-replay downlink restaurado last_seq=0
+2026-04-17T21:53:23.191094+00:00  [I] BOOT stage=checklist free_heap=220152 min_heap=220100 heap_ok=1
+2026-04-17T21:53:23.193981+00:00  ==== HW CHECKLIST | COLEIRA ====
+2026-04-17T21:53:23.196862+00:00  [CHECK] NVS_CONFIG               : OK
+2026-04-17T21:53:23.199617+00:00  [CHECK] SEQ_UPLINK_NVS           : OFF
+2026-04-17T21:53:23.205810+00:00  [W] CHECKLIST SEQ_UPLINK_NVS OFF: Seq uplink sem persistencia; revisar NVS.
+2026-04-17T21:53:23.214241+00:00  [CHECK] WIFI_OTA_SERVICE         : OK
+2026-04-17T21:53:23.217298+00:00  [MODE ] WIFI_OTA_ENABLED         : false
+2026-04-17T21:53:23.219547+00:00  [CHECK] STATUS_HTTP_80           : OK (/status habilitado)
+2026-04-17T21:53:23.225848+00:00  [CHECK] BLE_PRESENCE             : OK (desabilitado em config)
+2026-04-17T21:53:23.227106+00:00  [CHECK] GPS_UART                 : OK
+2026-04-17T21:53:23.237487+00:00  [CHECK] GPS_BOOT_RX              : OK (baud=9600 bytes=75 nmea=$2 sample=$GPRMC,215316.00,A,1640.)
+2026-04-17T21:53:23.243820+00:00  [CHECK] GPS_NMEA                 : OK (lat=-16.675386 lon=-49.485050 sats=0 hdop=99.90)
+2026-04-17T21:53:23.255167+00:00  [CHECK] I2C_BUS_SCAN             : OK (found=2 [0x5A,0x68])
+2026-04-17T21:53:23.255908+00:00  [CHECK] MPU6050_I2C              : OK (addr=0x68)
+2026-04-17T21:53:23.256438+00:00  [CHECK] MPU6050_DRIVER           : OK
+2026-04-17T21:53:23.261604+00:00  [CHECK] MLX90614_I2C             : OK
+2026-04-17T21:53:23.268749+00:00  [CHECK] MLX90614_DRIVER          : OK
+2026-04-17T21:53:23.270630+00:00  [CHECK] EEPROM_QUEUE             : OK (RAM-only; persistencia off)
+2026-04-17T21:53:23.271774+00:00  [CHECK] LORA_RFM95               : OK
+2026-04-17T21:53:23.280359+00:00  ================================
+2026-04-17T21:53:23.281500+00:00  [I] BOOT stage=ready free_heap=219688 min_heap=219528 heap_ok=1
+2026-04-17T21:53:23.285345+00:00  [I] Coleira inicializada: id=3222380545 fw=coleira-1.0.0
+2026-04-17T21:55:12.351750+00:00  ets Jul 29 2019 12:21:46
+2026-04-17T21:55:12.353086+00:00  
+2026-04-17T21:55:12.359367+00:00  rst:0x1 (POWERON_RESET),boot:0x3 (DOWNLOAD_BOOT(UART0/UART1/SDIO_REI_REO_V2))
+2026-04-17T21:55:12.361098+00:00  waiting for download

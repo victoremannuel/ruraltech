@@ -1,0 +1,5 @@
+[poller] areaId=kQSjWOVdkqTNDM9WBggT propertyId=T0xeG8WQHwJRI6H3t7vr
+[poller] Snapshots → /Users/victoremannuel/Documents/dev/ruraltech/tools/audit/output/20260417_182851/supabase_snapshots.jsonl
+[poller] Timeline  → /Users/victoremannuel/Documents/dev/ruraltech/tools/audit/output/20260417_182851/supabase_timeline.jsonl
+  [timeline] {'ts': '2026-04-17T21:30:29.600858+00:00', 'event': 'status_change', 'commandId': 'AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:B3DD1772D1DF1EDC:23A00185B336A70A', 'from': None, 'to': 'queued'}
+[poller] Concluído. Arquivos em /Users/victoremannuel/Documents/dev/ruraltech/tools/audit/output/20260417_182851

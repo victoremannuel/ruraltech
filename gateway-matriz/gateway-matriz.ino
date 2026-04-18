@@ -4008,6 +4008,19 @@ static void printBootChecklist(
     bool loraOk,
     bool cloudConfigured) {
   Serial.println("==== HW CHECKLIST | GATEWAY MATRIX ====");
+  Serial.printf("[MODE ] %-24s : %u\n", "DIAG_STAGE", (unsigned)cfg::DIAG_STAGE);
+  Serial.printf("[MODE ] %-24s : %s\n", "DIAG_PROFILE", cfg::DIAG_PROFILE_NAME);
+  Serial.printf("[MODE ] %-24s : %u\n", "PROTO_VERSION", (unsigned)cfg::LORA_PROTO_VERSION);
+  Serial.printf("[MODE ] %-24s : %u\n", "KEY_ID", (unsigned)cfg::LORA_KEY_ID);
+  Serial.printf("[MODE ] %-24s : %u\n", "RADIO_PROFILE", (unsigned)cfg::LORA_RADIO_PROFILE_ID);
+  Serial.printf(
+      "[MODE ] %-24s : %s\n",
+      "ANTI_REPLAY_MODE",
+      cfg::DISABLE_LORA_REPLAY_FOR_TESTS ? "test-disabled" : "strict");
+  Serial.printf(
+      "[MODE ] %-24s : %s\n",
+      "BINDING_READY",
+      bindingReady ? "true" : "false");
   checklistLine(
       "NVS_SEQ_DOWN",
       seqPrefsReady,
@@ -4126,6 +4139,18 @@ void setup() {
       loraOk,
       cloudConfigured);
 
+  LOGI("Matrix diag_stage=%u profile=%s", (unsigned)cfg::DIAG_STAGE, cfg::DIAG_PROFILE_NAME);
+  LOGW("Matrix anti_replay_test_mode=%d", cfg::DISABLE_LORA_REPLAY_FOR_TESTS ? 1 : 0);
+  LOGI("Matrix lora_only_bench_mode=%d", cfg::DIAG_STAGE == 1 ? 1 : 0);
+  LOGI(
+      "Matrix boot fw=%s diag_stage=%u proto_version=%u key_id=%u radio_profile=%u bindingReady=%d profile_name=%s",
+      cfg::FW_VERSION,
+      (unsigned)cfg::DIAG_STAGE,
+      (unsigned)cfg::LORA_PROTO_VERSION,
+      (unsigned)cfg::LORA_KEY_ID,
+      (unsigned)cfg::LORA_RADIO_PROFILE_ID,
+      bindingReady ? 1 : 0,
+      cfg::DIAG_PROFILE_NAME);
   LOGI("Gateway matriz pronto fw=%s", cfg::FW_VERSION);
 }
 

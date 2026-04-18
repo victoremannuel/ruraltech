@@ -57,3 +57,6 @@ graphify-out
 /scripts/migration/.env
 /scripts/migration/package-lock.json
 *.env
+
+/brain/graphify-out/
+/brain/copilot/

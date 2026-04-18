@@ -24,8 +24,13 @@ class LoRaGateway {
   uint32_t lastAcceptedRxAtMs() const { return lastAcceptedRxAtMs_; }
   uint32_t rxArmCount() const { return rxArmCount_; }
   uint32_t txCount() const { return txCount_; }
+  uint32_t txFailCount() const { return txFailCount_; }
   uint16_t lastIrqFlags() const { return lastIrqFlags_; }
   const char* lastRadioState() const { return lastRadioState_; }
+  uint32_t decryptFailCount() const { return decryptFailCount_; }
+  uint32_t nonceMismatchCount() const { return nonceMismatchCount_; }
+  uint32_t replayRejectCount() const { return replayRejectCount_; }
+  uint32_t lastAcceptedSeq() const { return lastAcceptedSeq_; }
 
  private:
   SX1276 radio_;
@@ -42,8 +47,13 @@ class LoRaGateway {
   uint32_t lastAcceptedRxAtMs_ = 0;
   uint32_t rxArmCount_ = 0;
   uint32_t txCount_ = 0;
+  uint32_t txFailCount_ = 0;
   uint16_t lastIrqFlags_ = 0;
   const char* lastRadioState_ = "boot";
+  uint32_t decryptFailCount_ = 0;
+  uint32_t nonceMismatchCount_ = 0;
+  uint32_t replayRejectCount_ = 0;
+  uint32_t lastAcceptedSeq_ = 0;
   uint32_t lastSeqPerDevice_[cfg::LORA_REPLAY_TRACKED_DEVICES]{};
   uint32_t deviceIds_[cfg::LORA_REPLAY_TRACKED_DEVICES]{};
   void loadReplayState();
