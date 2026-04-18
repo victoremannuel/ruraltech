@@ -43,6 +43,31 @@ Lema do handoff: "Mapa é herói, UI orbita ao redor, dados técnicos em mono".
   badge opcional "VIVO" para eventos recentes.
 - `RTAuthScaffold` — shell de login com hero topográfico (painter custom) e
   sheet curvo branco.
+- `RTCollarSheet` (Sprint 2) — `DraggableScrollableSheet` com peek/expand,
+  grabber, header (título + badge ONLINE/OFFLINE), `RTTelemetryGrid` e
+  `Wrap<RTButton>` de ações.
+
+### `app/lib/components/map/` (Sprint 2)
+
+- `RTMapControls` — stack vertical de controles de mapa (44x44 cada) com
+  borda `hair`, divisor `hairSoft`, shadow `sh2`. Substitui `Column` de
+  `FloatingActionButton.small` no mapa.
+- `RTFilterChips` — chips horizontais animados com badge opcional de count,
+  para overlays sobre o canvas do mapa.
+
+### `app/lib/components/primitives/rt_fab.dart` (Sprint 2)
+
+- `RTFab` — FAB extendido accent com speed-dial (rotação 45° do ícone, fade
+  + translate dos `_ActionPill`). Label padrão "Novo".
+
+## Shell (Sprint 2)
+
+- `app/lib/screens/home_shell.dart` · `HomeShell` — `NavigationBar` M3 +
+  `IndexedStack` preservando estado das 4 abas via `PageStorageKey` +
+  `AutomaticKeepAliveClientMixin`. Tabs: Mapa / Eventos / Operações / Perfil.
+- `app/lib/screens/operations_screen.dart` · `OperationsScreen` — hub
+  operacional em cards (`RTCard` + `RTActionRow`) com seções Campo (todos) e
+  Cadastros (admin).
 
 ## Flow
 
@@ -73,5 +98,6 @@ Tela (Login/DeviceDetails/Events)
 ## Related
 
 - [[sprint-1-redesign-v2]]
+- [[sprint-2-redesign-v2]]
 - [[design_handoff_ruraltech_v2/README]]
 - [[uiux-telas]]

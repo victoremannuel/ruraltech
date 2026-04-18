@@ -9,7 +9,7 @@ import 'package:workmanager/workmanager.dart';
 
 import 'config/manual_settings.dart';
 import 'design/theme.dart';
-import 'screens/dashboard_screen.dart';
+import 'screens/home_shell.dart';
 import 'screens/login_screen.dart';
 import 'services/auth_service.dart';
 import 'services/bluetooth_discovery_service.dart';
@@ -202,6 +202,6 @@ class _AuthenticatedHomeState extends State<_AuthenticatedHome> {
 
   @override
   Widget build(BuildContext context) {
-    return const HomeScreen();
+    return const HomeShell();
   }
 }

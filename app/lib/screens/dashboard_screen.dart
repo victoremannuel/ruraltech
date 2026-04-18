@@ -9,7 +9,10 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
+import '../components/map/rt_map_controls.dart';
+import '../components/primitives/rt_fab.dart';
 import '../config/manual_settings.dart';
+import '../design/colors.dart';
 import '../models/device_model.dart';
 import '../services/auth_service.dart';
 import '../services/bluetooth_discovery_service.dart';
@@ -24,10 +27,8 @@ import '../utils/onboarding_gateway_utils.dart';
 import '../utils/polygon_metrics.dart';
 import '../utils/top_feedback.dart';
 import 'area_editor_screen.dart';
-import 'events_screen.dart';
 import 'herding_screen.dart';
 import 'map_point_picker_screen.dart';
-import 'profile_screen.dart';
 import 'rural_property_editor_screen.dart';
 import 'device_details_screen.dart';
 
@@ -2902,110 +2903,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _openPlusActions(BuildContext context) {
-    final auth = context.read<AuthService>();
-    showModalBottomSheet<void>(
-      context: context,
-      builder: (_) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              key: const Key('home_action_new_area'),
-              leading: const Icon(Icons.map),
-              title: const Text('Novo poligono'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const AreaEditorScreen()),
-                );
-              },
-            ),
-            ListTile(
-              key: const Key('home_action_start_herding'),
-              leading: const Icon(Icons.alt_route),
-              title: const Text('Solicitar arrebanhamento'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const HerdingScreen()),
-                );
-              },
-            ),
-            if (auth.isAdmin)
-              ListTile(
-                key: const Key('home_action_add_collar'),
-                leading: const Icon(Icons.pets),
-                title: const Text('Incluir coleira'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  await _showAddDeviceDialog(context);
-                },
-              ),
-            if (auth.isAdmin)
-              ListTile(
-                key: const Key('home_action_add_gateway'),
-                leading: const Icon(Icons.wifi),
-                title: const Text('Incluir gateway'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  await _showAddGatewayDialog(context);
-                },
-              ),
-            if (auth.isAdmin)
-              ListTile(
-                key: const Key('home_action_repair_cloud_state'),
-                leading: const Icon(Icons.sync_problem),
-                title: const Text('Reparar estado cloud'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  try {
-                    final result = await context
-                        .read<CloudService>()
-                        .repairCloudState(apply: true);
-                    if (!context.mounted) return;
-                    AppFeedback.success(
-                      'Estado cloud reparado: propriedades=${result['propertyCount'] ?? 0}, gateways=${result['gatewayCount'] ?? 0}.',
-                    );
-                  } catch (e) {
-                    if (!context.mounted) return;
-                    AppFeedback.error(_repairCloudStateErrorMessage(e));
-                  }
-                },
-              ),
-            if (auth.isAdmin)
-              ListTile(
-                key: const Key('home_action_add_property'),
-                leading: const Icon(Icons.landscape),
-                title: const Text('Incluir propriedade rural'),
-                onTap: () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const RuralPropertyEditorScreen(),
-                    ),
-                  );
-                },
-              ),
-            if (auth.isAdmin)
-              ListTile(
-                key: const Key('home_action_update_role'),
-                leading: const Icon(Icons.admin_panel_settings),
-                title: const Text('Vincular adm'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  await _showUpdateRoleDialog(context);
-                },
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
@@ -3564,20 +3461,22 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ),
                                   ),
                                 Positioned(
-                                  left: 12,
-                                  bottom: 12,
-                                  child: Column(
-                                    children: [
-                                      FloatingActionButton.small(
+                                  left: 0,
+                                  bottom: 0,
+                                  child: RTMapControls(
+                                    alignment: Alignment.bottomLeft,
+                                    actions: [
+                                      RTMapControlAction(
+                                        icon: Icons.explore_outlined,
+                                        tooltip: 'Orientar ao norte',
                                         heroTag: 'north-up',
                                         onPressed: _resetNorthUp,
-                                        child: const Icon(Icons.explore),
                                       ),
-                                      const SizedBox(height: 8),
-                                      FloatingActionButton.small(
+                                      RTMapControlAction(
+                                        icon: Icons.my_location,
+                                        tooltip: 'Centralizar no usuário',
                                         heroTag: 'center-user',
                                         onPressed: _centerOnUser,
-                                        child: const Icon(Icons.my_location),
                                       ),
                                     ],
                                   ),
@@ -3595,37 +3494,91 @@ class _HomeScreenState extends State<HomeScreen> {
           );
         },
       ),
-      bottomNavigationBar: BottomAppBar(
-        child: Row(
-          children: [
-            IconButton(
-              key: const Key('home_open_actions_button'),
-              icon: const Icon(Icons.add_circle_outline),
-              tooltip: 'Acoes',
-              onPressed: () => _openPlusActions(context),
-            ),
-            IconButton(
-              key: const Key('home_open_events_button'),
-              icon: const Icon(Icons.notifications_outlined),
-              tooltip: 'Telemetria',
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const EventsScreen()),
-              ),
-            ),
-            const Spacer(),
-            IconButton(
-              key: const Key('home_open_profile_button'),
-              icon: const Icon(Icons.person_outline),
-              tooltip: 'Perfil',
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const ProfileScreen()),
-              ),
-            ),
-          ],
+      floatingActionButton: _buildHomeFab(context, auth),
+    );
+  }
+
+  Widget _buildHomeFab(BuildContext context, AuthService auth) {
+    final actions = <RTFabAction>[
+      RTFabAction(
+        icon: Icons.crop_free,
+        label: 'Novo polígono',
+        actionKey: const Key('home_action_new_area'),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const AreaEditorScreen()),
         ),
       ),
+      RTFabAction(
+        icon: Icons.route_outlined,
+        label: 'Solicitar arrebanhamento',
+        actionKey: const Key('home_action_start_herding'),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const HerdingScreen()),
+        ),
+      ),
+      if (auth.isAdmin)
+        RTFabAction(
+          icon: Icons.pets_outlined,
+          label: 'Incluir coleira',
+          actionKey: const Key('home_action_add_collar'),
+          onTap: () => _showAddDeviceDialog(context),
+        ),
+      if (auth.isAdmin)
+        RTFabAction(
+          icon: Icons.wifi,
+          label: 'Incluir gateway',
+          actionKey: const Key('home_action_add_gateway'),
+          onTap: () => _showAddGatewayDialog(context),
+        ),
+      if (auth.isAdmin)
+        RTFabAction(
+          icon: Icons.sync_problem_outlined,
+          label: 'Reparar estado cloud',
+          actionKey: const Key('home_action_repair_cloud_state'),
+          tone: RTColors.warn,
+          onTap: () async {
+            try {
+              final result = await context
+                  .read<CloudService>()
+                  .repairCloudState(apply: true);
+              if (!context.mounted) return;
+              AppFeedback.success(
+                'Estado cloud reparado: propriedades=${result['propertyCount'] ?? 0}, gateways=${result['gatewayCount'] ?? 0}.',
+              );
+            } catch (e) {
+              if (!context.mounted) return;
+              AppFeedback.error(_repairCloudStateErrorMessage(e));
+            }
+          },
+        ),
+      if (auth.isAdmin)
+        RTFabAction(
+          icon: Icons.landscape_outlined,
+          label: 'Incluir propriedade rural',
+          actionKey: const Key('home_action_add_property'),
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const RuralPropertyEditorScreen(),
+            ),
+          ),
+        ),
+      if (auth.isAdmin)
+        RTFabAction(
+          icon: Icons.admin_panel_settings_outlined,
+          label: 'Vincular adm',
+          actionKey: const Key('home_action_update_role'),
+          onTap: () => _showUpdateRoleDialog(context),
+        ),
+    ];
+
+    return RTFab(
+      fabKey: const Key('home_open_actions_button'),
+      label: 'Novo',
+      icon: Icons.add,
+      actions: actions,
     );
   }
 }
