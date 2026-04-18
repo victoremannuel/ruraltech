@@ -20,6 +20,9 @@
 //   5 = stage 4 + SD
 // #define RT_MATRIX_DIAG_STAGE 2
 
+// Relay LoRa entre gateways (opcional)
+// #define RT_CFG_GATEWAY_RELAY_ENABLED 1
+
 // OTA local (opcional)
 // #define RT_CFG_OTA_HOSTNAME "ruraltech-matriz"
 // #define RT_CFG_OTA_PASSWORD "ruraltechota"

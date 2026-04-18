@@ -90,6 +90,7 @@ Escopo desta iteracao:
 - [x] Recompilar `coleira` e `gateway-matriz` com deep sleep real habilitado no override local
 - [x] Religar o anti-replay de producao na matriz ainda em `DIAG_STAGE=1`, sem alterar relay, cloud ou firmware da coleira
 - [x] Subir a matriz para `DIAG_STAGE=2`, mantendo anti-replay estrito, relay desligado e coleira sem novas mudancas
+- [x] Preparar experimento controlado de relay na matriz, mantendo `DIAG_STAGE=2`, anti-replay estrito e cloud/backhaul fora desta rodada
 
 ## Status
 
@@ -97,7 +98,9 @@ Fase de investigacao do panic: concluida.
 
 Fase de estabilizacao LoRa-only: concluida.
 
-Proxima fase: reintegracao gradual.
+Fase Stage2 local: concluida.
+
+Proxima fase: experimento controlado de relay.
 
 Concluido nesta rodada:
 - firmware alterado em `coleira` e `gateway-matriz` sem mudar o layout binario de `LoRaFrame`
@@ -129,6 +132,10 @@ Concluido nesta rodada:
 - override local da matriz ajustado para `RT_MATRIX_DIAG_STAGE=2`, preservando `RT_MATRIX_DISABLE_LORA_REPLAY_FOR_TESTS=0` e `GATEWAY_RELAY_ENABLED=false`
 - build local da matriz aprovada em `DIAG_STAGE=2`:
   - `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz`
+- relay da matriz passou a aceitar override local dedicado, sem alterar a coleira nem reintroduzir cloud/backhaul
+- override local da matriz ajustado para experimento controlado com relay ligado, preservando `DIAG_STAGE=2` e anti-replay estrito
+- build local da matriz aprovada com relay preparado para bancada:
+  - `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz`
 
 ### Evidencia objetiva - Teste B aprovado em bancada LoRa-only
 
@@ -145,6 +152,17 @@ Bloco consolidado conforme os logs de bancada referenciados pelo plano de fecham
 - `Quantidade minima de ciclos completos observados: >= 5`
 - Checkpoints observados: `before_deep_sleep_prepare` -> `after_deep_sleep_prepare` -> `before_deep_sleep_arm` -> `before_deep_sleep_start`
 - Radio preparado com sucesso antes do sleep
+
+### Evidencia objetiva - Stage2 local aprovado
+
+- `Stage2 local: PASSOU`
+- `Perfil validado: diag-lora-http`
+- `HTTP local: OK`
+- `LoRa com anti-replay estrito: OK`
+- `Deep sleep da coleira durante stage 2: OK`
+- `Guru Meditation: ausente`
+- `Relay: ainda desligado nesta validacao`
+- `Cloud/backhaul: ainda fora do escopo`
 
 ### Causa raiz consolidada
 
@@ -171,25 +189,28 @@ Historico:
 - 2026-04-17: plano de reintegracao gradual aplicado ate a Fase 2 local; a unica mudanca de configuracao nesta rodada foi religar o anti-replay de producao da matriz mantendo `DIAG_STAGE=1` e relay desligado
 - 2026-04-17: plano da fase stage 2 aplicado localmente; a matriz foi promovida para `DIAG_STAGE=2` sem alterar a coleira, mantendo anti-replay estrito e relay desligado
 - 2026-04-17: compilacao local da matriz em `DIAG_STAGE=2` passou, deixando a rodada pronta para validacao fisica de `diag-lora-http`
+- 2026-04-17: plano de proxima fase consolidou `Stage2 local` como aprovado com HTTP local validado manualmente e abriu a etapa de relay controlado
+- 2026-04-17: relay da matriz foi preparado via override local dedicado, mantendo `DIAG_STAGE=2`, anti-replay estrito e a coleira sem alteracoes
+- 2026-04-17: compilacao local da matriz passou com relay preparado; a aprovacao do relay segue pendente de bancada real
 
 Pendencias desta task:
-- concluir soak curto ate 10 ciclos completos sem `Guru Meditation`
-- validar novos ciclos em `diag-lora-only` apos religar anti-replay de producao
-- validar em bancada a matriz em `DIAG_STAGE=2`:
+- validar em bancada a matriz em `DIAG_STAGE=2` com relay ligado:
   - boot com `DIAG_PROFILE=diag-lora-http`
-  - HTTP local funcional
+  - relay efetivamente ativo
   - LoRa sem regressao
   - coleira mantendo deep sleep saudavel por pelo menos 3 ciclos
-- decidir se `GATEWAY_RELAY_ENABLED` volta ou permanece desligado
+  - ausencia de reflexo indevido ou `unsupported_type=1`
+  - ausencia de duplicidade anormal ou regressao do anti-replay
+- decidir se o relay permanece ligado ou volta a ficar desligado apos a rodada controlada
 - reintroduzir cloud/backhaul somente depois de estabilizar o stage local acima do LoRa-only
 - se houver regressao em qualquer etapa, executar rollback minimo sem remover o fix de `prepareForDeepSleep()`
 
 ## Next step
 
-1. Concluir o soak curto ate 10 ciclos completos sem `Guru Meditation`
-2. Validar alguns ciclos em `diag-lora-only` com o anti-replay de producao agora religado
-3. Validar em bancada a matriz agora em `DIAG_STAGE=2` e confirmar `diag-lora-http` sem regressao local
-4. Se essa rodada passar, so depois decidir relay e eventual retorno de cloud/backhaul
+1. Validar em bancada a matriz agora em `DIAG_STAGE=2` com relay ligado
+2. Confirmar pelo menos 3 ciclos completos sem reflexo indevido, alvo ideal de 10
+3. Se o relay passar, registrar `Relay controlado: PASSOU`
+4. So depois discutir fase separada de cloud/backhaul
 
 ## Related
 

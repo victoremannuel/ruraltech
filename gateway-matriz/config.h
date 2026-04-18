@@ -132,7 +132,7 @@ constexpr uint32_t HERD_OPERATION_TIMEOUT_MS = 600000;
 constexpr uint32_t HERD_OPERATION_STATUS_PUBLISH_MS = 3000;
 
 // Relay entre gateways (multi-hop best effort)
-constexpr bool GATEWAY_RELAY_ENABLED = false;
+constexpr bool GATEWAY_RELAY_ENABLED = cfg_manual::GATEWAY_RELAY_ENABLED;
 constexpr uint8_t LORA_REPLAY_TRACKED_DEVICES = 32;
 
 // Criptografia LoRa (deve casar com a coleira no MVP)
