@@ -77,7 +77,9 @@ group('GatewayService business rules', () {
 
 ## Related
 
+[[ruraltech]]
 [[convencoes-codigo]]
 [[regras-negocio]]
 [[stack-tecnologico]]
 [[modelagem-dados-supabase]]
+[[visao-geral]]

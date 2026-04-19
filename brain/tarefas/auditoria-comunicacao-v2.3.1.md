@@ -634,6 +634,15 @@ Continue a partir deste arquivo como fonte de verdade.Não reinicie a investiga�
 
 Se algum item não puder ser concluído, marque `[!]` ou `[ ]` corretamente e registre a justificativa.
 
-## relacionados
+## Related
+
+[[ruraltech]]
+[[visao-geral]]
+[[fluxo-comandos]]
+[[fluxos-comunicacao-ponta-a-ponta]]
+[[modelagem-dados-supabase]]
+[[migracao-supabase]]
+[[auditoria-comunicacao-v2.3.2]]
+[[AUDIT_TELEMETRY_COMMAND_PIPELINE]]
 
 #tarefas #ruraltech

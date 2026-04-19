@@ -187,9 +187,12 @@ enfileirado → despachado pela matriz → ACK da coleira → polygon_apply_resu
 
 ## Related
 
+[[ruraltech]]
 [[regras-negocio]]
 [[modelagem-dados-supabase]]
 [[fluxo-comandos]]
 [[uiux-telas]]
+[[visao-geral]]
+[[requisitos]]
 
 #arquitetura #ruraltech 

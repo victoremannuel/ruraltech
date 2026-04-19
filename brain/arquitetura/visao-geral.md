@@ -6,13 +6,13 @@ Sistema de pecuária de precisão com coleiras inteligentes, gateways LoRa e app
 
 ## Components
 
-- **app/** — Flutter + Supabase (Auth, Postgres, Realtime, Edge Functions)
-- **coleira/** — Firmware ESP32: telemetria GPS, geofence NVS, herding, health diário, segurança animal
-- **gateway/** — Firmware ESP32: bridge LoRa ↔ HTTP/WS porta 81, fila de comandos local
-- **gateway-matriz/** — Serviço central: stream RTDB + polling fallback, despacho LoRa
-- **supabase/** — Edge Functions (`queue-lora-command`, `matrix-cloud`) + migrations + Postgres
-- **firmware/shared/** — Contrato de comandos compartilhado (command_contract.cpp)
-- **contracts/messages/** — Fixtures JSON de contrato app ↔ firmware
+- **app/** — Flutter + Supabase (Auth, Postgres, Realtime, Edge Functions) [[uiux-telas]] [[stack-tecnologico]]
+- **coleira/** — Firmware ESP32: telemetria GPS, geofence NVS, herding, health diário, segurança animal [[regras-negocio]]
+- **gateway/** — Firmware ESP32: bridge LoRa ↔ HTTP/WS porta 81, fila de comandos local [[fluxo-comandos]]
+- **gateway-matriz/** — Serviço central: stream RTDB + polling fallback, despacho LoRa [[fluxos-comunicacao-ponta-a-ponta]]
+- **supabase/** — Edge Functions (`queue-lora-command`, `matrix-cloud`) + migrations + Postgres [[modelagem-dados-supabase]] [[migracao-supabase]]
+- **firmware/shared/** — Contrato de comandos compartilhado (command_contract.cpp) [[padroes-implementacao]]
+- **contracts/messages/** — Fixtures JSON de contrato app ↔ firmware [[convencoes-codigo]]
 
 ## Flow
 

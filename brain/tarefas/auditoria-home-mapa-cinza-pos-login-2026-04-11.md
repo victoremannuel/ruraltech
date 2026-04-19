@@ -47,3 +47,6 @@ Em andamento.
 [[requisitos]]
 [[regras-negocio]]
 [[auditoria-total-solucao-2026-04-11]]
+[[auditoria-app-mapa-gateway]]
+[[uiux-telas]]
+[[fluxos-comunicacao-ponta-a-ponta]]

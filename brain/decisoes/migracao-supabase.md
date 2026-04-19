@@ -34,5 +34,7 @@ Branch `audit/remove-firebase-complete` consolidou a remoção do Firebase do ap
 
 [[ruraltech]]
 [[visao-geral]]
+[[stack-tecnologico]]
+[[modelagem-dados-supabase]]
 
 #decisões #ruraltech 

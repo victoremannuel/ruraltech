@@ -80,6 +80,8 @@ Desativar qualquer gate de CI é **proibido**.
 
 ## Related
 
+[[ruraltech]]
 [[visao-geral]]
 [[convencoes-codigo]]
 [[padroes-implementacao]]
+[[requisitos]]
