@@ -344,6 +344,11 @@ enum class QueueLoadResult : uint8_t {
   kEmpty = 1,
   kContentError = 2,
 };
+
+struct FencePointsResolution {
+  JsonArrayConst points;
+  const char* source = "none";
+};
 static const char* backhaulStateLabel(BackhaulDiagState state);
 static const char* backhaulOledLabel(BackhaulDiagState state);
 static void refreshBackhaulNetworkSnapshot();
@@ -2894,11 +2899,26 @@ static bool splitPointArrayForPayload(
 }
 
 static bool sendFenceCommandChunked(uint32_t deviceId, const JsonVariantConst payload, const char** reason) {
-  const JsonArrayConst points = payload["points"].as<JsonArrayConst>();
+  const FencePointsResolution pointsResolution = resolveFencePoints(payload);
+  const JsonArrayConst points = pointsResolution.points;
+  const char* commandId = pickFirstText(
+      payload["cmd_id"],
+      payload["command_id"],
+      payload["payload"]["cmd_id"],
+      payload["payload"]["command_id"]);
   if (points.isNull()) {
+    AS_MATRIX_FENCE_POINTS_RESOLUTION_FAIL(
+        commandId[0] ? commandId : "-",
+        "root.points,payload.points,payload.payload.points",
+        "none",
+        "missing_or_invalid_points");
     if (reason) *reason = "missing_points";
     return false;
   }
+  AS_MATRIX_FENCE_POINTS_RESOLVED(
+      commandId[0] ? commandId : "-",
+      pointsResolution.source,
+      points.size());
 
   uint8_t starts[cfg::MAX_POLYGON_POINTS]{};
   uint8_t ends[cfg::MAX_POLYGON_POINTS]{};
@@ -2910,7 +2930,6 @@ static bool sendFenceCommandChunked(uint32_t deviceId, const JsonVariantConst pa
     chunkDoc["chunked"] = true;
     chunkDoc["part"] = part;
     chunkDoc["total"] = chunkCount;
-    const char* commandId = pickFirstText(payload["cmd_id"], payload["command_id"]);
     const char* scopeId = pickFirstText(payload["scope_id"], payload["property_scope_id"]);
     const char* matrixGatewayId = pickFirstText(payload["matrix_gateway_id"]);
     const char* polygonKind = pickFirstText(payload["polygon_kind"], payload["polygonKind"]);
@@ -3081,6 +3100,100 @@ static bool sanitizeQueueResponseBody(String& body, size_t& trimmedPrefixBytes, 
     trimmedPrefixBytes = idx;
   }
   return true;
+}
+
+static FencePointsResolution resolveFencePoints(const JsonVariantConst root) {
+  FencePointsResolution resolution;
+  const JsonArrayConst rootPoints = root["points"].as<JsonArrayConst>();
+  if (!rootPoints.isNull()) {
+    resolution.points = rootPoints;
+    resolution.source = "root.points";
+    return resolution;
+  }
+
+  const JsonVariantConst payload = root["payload"];
+  const JsonArrayConst payloadPoints = payload["points"].as<JsonArrayConst>();
+  if (!payloadPoints.isNull()) {
+    resolution.points = payloadPoints;
+    resolution.source = "payload.points";
+    return resolution;
+  }
+
+  const JsonArrayConst nestedPayloadPoints = payload["payload"]["points"].as<JsonArrayConst>();
+  if (!nestedPayloadPoints.isNull()) {
+    resolution.points = nestedPayloadPoints;
+    resolution.source = "payload.payload.points";
+    return resolution;
+  }
+
+  return resolution;
+}
+
+static void promoteFencePayloadFields(
+    JsonObject payloadObject,
+    JsonObjectConst nestedPayload,
+    JsonVariant rootValue) {
+  if (!payloadObject["points"].is<JsonArrayConst>() &&
+      nestedPayload["points"].is<JsonArrayConst>()) {
+    payloadObject["points"] = nestedPayload["points"].as<JsonArrayConst>();
+  }
+  if (!payloadObject["cmd_id"].is<const char*>() &&
+      nestedPayload["cmd_id"].is<const char*>()) {
+    payloadObject["cmd_id"] = nestedPayload["cmd_id"].as<const char*>();
+  }
+  if (!payloadObject["command_id"].is<const char*>() &&
+      nestedPayload["command_id"].is<const char*>()) {
+    payloadObject["command_id"] = nestedPayload["command_id"].as<const char*>();
+  }
+  if (!payloadObject["property_id"].is<const char*>() &&
+      nestedPayload["property_id"].is<const char*>()) {
+    payloadObject["property_id"] = nestedPayload["property_id"].as<const char*>();
+  }
+  if (!payloadObject["property_scope_id"].is<const char*>() &&
+      nestedPayload["property_scope_id"].is<const char*>()) {
+    payloadObject["property_scope_id"] = nestedPayload["property_scope_id"].as<const char*>();
+  }
+  if (!payloadObject["target_device_ids"].is<JsonArrayConst>() &&
+      nestedPayload["target_device_ids"].is<JsonArrayConst>()) {
+    payloadObject["target_device_ids"] = nestedPayload["target_device_ids"].as<JsonArrayConst>();
+  }
+  if (!payloadObject["target_gateway_ids"].is<JsonArrayConst>() &&
+      nestedPayload["target_gateway_ids"].is<JsonArrayConst>()) {
+    payloadObject["target_gateway_ids"] = nestedPayload["target_gateway_ids"].as<JsonArrayConst>();
+  }
+  if (!payloadObject["matrix_gateway_id"].is<const char*>() &&
+      nestedPayload["matrix_gateway_id"].is<const char*>()) {
+    payloadObject["matrix_gateway_id"] = nestedPayload["matrix_gateway_id"].as<const char*>();
+  }
+  if (!payloadObject["matrixRuntimeId"].is<const char*>() &&
+      nestedPayload["matrixRuntimeId"].is<const char*>()) {
+    payloadObject["matrixRuntimeId"] = nestedPayload["matrixRuntimeId"].as<const char*>();
+  }
+  if (!payloadObject["polygon_kind"].is<const char*>() &&
+      nestedPayload["polygon_kind"].is<const char*>()) {
+    payloadObject["polygon_kind"] = nestedPayload["polygon_kind"].as<const char*>();
+  }
+  if (!payloadObject["origin_doc_type"].is<const char*>() &&
+      nestedPayload["origin_doc_type"].is<const char*>()) {
+    payloadObject["origin_doc_type"] = nestedPayload["origin_doc_type"].as<const char*>();
+  }
+  if (!payloadObject["origin_doc_id"].is<const char*>() &&
+      nestedPayload["origin_doc_id"].is<const char*>()) {
+    payloadObject["origin_doc_id"] = nestedPayload["origin_doc_id"].as<const char*>();
+  }
+
+  if (!payloadObject["points"].is<JsonArrayConst>() &&
+      rootValue["points"].is<JsonArrayConst>()) {
+    payloadObject["points"] = rootValue["points"].as<JsonArrayConst>();
+  }
+  if (!payloadObject["cmd_id"].is<const char*>() &&
+      rootValue["command_id"].is<const char*>()) {
+    payloadObject["cmd_id"] = rootValue["command_id"].as<const char*>();
+  }
+  if (!payloadObject["command_id"].is<const char*>() &&
+      rootValue["command_id"].is<const char*>()) {
+    payloadObject["command_id"] = rootValue["command_id"].as<const char*>();
+  }
 }
 
 static QueueLoadResult loadNextQueuedCommand(String& commandIdOut, DynamicJsonDocument& commandDocOut) {
@@ -3300,6 +3413,11 @@ static QueueLoadResult loadNextQueuedCommand(String& commandIdOut, DynamicJsonDo
   } else {
     payloadObject = commandDocOut.createNestedObject("payload");
   }
+  const JsonObjectConst nestedPayload =
+      payloadObject["payload"].is<JsonObjectConst>()
+          ? payloadObject["payload"].as<JsonObjectConst>()
+          : JsonObjectConst();
+  promoteFencePayloadFields(payloadObject, nestedPayload, commandDocOut.as<JsonVariant>());
 
   if (!commandDocOut["command"].is<const char*>() &&
       payloadObject["command"].is<const char*>()) {
@@ -3616,7 +3734,10 @@ static void processNextQueuedCommand() {
   if (strcmp(command, "SET_FENCE") == 0) {
     const char* areaId = commandDoc["payload"]["originDocId"] | commandDoc["payload"]["origin_doc_id"] | "";
     const int targetCount = commandDoc["targetDeviceIds"].as<JsonArrayConst>().size();
-    const int pointCount = commandDoc["payload"]["points"].as<JsonArrayConst>().size();
+    const FencePointsResolution pointsResolution =
+        resolveFencePoints(commandDoc["payload"].as<JsonVariantConst>());
+    const int pointCount = pointsResolution.points.isNull() ? 0 : (int)pointsResolution.points.size();
+    AS_MATRIX_FENCE_POINTS_RESOLVED(commandId.c_str(), pointsResolution.source, pointCount);
     AS_MATRIX_QUEUE_LOADED(
         commandId.c_str(), areaId, propertyId, propertyScopeId, targetCount, pointCount);
   }

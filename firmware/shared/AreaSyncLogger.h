@@ -29,6 +29,16 @@
     "commandId=%s areaId=%s propertyId=%s scopeId=%s targetCount=%d pointCount=%d", \
     cmdId, areaId, propId, scopeId, (int)(targetCount), (int)(pointCount))
 
+#define AS_MATRIX_FENCE_POINTS_RESOLVED(cmdId, resolvedSource, pointCount) \
+  AS_MATRIX_INFO("FENCE_POINTS_RESOLVED", \
+    "commandId=%s resolvedSource=%s pointCount=%d", \
+    cmdId, resolvedSource, (int)(pointCount))
+
+#define AS_MATRIX_FENCE_POINTS_RESOLUTION_FAIL(cmdId, sourceTried, resolvedSource, reason) \
+  AS_MATRIX_ERR("FENCE_POINTS_RESOLUTION_FAIL", \
+    "commandId=%s sourceTried=%s resolvedSource=%s reason=%s", \
+    cmdId, sourceTried, resolvedSource, reason)
+
 #define AS_MATRIX_QUEUE_ACCEPTED(cmdId, areaId, propId, scopeId) \
   AS_MATRIX_INFO("QUEUE_COMMAND_ACCEPTED", \
     "commandId=%s areaId=%s propertyId=%s scopeId=%s", \

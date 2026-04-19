@@ -54,6 +54,11 @@ Estado de partida consolidado nesta rodada:
   - sanitizacao do corpo no ESP32 antes do parse
   - separacao entre `fila vazia` e `erro de conteudo`
   - log explicito de erro real de desserializacao
+- [x] Implementar rodada de correcao `missing_points` focada em normalizacao do payload `SET_FENCE`:
+  - resolucao de `points` em cascata (`root.points`, `payload.points`, `payload.payload.points`)
+  - promocao dos campos aninhados relevantes para um payload canônico
+  - calculo de `pointCount` depois da normalizacao
+  - logs explicitos de `pointsSource`
 - [ ] Regravar firmwares usados na bancada se a instrumentacao `[AREA_SYNC]` ainda nao estiver embarcada nas placas
 - [x] Consolidar resultado binario da fase:
   - `Queue/downlink cloud (SET_FENCE): FALHOU`
@@ -108,6 +113,14 @@ Base de reaproveitamento confirmada nesta rodada:
   - o parser continua aceitando temporariamente array, objeto simples e objeto legado mapeado por `commandId`
 - relatorio curto desta rodada salvo em:
   - `tools/audit/output/20260419_004824/correcao_set_fence_invalid_json_2026-04-19.md`
+- nova rodada aplicada nesta sessao:
+  - causa-raiz atual confirmada: `points` chegava em `payload.payload.points`
+  - `sendFenceCommandChunked()` passou a resolver pontos em cascata
+  - a normalizacao do payload passou a promover campos aninhados relevantes do `SET_FENCE`
+  - `pointCount` agora usa o payload ja normalizado
+  - novos logs adicionados: `FENCE_POINTS_RESOLVED` e `FENCE_POINTS_RESOLUTION_FAIL`
+- relatorio curto desta rodada salvo em:
+  - `tools/audit/output/20260419_004824/correcao_set_fence_missing_points_2026-04-19.md`
 
 ## Next step
 
@@ -117,8 +130,9 @@ Base de reaproveitamento confirmada nesta rodada:
 4. Classificar o novo run usando os novos eventos:
    - `QUEUE_BODY_SANITIZED` -> havia bytes indevidos antes do JSON
    - `QUEUE_DESERIALIZE_ERROR` -> erro real de parse/memoria
-   - `QUEUE_ITEM_FOUND` -> item carregado da fila
-   - `QUEUE_COMMAND_LOADED` / `DISPATCH_BEGIN` -> saida efetiva de `invalid_json`
+   - `FENCE_POINTS_RESOLVED` -> origem real dos pontos no payload normalizado
+   - `QUEUE_COMMAND_LOADED pointCount>0` -> saida efetiva de `missing_points`
+   - `LORA_TX_OK` -> envio LoRa finalmente liberado
 5. Se ainda travar, corrigir apenas o ponto funcional revelado pelos novos logs
 
 ## Related
