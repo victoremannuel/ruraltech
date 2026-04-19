@@ -338,6 +338,12 @@ static bool backhaulWindowOpen();
 static void requestImmediateQueueDispatch(const char* source);
 static void closeQueueCommandStream(const char* reason);
 static void drawStatus(const char* line1, const char* line2);
+
+enum class QueueLoadResult : uint8_t {
+  kLoaded = 0,
+  kEmpty = 1,
+  kContentError = 2,
+};
 static const char* backhaulStateLabel(BackhaulDiagState state);
 static const char* backhaulOledLabel(BackhaulDiagState state);
 static void refreshBackhaulNetworkSnapshot();
@@ -3037,8 +3043,48 @@ static const char* queueBodyShape(const DynamicJsonDocument& doc) {
   return "unknown";
 }
 
-static bool loadNextQueuedCommand(String& commandIdOut, DynamicJsonDocument& commandDocOut) {
-  if (!queuePollingConfigured()) return false;
+static const char* deserializationErrorName(DeserializationError error) {
+  switch (error.code()) {
+    case DeserializationError::Ok:
+      return "Ok";
+    case DeserializationError::EmptyInput:
+      return "EmptyInput";
+    case DeserializationError::IncompleteInput:
+      return "IncompleteInput";
+    case DeserializationError::InvalidInput:
+      return "InvalidInput";
+    case DeserializationError::NoMemory:
+      return "NoMemory";
+    case DeserializationError::TooDeep:
+      return "TooDeep";
+    default:
+      return "Unknown";
+  }
+}
+
+static bool sanitizeQueueResponseBody(String& body, size_t& trimmedPrefixBytes, char& firstJsonChar) {
+  trimmedPrefixBytes = 0;
+  firstJsonChar = '\0';
+  const size_t len = body.length();
+  size_t idx = 0;
+  while (idx < len) {
+    const char ch = body[idx];
+    if (ch == '{' || ch == '[') {
+      firstJsonChar = ch;
+      break;
+    }
+    ++idx;
+  }
+  if (idx >= len) return false;
+  if (idx > 0) {
+    body.remove(0, idx);
+    trimmedPrefixBytes = idx;
+  }
+  return true;
+}
+
+static QueueLoadResult loadNextQueuedCommand(String& commandIdOut, DynamicJsonDocument& commandDocOut) {
+  if (!queuePollingConfigured()) return QueueLoadResult::kEmpty;
   const String runtimeId = matrixCloudId();
   String body;
   CloudWriteTrace trace;
@@ -3049,11 +3095,11 @@ static bool loadNextQueuedCommand(String& commandIdOut, DynamicJsonDocument& com
         trace.httpStatus,
         trace.stage,
         trace.detail);
-    return false;
+    return QueueLoadResult::kContentError;
   }
   body.trim();
-  const String bodyPrefix = queueBodyPrefix(body);
   if (body.isEmpty() || body == "null") {
+    const String bodyPrefix = queueBodyPrefix(body);
     AS_MATRIX_QUEUE_FETCH_HTTP_OK_UNEXPECTED_SHAPE(
         runtimeId.c_str(),
         strlen(cfg::RTDB_QUEUE_KEY),
@@ -3061,18 +3107,48 @@ static bool loadNextQueuedCommand(String& commandIdOut, DynamicJsonDocument& com
         body.length(),
         body.isEmpty() ? "empty" : "null",
         bodyPrefix.c_str());
-    return false;
+    return QueueLoadResult::kEmpty;
   }
 
-  DynamicJsonDocument queueDoc(24576);
-  if (deserializeJson(queueDoc, body) != DeserializationError::Ok) {
+  size_t trimmedPrefixBytes = 0;
+  char firstJsonChar = '\0';
+  if (!sanitizeQueueResponseBody(body, trimmedPrefixBytes, firstJsonChar)) {
+    const String bodyPrefix = queueBodyPrefix(body);
+    AS_MATRIX_QUEUE_FETCH_HTTP_OK_UNEXPECTED_SHAPE(
+        runtimeId.c_str(),
+        strlen(cfg::RTDB_QUEUE_KEY),
+        trace.httpStatus,
+        body.length(),
+        "no_json_start",
+        bodyPrefix.c_str());
+    return QueueLoadResult::kContentError;
+  }
+  if (trimmedPrefixBytes > 0) {
+    AS_MATRIX_QUEUE_BODY_SANITIZED(
+        runtimeId.c_str(),
+        trimmedPrefixBytes,
+        firstJsonChar,
+        body.length());
+  }
+  const String bodyPrefix = queueBodyPrefix(body);
+  const size_t queueDocCapacity = body.length() + 4096 > 16384 ? body.length() + 4096 : 16384;
+  DynamicJsonDocument queueDoc(queueDocCapacity);
+  DeserializationError queueError = deserializeJson(queueDoc, body);
+  if (queueError != DeserializationError::Ok) {
     AS_MATRIX_QUEUE_FETCH_HTTP_OK_INVALID_JSON(
         runtimeId.c_str(),
         strlen(cfg::RTDB_QUEUE_KEY),
         trace.httpStatus,
         body.length(),
         bodyPrefix.c_str());
-    return false;
+    AS_MATRIX_QUEUE_DESERIALIZE_ERROR(
+        runtimeId.c_str(),
+        trace.httpStatus,
+        body.length(),
+        deserializationErrorName(queueError),
+        queueDocCapacity,
+        bodyPrefix.c_str());
+    return QueueLoadResult::kContentError;
   }
 
   String selectedId;
@@ -3088,7 +3164,7 @@ static bool loadNextQueuedCommand(String& commandIdOut, DynamicJsonDocument& com
           trace.httpStatus,
           body.length(),
           bodyPrefix.c_str());
-      return false;
+      return QueueLoadResult::kEmpty;
     }
     for (JsonVariantConst item : items) {
       if (!item.is<JsonObjectConst>()) continue;
@@ -3115,6 +3191,31 @@ static bool loadNextQueuedCommand(String& commandIdOut, DynamicJsonDocument& com
         bodyPrefix.c_str());
   } else if (queueDoc.is<JsonObjectConst>()) {
     JsonObjectConst queueObject = queueDoc.as<JsonObjectConst>();
+    if (queueObject.containsKey("command_id") || queueObject.containsKey("commandId")) {
+      selectedId = pickFirstText(
+          queueObject["commandId"],
+          queueObject["command_id"],
+          queueObject["payload"]["commandId"],
+          queueObject["payload"]["command_id"]);
+      serializeJson(queueObject, selectedBody);
+      itemCount = selectedId.isEmpty() ? 0 : 1;
+      AS_MATRIX_QUEUE_FETCH_HTTP_OK_OBJECT(
+          runtimeId.c_str(),
+          strlen(cfg::RTDB_QUEUE_KEY),
+          trace.httpStatus,
+          body.length(),
+          itemCount,
+          selectedId.isEmpty() ? "-" : selectedId.c_str(),
+          bodyPrefix.c_str());
+      if (selectedId.isEmpty()) {
+        AS_MATRIX_QUEUE_PARSE_FAIL(
+            runtimeId.c_str(),
+            strlen(cfg::RTDB_QUEUE_KEY),
+            "simple_object_missing_command_id",
+            bodyPrefix.c_str());
+        return QueueLoadResult::kContentError;
+      }
+    } else {
     itemCount = (int)queueObject.size();
     if (itemCount == 0) {
       AS_MATRIX_QUEUE_FETCH_HTTP_OK_UNEXPECTED_SHAPE(
@@ -3124,7 +3225,7 @@ static bool loadNextQueuedCommand(String& commandIdOut, DynamicJsonDocument& com
           body.length(),
           "empty_object",
           bodyPrefix.c_str());
-      return false;
+      return QueueLoadResult::kEmpty;
     }
     for (JsonPairConst kv : queueObject) {
       const String key = kv.key().c_str();
@@ -3142,6 +3243,7 @@ static bool loadNextQueuedCommand(String& commandIdOut, DynamicJsonDocument& com
         itemCount,
         selectedId.isEmpty() ? "-" : selectedId.c_str(),
         bodyPrefix.c_str());
+    }
   } else {
     AS_MATRIX_QUEUE_FETCH_HTTP_OK_UNEXPECTED_SHAPE(
         runtimeId.c_str(),
@@ -3150,18 +3252,38 @@ static bool loadNextQueuedCommand(String& commandIdOut, DynamicJsonDocument& com
         body.length(),
         queueBodyShape(queueDoc),
         bodyPrefix.c_str());
-    return false;
+    return QueueLoadResult::kContentError;
   }
-  if (selectedId.isEmpty() || selectedBody.isEmpty()) return false;
-
-  commandDocOut.clear();
-  if (deserializeJson(commandDocOut, selectedBody) != DeserializationError::Ok) {
+  if (selectedId.isEmpty() || selectedBody.isEmpty()) {
     AS_MATRIX_QUEUE_PARSE_FAIL(
         runtimeId.c_str(),
         strlen(cfg::RTDB_QUEUE_KEY),
-        "selected_item_invalid_json",
+        "selected_item_missing",
+        bodyPrefix.c_str());
+    return QueueLoadResult::kContentError;
+  }
+
+  commandDocOut.clear();
+  const size_t commandDocCapacity =
+      selectedBody.length() + 2048 > commandDocOut.capacity()
+          ? selectedBody.length() + 2048
+          : commandDocOut.capacity();
+  commandDocOut.garbageCollect();
+  DeserializationError commandError = deserializeJson(commandDocOut, selectedBody);
+  if (commandError != DeserializationError::Ok) {
+    AS_MATRIX_QUEUE_PARSE_FAIL(
+        runtimeId.c_str(),
+        strlen(cfg::RTDB_QUEUE_KEY),
+        deserializationErrorName(commandError),
         queueBodyPrefix(selectedBody).c_str());
-    return false;
+    AS_MATRIX_QUEUE_DESERIALIZE_ERROR(
+        runtimeId.c_str(),
+        trace.httpStatus,
+        selectedBody.length(),
+        deserializationErrorName(commandError),
+        commandDocCapacity,
+        queueBodyPrefix(selectedBody).c_str());
+    return QueueLoadResult::kContentError;
   }
   if (!commandDocOut.is<JsonObjectConst>()) {
     AS_MATRIX_QUEUE_PARSE_FAIL(
@@ -3169,53 +3291,83 @@ static bool loadNextQueuedCommand(String& commandIdOut, DynamicJsonDocument& com
         strlen(cfg::RTDB_QUEUE_KEY),
         "selected_item_not_object",
         queueBodyPrefix(selectedBody).c_str());
-    return false;
+    return QueueLoadResult::kContentError;
+  }
+
+  JsonObject payloadObject;
+  if (commandDocOut["payload"].is<JsonObject>()) {
+    payloadObject = commandDocOut["payload"].as<JsonObject>();
+  } else {
+    payloadObject = commandDocOut.createNestedObject("payload");
   }
 
   if (!commandDocOut["command"].is<const char*>() &&
-      commandDocOut["payload"].is<JsonObjectConst>() &&
-      commandDocOut["payload"]["command"].is<const char*>()) {
-    commandDocOut["command"] = commandDocOut["payload"]["command"].as<const char*>();
+      payloadObject["command"].is<const char*>()) {
+    commandDocOut["command"] = payloadObject["command"].as<const char*>();
   }
   if (!commandDocOut["commandId"].is<const char*>() &&
-      commandDocOut["payload"].is<JsonObjectConst>() &&
-      commandDocOut["payload"]["commandId"].is<const char*>()) {
-    commandDocOut["commandId"] = commandDocOut["payload"]["commandId"].as<const char*>();
+      payloadObject["commandId"].is<const char*>()) {
+    commandDocOut["commandId"] = payloadObject["commandId"].as<const char*>();
+  }
+  if (!commandDocOut["commandId"].is<const char*>() &&
+      payloadObject["cmd_id"].is<const char*>()) {
+    commandDocOut["commandId"] = payloadObject["cmd_id"].as<const char*>();
   }
   if (!commandDocOut["propertyId"].is<const char*>() &&
-      commandDocOut["payload"].is<JsonObjectConst>() &&
-      commandDocOut["payload"]["propertyId"].is<const char*>()) {
-    commandDocOut["propertyId"] = commandDocOut["payload"]["propertyId"].as<const char*>();
+      payloadObject["propertyId"].is<const char*>()) {
+    commandDocOut["propertyId"] = payloadObject["propertyId"].as<const char*>();
+  }
+  if (!commandDocOut["propertyId"].is<const char*>() &&
+      payloadObject["property_id"].is<const char*>()) {
+    commandDocOut["propertyId"] = payloadObject["property_id"].as<const char*>();
   }
   if (!commandDocOut["propertyScopeId"].is<const char*>() &&
-      commandDocOut["payload"].is<JsonObjectConst>() &&
-      commandDocOut["payload"]["propertyScopeId"].is<const char*>()) {
-    commandDocOut["propertyScopeId"] = commandDocOut["payload"]["propertyScopeId"].as<const char*>();
+      payloadObject["propertyScopeId"].is<const char*>()) {
+    commandDocOut["propertyScopeId"] = payloadObject["propertyScopeId"].as<const char*>();
+  }
+  if (!commandDocOut["propertyScopeId"].is<const char*>() &&
+      payloadObject["property_scope_id"].is<const char*>()) {
+    commandDocOut["propertyScopeId"] = payloadObject["property_scope_id"].as<const char*>();
   }
   if (!commandDocOut["matrixGatewayId"].is<const char*>() &&
-      commandDocOut["payload"].is<JsonObjectConst>() &&
-      commandDocOut["payload"]["matrixGatewayId"].is<const char*>()) {
-    commandDocOut["matrixGatewayId"] = commandDocOut["payload"]["matrixGatewayId"].as<const char*>();
+      payloadObject["matrixGatewayId"].is<const char*>()) {
+    commandDocOut["matrixGatewayId"] = payloadObject["matrixGatewayId"].as<const char*>();
+  }
+  if (!commandDocOut["matrixGatewayId"].is<const char*>() &&
+      payloadObject["matrix_gateway_id"].is<const char*>()) {
+    commandDocOut["matrixGatewayId"] = payloadObject["matrix_gateway_id"].as<const char*>();
   }
   if (!commandDocOut["targetDeviceIds"].is<JsonArrayConst>() &&
-      commandDocOut["payload"].is<JsonObjectConst>() &&
-      commandDocOut["payload"]["targetDeviceIds"].is<JsonArrayConst>()) {
-    commandDocOut["targetDeviceIds"] = commandDocOut["payload"]["targetDeviceIds"].as<JsonArrayConst>();
+      payloadObject["targetDeviceIds"].is<JsonArrayConst>()) {
+    commandDocOut["targetDeviceIds"] = payloadObject["targetDeviceIds"].as<JsonArrayConst>();
+  }
+  if (!commandDocOut["targetDeviceIds"].is<JsonArrayConst>() &&
+      payloadObject["target_device_ids"].is<JsonArrayConst>()) {
+    commandDocOut["targetDeviceIds"] = payloadObject["target_device_ids"].as<JsonArrayConst>();
   }
   if (!commandDocOut["targetGatewayIds"].is<JsonArrayConst>() &&
-      commandDocOut["payload"].is<JsonObjectConst>() &&
-      commandDocOut["payload"]["targetGatewayIds"].is<JsonArrayConst>()) {
-    commandDocOut["targetGatewayIds"] = commandDocOut["payload"]["targetGatewayIds"].as<JsonArrayConst>();
+      payloadObject["targetGatewayIds"].is<JsonArrayConst>()) {
+    commandDocOut["targetGatewayIds"] = payloadObject["targetGatewayIds"].as<JsonArrayConst>();
+  }
+  if (!commandDocOut["targetGatewayIds"].is<JsonArrayConst>() &&
+      payloadObject["target_gateway_ids"].is<JsonArrayConst>()) {
+    commandDocOut["targetGatewayIds"] = payloadObject["target_gateway_ids"].as<JsonArrayConst>();
   }
   if (!commandDocOut["createdAtMs"].is<uint64_t>() &&
-      commandDocOut["payload"].is<JsonObjectConst>() &&
-      !commandDocOut["payload"]["createdAtMs"].isNull()) {
-    commandDocOut["createdAtMs"] = commandDocOut["payload"]["createdAtMs"].as<uint64_t>();
+      !payloadObject["createdAtMs"].isNull()) {
+    commandDocOut["createdAtMs"] = payloadObject["createdAtMs"].as<uint64_t>();
+  }
+  if (!commandDocOut["createdAtMs"].is<uint64_t>() &&
+      !payloadObject["created_at_ms"].isNull()) {
+    commandDocOut["createdAtMs"] = payloadObject["created_at_ms"].as<uint64_t>();
   }
   if (!commandDocOut["expiresAtMs"].is<uint64_t>() &&
-      commandDocOut["payload"].is<JsonObjectConst>() &&
-      !commandDocOut["payload"]["expiresAtMs"].isNull()) {
-    commandDocOut["expiresAtMs"] = commandDocOut["payload"]["expiresAtMs"].as<uint64_t>();
+      !payloadObject["expiresAtMs"].isNull()) {
+    commandDocOut["expiresAtMs"] = payloadObject["expiresAtMs"].as<uint64_t>();
+  }
+  if (!commandDocOut["expiresAtMs"].is<uint64_t>() &&
+      !payloadObject["expires_at_ms"].isNull()) {
+    commandDocOut["expiresAtMs"] = payloadObject["expires_at_ms"].as<uint64_t>();
   }
 
   commandIdOut = selectedId;
@@ -3227,7 +3379,7 @@ static bool loadNextQueuedCommand(String& commandIdOut, DynamicJsonDocument& com
       command,
       propertyId,
       commandDocOut["payload"].is<JsonObjectConst>());
-  return true;
+  return QueueLoadResult::kLoaded;
 }
 
 static bool deleteQueuedCommand(const String& commandId) {
@@ -3436,9 +3588,11 @@ static void processNextQueuedCommand() {
   lastQueuePollAtUnixMs = unixNowMs(unixNowSec());
 
   String commandId;
-  DynamicJsonDocument commandDoc(16384);
-  if (!loadNextQueuedCommand(commandId, commandDoc)) {
-    if ((uint32_t)(nowMsTick - lastQueueEmptyLogAtMs) >= 10000UL) {
+  DynamicJsonDocument commandDoc(24576);
+  const QueueLoadResult loadResult = loadNextQueuedCommand(commandId, commandDoc);
+  if (loadResult != QueueLoadResult::kLoaded) {
+    if (loadResult == QueueLoadResult::kEmpty &&
+        (uint32_t)(nowMsTick - lastQueueEmptyLogAtMs) >= 10000UL) {
       const String runtimeId = matrixCloudId();
       AS_MATRIX_QUEUE_EMPTY(runtimeId.c_str(), strlen(cfg::RTDB_QUEUE_KEY));
       lastQueueEmptyLogAtMs = nowMsTick;

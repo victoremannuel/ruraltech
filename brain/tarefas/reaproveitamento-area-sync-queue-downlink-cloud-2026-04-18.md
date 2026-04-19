@@ -48,6 +48,12 @@ Estado de partida consolidado nesta rodada:
   - compatibilidade do loader com resposta em objeto e array
   - logs de item encontrado e item filtrado
   - observabilidade da edge function `matrix-cloud` para quantidade de itens retornados
+- [x] Implementar rodada de correcao `invalid_json` focada em parse robusto e resposta minima:
+  - `matrix-cloud` reduzida para devolver apenas o primeiro item da fila com `limit 1`
+  - shape simplificado `{ command_id, payload }`
+  - sanitizacao do corpo no ESP32 antes do parse
+  - separacao entre `fila vazia` e `erro de conteudo`
+  - log explicito de erro real de desserializacao
 - [ ] Regravar firmwares usados na bancada se a instrumentacao `[AREA_SYNC]` ainda nao estiver embarcada nas placas
 - [x] Consolidar resultado binario da fase:
   - `Queue/downlink cloud (SET_FENCE): FALHOU`
@@ -94,17 +100,26 @@ Base de reaproveitamento confirmada nesta rodada:
   - a edge function `matrix-cloud` passou a logar `itemCount`, `firstCommandId` e `firstCreatedAtMs` para GET da fila
 - relatorio curto desta rodada salvo em:
   - `tools/audit/output/20260419_004824/correcao_set_fence_queue_empty_2026-04-19.md`
+- nova rodada aplicada nesta sessao:
+  - a `matrix-cloud` agora devolve somente o primeiro item da fila com resposta minima em shape simples
+  - o loader da matriz agora sanitiza prefixo ate o primeiro `{` ou `[`
+  - falhas de parse passam a emitir `QUEUE_DESERIALIZE_ERROR` com `errorKind` real
+  - corpo presente com erro de parse nao e mais tratado como `QUEUE_EMPTY`
+  - o parser continua aceitando temporariamente array, objeto simples e objeto legado mapeado por `commandId`
+- relatorio curto desta rodada salvo em:
+  - `tools/audit/output/20260419_004824/correcao_set_fence_invalid_json_2026-04-19.md`
 
 ## Next step
 
 1. Regravar a matriz com a instrumentacao nova desta rodada
-2. Repetir a homologacao E2E `SET_FENCE`
-3. Classificar o novo run usando os novos eventos:
-   - `QUEUE_FETCH_HTTP_OK_*` -> shape real da resposta
+2. Deploy da `matrix-cloud` com o shape minimo desta rodada
+3. Repetir a homologacao E2E `SET_FENCE`
+4. Classificar o novo run usando os novos eventos:
+   - `QUEUE_BODY_SANITIZED` -> havia bytes indevidos antes do JSON
+   - `QUEUE_DESERIALIZE_ERROR` -> erro real de parse/memoria
    - `QUEUE_ITEM_FOUND` -> item carregado da fila
-   - `QUEUE_ITEM_FILTERED_OUT` -> descarte local com motivo
-   - `QUEUE_COMMAND_LOADED` / `DISPATCH_BEGIN` -> saida efetiva de `QUEUE_EMPTY`
-4. Se ainda travar, corrigir o ponto funcional exato revelado pelos novos logs
+   - `QUEUE_COMMAND_LOADED` / `DISPATCH_BEGIN` -> saida efetiva de `invalid_json`
+5. Se ainda travar, corrigir apenas o ponto funcional revelado pelos novos logs
 
 ## Related
 

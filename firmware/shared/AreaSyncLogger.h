@@ -72,6 +72,16 @@
     "runtimeId=%s queueKeyLen=%d httpStatus=%d bodyLen=%d bodyPrefix=%s", \
     runtimeId, (int)(queueKeyLen), (int)(httpStatus), (int)(bodyLen), bodyPrefix)
 
+#define AS_MATRIX_QUEUE_DESERIALIZE_ERROR(runtimeId, httpStatus, bodyLen, errorKind, docCapacity, bodyPrefix) \
+  AS_MATRIX_ERR("QUEUE_DESERIALIZE_ERROR", \
+    "runtimeId=%s httpStatus=%d bodyLen=%d errorKind=%s docCapacity=%d bodyPrefix=%s", \
+    runtimeId, (int)(httpStatus), (int)(bodyLen), errorKind, (int)(docCapacity), bodyPrefix)
+
+#define AS_MATRIX_QUEUE_BODY_SANITIZED(runtimeId, trimmedPrefixBytes, firstJsonChar, newBodyLen) \
+  AS_MATRIX_WARN("QUEUE_BODY_SANITIZED", \
+    "runtimeId=%s trimmedPrefixBytes=%d firstJsonChar=%c newBodyLen=%d", \
+    runtimeId, (int)(trimmedPrefixBytes), firstJsonChar, (int)(newBodyLen))
+
 #define AS_MATRIX_QUEUE_FETCH_HTTP_FAIL(runtimeId, queueKeyLen, httpStatus, stage, detail) \
   AS_MATRIX_ERR("QUEUE_FETCH_HTTP_FAIL", \
     "runtimeId=%s queueKeyLen=%d httpStatus=%d stage=%s detail=%s", \
