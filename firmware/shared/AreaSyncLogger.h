@@ -39,6 +39,11 @@
     "commandId=%s sourceTried=%s resolvedSource=%s reason=%s", \
     cmdId, sourceTried, resolvedSource, reason)
 
+#define AS_MATRIX_FENCE_CHUNK_SIZE_EVAL(cmdId, part, total, jsonBytes, packedBytes, cipherBytes, limitBytes) \
+  AS_MATRIX_INFO("FENCE_CHUNK_SIZE_EVAL", \
+    "commandId=%s part=%d total=%d jsonBytes=%d packedBytes=%d cipherBytes=%d limitBytes=%d", \
+    cmdId, (int)(part), (int)(total), (int)(jsonBytes), (int)(packedBytes), (int)(cipherBytes), (int)(limitBytes))
+
 #define AS_MATRIX_QUEUE_ACCEPTED(cmdId, areaId, propId, scopeId) \
   AS_MATRIX_INFO("QUEUE_COMMAND_ACCEPTED", \
     "commandId=%s areaId=%s propertyId=%s scopeId=%s", \

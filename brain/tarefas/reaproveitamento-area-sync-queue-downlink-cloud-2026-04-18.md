@@ -59,6 +59,10 @@ Estado de partida consolidado nesta rodada:
   - promocao dos campos aninhados relevantes para um payload canônico
   - calculo de `pointCount` depois da normalizacao
   - logs explicitos de `pointsSource`
+- [x] Implementar rodada de correcao `payload_too_large` focada em chunking real por bytes:
+  - planner especifico do `SET_FENCE` com overhead real do chunk
+  - remocao de metadados redundantes por parte
+  - log explicito de tamanho avaliado por chunk antes do envio
 - [ ] Regravar firmwares usados na bancada se a instrumentacao `[AREA_SYNC]` ainda nao estiver embarcada nas placas
 - [x] Consolidar resultado binario da fase:
   - `Queue/downlink cloud (SET_FENCE): FALHOU`
@@ -121,6 +125,13 @@ Base de reaproveitamento confirmada nesta rodada:
   - novos logs adicionados: `FENCE_POINTS_RESOLVED` e `FENCE_POINTS_RESOLUTION_FAIL`
 - relatorio curto desta rodada salvo em:
   - `tools/audit/output/20260419_004824/correcao_set_fence_missing_points_2026-04-19.md`
+- nova rodada aplicada nesta sessao:
+  - causa-raiz atual confirmada: o planner de chunk do `SET_FENCE` subestimava o overhead real
+  - `splitFencePointArrayForPayload()` agora calcula chunks com o overhead efetivo do payload transmitido
+  - cada chunk de cerca deixou de repetir `matrix_gateway_id` e `requested_at_ms`
+  - novo log adicionado: `FENCE_CHUNK_SIZE_EVAL`
+- relatorio curto desta rodada salvo em:
+  - `tools/audit/output/20260419_004824/correcao_set_fence_payload_too_large_2026-04-19.md`
 
 ## Next step
 
@@ -132,7 +143,8 @@ Base de reaproveitamento confirmada nesta rodada:
    - `QUEUE_DESERIALIZE_ERROR` -> erro real de parse/memoria
    - `FENCE_POINTS_RESOLVED` -> origem real dos pontos no payload normalizado
    - `QUEUE_COMMAND_LOADED pointCount>0` -> saida efetiva de `missing_points`
-   - `LORA_TX_OK` -> envio LoRa finalmente liberado
+   - `FENCE_CHUNK_SIZE_EVAL` -> chunking real por bytes
+   - `LORA_TX_ATTEMPT part=0 total>1` ou `LORA_TX_OK` -> envio LoRa finalmente liberado
 5. Se ainda travar, corrigir apenas o ponto funcional revelado pelos novos logs
 
 ## Related
