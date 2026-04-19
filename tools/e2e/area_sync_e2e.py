@@ -33,6 +33,7 @@ import os
 import subprocess
 import sys
 import time
+import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -233,13 +234,71 @@ def generate_report(
     print(f"\n[e2e] Relatório salvo:\n  {md_path}\n  {json_path}")
 
 
+def resolve_command_id_from_outputs(out_dir: str) -> str:
+    """Extrai o commandId mais confiável disponível a partir dos artefatos do poller."""
+    candidates: list[str] = []
+    snap_path = os.path.join(out_dir, "supabase_snapshots.jsonl")
+    tl_path = os.path.join(out_dir, "supabase_timeline.jsonl")
+
+    if os.path.exists(snap_path):
+        with open(snap_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    snap = json.loads(line)
+                except Exception:
+                    continue
+                cmd_id = snap.get("commandId") or ""
+                if cmd_id:
+                    candidates.append(cmd_id)
+                for cmd in snap.get("property_commands", []):
+                    cmd_id = cmd.get("command_id") or ""
+                    if cmd_id:
+                        candidates.append(cmd_id)
+                for ev in snap.get("command_events", []):
+                    cmd_id = ev.get("command_id") or ""
+                    if cmd_id:
+                        candidates.append(cmd_id)
+
+    if os.path.exists(tl_path):
+        with open(tl_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except Exception:
+                    continue
+                cmd_id = entry.get("commandId") or ""
+                if cmd_id:
+                    candidates.append(cmd_id)
+
+    for candidate in reversed(candidates):
+        if candidate:
+            return candidate
+    return ""
+
+
 def main():
+    parser = argparse.ArgumentParser(
+        description="Orquestrador E2E de homologacao SET_FENCE via AREA_SYNC"
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="",
+        help="Diretorio de saida para logs e relatorios (padrao: tools/audit/output/<timestamp>)",
+    )
+    args = parser.parse_args()
+
     if not SUPABASE_URL or not SUPABASE_KEY:
         print("[ERRO] Defina SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY", file=sys.stderr)
         sys.exit(1)
 
     ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = str(AUDIT_DIR / "output" / ts_str)
+    out_dir = args.output_dir or str(AUDIT_DIR / "output" / ts_str)
     os.makedirs(out_dir, exist_ok=True)
 
     timeline = []
@@ -346,6 +405,10 @@ def main():
                         continue
             break
 
+    command_id = resolve_command_id_from_outputs(out_dir)
+    if command_id:
+        log(f"commandId resolvido para o relatório: {command_id}")
+
     if conclusion == "INCONCLUSIVO":
         failures.append("Timeout: fluxo não alcançou estado terminal em 10 min")
 
@@ -364,7 +427,7 @@ def main():
             log(f"Aviso: falha ao restaurar polígono: {e}")
 
     # --- Fase 9: relatório final
-    generate_report(out_dir, area, orig_perim, new_perim, "", timeline, conclusion, failures)
+    generate_report(out_dir, area, orig_perim, new_perim, command_id, timeline, conclusion, failures)
 
     print(f"\n[e2e] Conclusão: {conclusion}")
     if failures:

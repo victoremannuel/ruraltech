@@ -26,6 +26,10 @@ Estado de partida consolidado nesta rodada:
   - `tools/e2e/area_sync_e2e.py`
 - [x] Confirmar que as dependencias declaradas para os scripts ja cobrem `pyserial` e `httpx`
 - [x] Definir que o primeiro caso de homologacao do downlink cloud sera `SET_FENCE`
+- [x] Criar ambiente virtual local em `tools/audit/.venv` com `pyserial` e `httpx` instalados para executar a trilha de auditoria sem depender do Python global
+- [x] Ajustar `tools/e2e/area_sync_e2e.py` para:
+  - expor `--help` sem falhar antes por ambiente
+  - consolidar `commandId` no relatorio final a partir dos artefatos do poller
 - [ ] Regravar firmwares usados na bancada se a instrumentacao `[AREA_SYNC]` ainda nao estiver embarcada nas placas
 - [ ] Executar auditoria de campo do fluxo `SET_FENCE` correlacionando tudo por `commandId`
 - [ ] Consolidar resultado binario da fase:
@@ -40,13 +44,15 @@ Base de reaproveitamento confirmada nesta rodada:
 - a task `auditoria-area-sync-e2e.md` ja serve como fundacao da trilha `queue/downlink cloud`
 - os logs estruturados `[AREA_SYNC]` principais ja estao no firmware da matriz e da coleira
 - os scripts de auditoria e orquestracao ja existem no repositorio
-- a execucao local dos scripts ainda depende de ambiente com dependencias instaladas e de bancada real para homologacao
+- o ambiente local agora tem `.venv` dedicado em `tools/audit/.venv`, suficiente para executar `serial_listener.py`, `supabase_poller.py` e `area_sync_e2e.py`
+- o orquestrador E2E agora consegue gerar relatorio com `commandId` resolvido a partir dos artefatos do poller, fortalecendo a correlacao exigida pelo plano
+- a homologacao binaria ainda depende de bancada real, acesso serial e credenciais Supabase validas
 - nenhuma mudanca adicional de firmware foi necessaria nesta rodada para abrir a trilha de downlink cloud
 
 ## Next step
 
 1. Garantir que matriz e coleira gravadas em bancada contem a instrumentacao `[AREA_SYNC]`
-2. Rodar `tools/e2e/area_sync_e2e.py` usando `SET_FENCE` como primeiro caso real de homologacao
+2. Rodar a trilha usando o Python do ambiente local: `tools/audit/.venv/bin/python tools/e2e/area_sync_e2e.py`
 3. Coletar serial da matriz, serial da coleira e snapshots Supabase no mesmo `output/<timestamp>`
 4. Fechar a fase com resultado objetivo por `commandId`
 
