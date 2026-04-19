@@ -277,37 +277,40 @@ bool LoRaGateway::receive(LoRaFrame& frame) {
 
 bool LoRaGateway::send(LoRaFrame& frame) {
   prepareSpiBusForLoRa();
-  uint8_t plain[256];
-  memset(frame.tag, 0, sizeof(frame.tag));
-  const size_t packedLen = LoRaProtocol::encodePlain(frame, plain, sizeof(plain));
-  if (!packedLen || packedLen < 16) return false;
-  const size_t cipherLen = packedLen - 16;
-
   uint8_t out[300];
-  memcpy(out, frame.nonce, 12);
-  crypto_.encryptAndSign(plain, cipherLen, out + 12, frame.tag, frame.nonce);
-  memcpy(out + 12 + cipherLen, frame.tag, 16);
+  SecureWireMetrics metrics;
+  if (!buildSecureWireMetrics(frame, &metrics, out, sizeof(out))) {
+    setRadioState("tx_build_failed");
+    LOGW(
+        "LoRa TX build falhou device=%lu type=%u seq=%lu reason=%s payload=%u",
+        (unsigned long)frame.deviceId,
+        (unsigned)frame.msgType,
+        (unsigned long)frame.seq,
+        metrics.reason ? metrics.reason : "unknown",
+        (unsigned)frame.payloadLen);
+    return false;
+  }
   char nonceHex[25] = {};
   char tagHex[17] = {};
   char headHex[17] = {};
   bytesToHex(frame.nonce, sizeof(frame.nonce), nonceHex, sizeof(nonceHex));
-  bytesToHex(out + 12, cipherLen < 8 ? cipherLen : 8, headHex, sizeof(headHex));
-  bytesToHex(frame.tag, 8, tagHex, sizeof(tagHex));
+  bytesToHex(out + 12, metrics.cipherPayloadLen < 8 ? metrics.cipherPayloadLen : 8, headHex, sizeof(headHex));
+  bytesToHex(out + 12 + metrics.cipherPayloadLen, 8, tagHex, sizeof(tagHex));
   LOGI(
       "LoRa TX detail device=%lu type=%u seq=%lu payload=%u packed=%u cipher=%u nonce=%s tag=%s head=%s",
       (unsigned long)frame.deviceId,
       (unsigned)frame.msgType,
       (unsigned long)frame.seq,
-      (unsigned)frame.payloadLen,
-      (unsigned)packedLen,
-      (unsigned)cipherLen,
+      (unsigned)metrics.plainPayloadLen,
+      (unsigned)metrics.packedLen,
+      (unsigned)metrics.cipherPayloadLen,
       nonceHex,
       tagHex,
       headHex);
   rxContinuousActive_ = false;
   setRadioState("tx_start");
   prepareSpiBusForLoRa();
-  const int txState = radio_.transmit(out, 12 + cipherLen + 16);
+  const int txState = radio_.transmit(out, metrics.wireLenFinal);
   armContinuousReceive();
   if (txState == RADIOLIB_ERR_NONE) {
     txCount_++;
@@ -318,7 +321,7 @@ bool LoRaGateway::send(LoRaFrame& frame) {
         (unsigned)frame.msgType,
         (unsigned long)frame.seq,
         (unsigned long long)frame.scopeId,
-        (unsigned)(12 + cipherLen + 16));
+        (unsigned)metrics.wireLenFinal);
     return true;
   }
   txFailCount_++;
@@ -330,4 +333,54 @@ bool LoRaGateway::send(LoRaFrame& frame) {
       (unsigned long)frame.seq,
       txState);
   return false;
+}
+
+bool LoRaGateway::buildSecureWireMetrics(
+    const LoRaFrame& frame,
+    SecureWireMetrics* metrics,
+    uint8_t* outWireBuffer,
+    size_t outWireBufferCap) {
+  if (!metrics) return false;
+  *metrics = SecureWireMetrics{};
+
+  if (frame.payloadLen == 0) {
+    metrics->reason = "empty_payload";
+    return false;
+  }
+
+  uint8_t plain[256];
+  LoRaFrame working = frame;
+  memset(working.tag, 0, sizeof(working.tag));
+  const size_t packedLen = LoRaProtocol::encodePlain(working, plain, sizeof(plain));
+  if (!packedLen || packedLen < 16) {
+    metrics->reason = "plain_encode_failed";
+    return false;
+  }
+
+  const size_t cipherLen = packedLen - 16;
+  const size_t wireLen = 12 + cipherLen + 16;
+  if (wireLen > 0xFFFF) {
+    metrics->reason = "wire_len_overflow";
+    return false;
+  }
+  if (outWireBuffer && outWireBufferCap < wireLen) {
+    metrics->reason = "wire_buffer_too_small";
+    return false;
+  }
+
+  metrics->plainPayloadLen = working.payloadLen;
+  metrics->packedLen = static_cast<uint16_t>(packedLen);
+  metrics->cipherPayloadLen = static_cast<uint16_t>(cipherLen);
+  metrics->wireLenFinal = static_cast<uint16_t>(wireLen);
+
+  if (!outWireBuffer) {
+    metrics->ok = true;
+    return true;
+  }
+
+  memcpy(outWireBuffer, working.nonce, 12);
+  crypto_.encryptAndSign(plain, cipherLen, outWireBuffer + 12, working.tag, working.nonce);
+  memcpy(outWireBuffer + 12 + cipherLen, working.tag, 16);
+  metrics->ok = true;
+  return true;
 }

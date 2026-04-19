@@ -9,12 +9,26 @@
 #include "LoRaProtocol.h"
 #include "CryptoEngine.h"
 
+struct SecureWireMetrics {
+  bool ok = false;
+  const char* reason = nullptr;
+  uint16_t plainPayloadLen = 0;
+  uint16_t packedLen = 0;
+  uint16_t cipherPayloadLen = 0;
+  uint16_t wireLenFinal = 0;
+};
+
 class LoRaGateway {
  public:
   LoRaGateway() : radio_(new Module(cfg::PIN_LORA_CS, cfg::PIN_LORA_DIO0, cfg::PIN_LORA_RST, cfg::PIN_LORA_DIO1)) {}
   bool begin();
   bool receive(LoRaFrame& frame);
   bool send(LoRaFrame& frame);
+  bool buildSecureWireMetrics(
+      const LoRaFrame& frame,
+      SecureWireMetrics* metrics,
+      uint8_t* outWireBuffer = nullptr,
+      size_t outWireBufferCap = 0);
   bool isReady() const { return ready_; }
   int lastReceiveCode() const { return lastReceiveCode_; }
   size_t lastReceiveLen() const { return lastReceiveLen_; }

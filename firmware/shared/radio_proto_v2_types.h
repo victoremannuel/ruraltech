@@ -4,6 +4,9 @@
 
 namespace rpv2 {
 
+// RuralTech RPv2 is an internal ESP32-to-ESP32 binary protocol.
+// On-wire layout is little-endian and every structure below must remain packed.
+
 enum MsgType : uint8_t {
   FENCE_BEGIN = 0x21,
   FENCE_POINTS = 0x22,
@@ -89,5 +92,15 @@ struct __attribute__((packed)) ApplyStatusBody {
   uint16_t activePoints;
   uint16_t activeBankId;
 };
+
+static_assert(sizeof(Header) == 20, "RPv2 Header size mismatch");
+static_assert(sizeof(FenceBeginBody) == 16, "RPv2 FenceBeginBody size mismatch");
+static_assert(sizeof(FencePointsPrefix) == 4, "RPv2 FencePointsPrefix size mismatch");
+static_assert(sizeof(PointLatLonE7) == 8, "RPv2 PointLatLonE7 size mismatch");
+static_assert(sizeof(FenceCommitBody) == 20, "RPv2 FenceCommitBody size mismatch");
+static_assert(sizeof(FenceAbortBody) == 8, "RPv2 FenceAbortBody size mismatch");
+static_assert(sizeof(AckBody) == 12, "RPv2 AckBody size mismatch");
+static_assert(sizeof(NackBody) == 12, "RPv2 NackBody size mismatch");
+static_assert(sizeof(ApplyStatusBody) == 12, "RPv2 ApplyStatusBody size mismatch");
 
 }  // namespace rpv2

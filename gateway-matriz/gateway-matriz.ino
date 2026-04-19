@@ -228,8 +228,10 @@ struct ActiveSimpleCommandState {
   uint64_t expiresAtMs = 0;
   uint8_t targetCount = 0;
   uint16_t retryCount = 0;
+  uint16_t lastReasonCode = rpv2::REASON_NONE;
   char commandId[48]{};
   char command[24]{};
+  char transportState[32]{};
   char feedbackCommandId[48]{};
   char lastFeedbackOutcome[24]{};
   char propertyId[48]{};
@@ -355,6 +357,8 @@ static bool isAwaitedSimpleCommandFeedback(const LoRaFrame& rx);
 static void handleUplinkDuringAckWait(const LoRaFrame& rx);
 static void pollActiveSimpleCommandFeedbackSlice();
 static bool processPrioritySimpleCommandFeedbackWindow();
+static int findActiveSimpleCommandTarget(const char* targetId);
+static bool publishSimpleCommandResult(const char* status, const char* reason = nullptr);
 static String payloadBytesToString(const uint8_t* data, size_t len);
 static void fillCloudWriteTrace(
     CloudWriteTrace* trace,
@@ -1983,7 +1987,7 @@ static bool anyActiveSimpleTargetFailed() {
   return false;
 }
 
-static bool publishSimpleCommandResult(const char* status, const char* reason = nullptr) {
+static bool publishSimpleCommandResult(const char* status, const char* reason) {
   if (!cfg::FEATURE_CLOUD) return false;
   if (!activeSimpleCommand.active || !activeSimpleCommand.commandId[0]) return false;
 
@@ -1991,6 +1995,9 @@ static bool publishSimpleCommandResult(const char* status, const char* reason = 
   doc["commandId"] = activeSimpleCommand.commandId;
   doc["command"] = activeSimpleCommand.command;
   doc["status"] = status;
+  doc["transport"] =
+      strcmp(activeSimpleCommand.command, "SET_FENCE") == 0 ? "radio_fence_v2" : "lora";
+  doc["transportState"] = status;
   doc["createdAtMs"] = activeSimpleCommand.createdAtMs;
   doc["updatedAtMs"] = unixNowMs(unixNowSec());
   doc["expiresAtMs"] = activeSimpleCommand.expiresAtMs;
@@ -2014,6 +2021,9 @@ static bool publishSimpleCommandResult(const char* status, const char* reason = 
   }
   copyTargetDeviceIdsFromActiveCommand(doc.as<JsonObject>());
   if (reason && reason[0]) doc["reason"] = reason;
+  if (activeSimpleCommand.lastReasonCode != rpv2::REASON_NONE) {
+    doc["reasonCode"] = activeSimpleCommand.lastReasonCode;
+  }
 
   JsonObject deviceResults = doc["deviceResults"].to<JsonObject>();
   for (uint8_t i = 0; i < activeSimpleCommand.targetCount; ++i) {
@@ -2022,6 +2032,9 @@ static bool publishSimpleCommandResult(const char* status, const char* reason = 
     item["ok"] = target.ok;
     item["status"] = target.status[0] ? target.status : (target.terminal ? "completed" : "dispatching");
     if (target.reason[0]) item["reason"] = target.reason;
+    if (activeSimpleCommand.lastReasonCode != rpv2::REASON_NONE) {
+      item["reasonCode"] = activeSimpleCommand.lastReasonCode;
+    }
   }
 
   String body;
@@ -2041,6 +2054,10 @@ static bool publishSimpleCommandResult(const char* status, const char* reason = 
       status,
       reason,
       &doc);
+  copyStringToBuffer(
+      activeSimpleCommand.transportState,
+      sizeof(activeSimpleCommand.transportState),
+      status);
   if (!(matrixOk && propertyOk && eventOk)) {
     setLastCloudWriteError("command_status", activeSimpleCommand.commandId);
   }
@@ -2123,14 +2140,7 @@ static bool resendActiveSimpleCommand(
       ok = sendLoRaJsonFrame(deviceId, msgType, payloadDoc.as<JsonVariantConst>(), &sendReason);
     }
     if (ok) {
-      if (strcmp(activeSimpleCommand.command, "SET_FENCE") == 0 &&
-          payloadUsesFenceRpv2(payloadDoc.as<JsonVariantConst>())) {
-        target.terminal = true;
-        target.ok = true;
-        copyStringToBuffer(target.status, sizeof(target.status), "applied");
-      } else {
-        copyStringToBuffer(target.status, sizeof(target.status), "dispatching");
-      }
+      copyStringToBuffer(target.status, sizeof(target.status), "dispatching");
       target.reason[0] = '\0';
       sentAny = true;
     } else if (sendReason && sendReason[0]) {
@@ -2148,9 +2158,7 @@ static bool resendActiveSimpleCommand(
   activeSimpleCommand.targetedRetryAtMs = 0;
   activeSimpleCommand.targetedRetryDeviceId = 0;
   if (activeSimpleCommand.retryCount < 0xFFFF) activeSimpleCommand.retryCount++;
-  publishSimpleCommandResult(
-      allActiveSimpleTargetsTerminal() ? "applied" : "dispatching",
-      nullptr);
+  publishSimpleCommandResult("dispatching", nullptr);
   return true;
 }
 
@@ -2828,30 +2836,62 @@ static bool payloadUsesFenceRpv2(const JsonVariantConst payload) {
   return true;
 }
 
+static uint16_t rpv2ReasonCodeFromLabel(const char* reason) {
+  if (!reason || !reason[0]) return rpv2::REASON_NONE;
+  if (strcmp(reason, "no_point_fits_in_frame") == 0) return rpv2::REASON_NO_POINT_FITS_IN_FRAME;
+  if (strcmp(reason, "secure_envelope_too_large") == 0) return rpv2::REASON_SECURE_ENVELOPE_TOO_LARGE;
+  if (strcmp(reason, "begin_timeout") == 0) return rpv2::REASON_BEGIN_TIMEOUT;
+  if (strcmp(reason, "points_timeout") == 0) return rpv2::REASON_POINTS_TIMEOUT;
+  if (strcmp(reason, "commit_timeout") == 0) return rpv2::REASON_COMMIT_TIMEOUT;
+  if (strcmp(reason, "apply_timeout") == 0) return rpv2::REASON_APPLY_FAILED;
+  if (strcmp(reason, "begin_rejected") == 0) return rpv2::REASON_BEGIN_REJECTED;
+  if (strcmp(reason, "points_rejected") == 0) return rpv2::REASON_POINTS_OUT_OF_ORDER;
+  if (strcmp(reason, "commit_rejected") == 0) return rpv2::REASON_COMMIT_REJECTED;
+  if (strcmp(reason, "apply_failed") == 0) return rpv2::REASON_APPLY_FAILED;
+  return rpv2::REASON_NONE;
+}
+
+static void setFenceTargetTransportState(
+    uint32_t deviceId,
+    const char* status,
+    bool terminal,
+    bool ok,
+    const char* reason,
+    uint16_t reasonCode) {
+  char targetId[32]{};
+  snprintf(targetId, sizeof(targetId), "%lu", (unsigned long)deviceId);
+  const int idx = findActiveSimpleCommandTarget(targetId);
+  if (idx < 0) return;
+  ActiveSimpleCommandTargetState& target = activeSimpleCommand.targets[idx];
+  target.terminal = terminal;
+  target.ok = ok;
+  copyStringToBuffer(target.status, sizeof(target.status), status ? status : "");
+  copyStringToBuffer(target.reason, sizeof(target.reason), reason ? reason : "");
+  activeSimpleCommand.lastReasonCode = reasonCode;
+}
+
+static void publishFenceTransportState(
+    uint32_t deviceId,
+    const char* transportState,
+    const char* reason = nullptr,
+    uint16_t reasonCode = rpv2::REASON_NONE,
+    bool terminal = false,
+    bool ok = false) {
+  setFenceTargetTransportState(deviceId, transportState, terminal, ok, reason, reasonCode);
+  publishSimpleCommandResult(transportState, reason);
+}
+
 static int32_t coordinateToE7(double value) {
   const double scaled = value * 10000000.0;
   return static_cast<int32_t>(scaled >= 0.0 ? scaled + 0.5 : scaled - 0.5);
 }
 
-static size_t buildSecureWireFrameAndMeasure(
-    uint32_t targetDeviceId,
-    MsgType msgType,
-    uint64_t scopeId,
-    const uint8_t* plain,
-    size_t plainLen) {
-  if (!plain || plainLen == 0 || plainLen > sizeof(LoRaFrame{}.payload)) return 0;
-  LoRaFrame tx;
-  tx.deviceId = targetDeviceId;
-  tx.scopeId = scopeId;
-  tx.msgType = msgType;
-  tx.seq = 1;
-  tx.timestamp = 0;
-  memset(tx.nonce, 0xA5, sizeof(tx.nonce));
-  tx.payloadLen = static_cast<uint8_t>(plainLen);
-  memcpy(tx.payload, plain, plainLen);
-  const size_t packedLen = LoRaProtocol::encodePlain(tx, nullptr, 0);
-  if (packedLen < 16) return 0;
-  return 12 + (packedLen - 16) + 16;
+static bool buildExactSecureWireMetrics(
+    const LoRaFrame& tx,
+    SecureWireMetrics* outMetrics,
+    uint8_t* outWireBuffer,
+    size_t outWireBufferCap) {
+  return lora.buildSecureWireMetrics(tx, outMetrics, outWireBuffer, outWireBufferCap);
 }
 
 static bool sendLoRaBinaryFrame(
@@ -2875,6 +2915,15 @@ static bool sendLoRaBinaryFrame(
   for (int i = 0; i < 12; ++i) tx.nonce[i] = (uint8_t)esp_random();
   tx.payloadLen = static_cast<uint8_t>(payloadLen);
   memcpy(tx.payload, payload, payloadLen);
+  SecureWireMetrics metrics;
+  if (!buildExactSecureWireMetrics(tx, &metrics, nullptr, 0)) {
+    if (reason) *reason = metrics.reason ? metrics.reason : "secure_envelope_build_failed";
+    return false;
+  }
+  if (metrics.wireLenFinal > rpv2::MAX_LORA_FRAME_BYTES) {
+    if (reason) *reason = "secure_envelope_too_large";
+    return false;
+  }
   const bool ok = lora.send(tx);
   if (!ok && reason && !*reason) *reason = "lora_send_failed";
   return ok;
@@ -2955,6 +3004,9 @@ static bool buildFenceRpv2Plan(
     const JsonArrayConst& points,
     uint64_t scopeId,
     uint32_t deviceId,
+    uint64_t radioCommandId,
+    uint32_t sessionNonce,
+    const char* commandId,
     Rpv2FenceChunkPlan* plan,
     const char** reason) {
   if (!plan) {
@@ -2987,6 +3039,7 @@ static bool buildFenceRpv2Plan(
     uint16_t best = 0;
     uint16_t bestPlainSize = 0;
     uint16_t bestSecureSize = 0;
+    const char* lastRejectReason = "no_point_fits_in_frame";
     while (low <= high) {
       const uint16_t mid = low + ((high - low) / 2);
       uint8_t payload[128]{};
@@ -2995,9 +3048,9 @@ static bool buildFenceRpv2Plan(
       header.msgType = rpv2::FENCE_POINTS;
       header.flags = rpv2::FLAG_ACK_REQUIRED | rpv2::FLAG_FROM_MATRIX;
       header.headerLen = sizeof(rpv2::Header);
-      header.radioCommandId = 0x1122334455667788ULL;
-      header.sessionNonce = 0xA1B2C3D4UL;
-      header.fragmentIndex = 1;
+      header.radioCommandId = radioCommandId;
+      header.sessionNonce = sessionNonce;
+      header.fragmentIndex = plan->totalChunks + 1;
       header.fragmentTotal = 1;
       rpv2::FencePointsPrefix prefix{};
       prefix.startPointIndex = start;
@@ -3013,24 +3066,54 @@ static bool buildFenceRpv2Plan(
         high = mid - 1;
         continue;
       }
-      const size_t secureSize = buildSecureWireFrameAndMeasure(
-          deviceId,
-          MsgType::SET_FENCE,
-          scopeId,
-          payload,
-          plainSize);
-      if (secureSize != 0 && secureSize <= rpv2::MAX_LORA_FRAME_BYTES) {
+      LoRaFrame tx;
+      tx.deviceId = deviceId;
+      tx.scopeId = scopeId == 0 ? bindingScopeIdValue() : scopeId;
+      tx.msgType = MsgType::SET_FENCE;
+      tx.seq = 1;
+      tx.timestamp = 0;
+      memset(tx.nonce, 0xA5, sizeof(tx.nonce));
+      tx.payloadLen = static_cast<uint8_t>(plainSize);
+      memcpy(tx.payload, payload, plainSize);
+      SecureWireMetrics metrics;
+      const bool metricsOk = buildExactSecureWireMetrics(tx, &metrics, nullptr, 0);
+      LOGI(
+          "RPV2_POINTS_SIZE_EVAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u pointCount=%u plainPayloadLen=%u packedLen=%u cipherPayloadLen=%u wireLenFinal=%u limit=128",
+          (unsigned long)deviceId,
+          commandId && commandId[0] ? commandId : "-",
+          (unsigned long long)radioCommandId,
+          (unsigned)(plan->totalChunks + 1),
+          (unsigned)mid,
+          (unsigned)metrics.plainPayloadLen,
+          (unsigned)metrics.packedLen,
+          (unsigned)metrics.cipherPayloadLen,
+          (unsigned)metrics.wireLenFinal);
+      if (metricsOk && metrics.wireLenFinal <= rpv2::MAX_LORA_FRAME_BYTES) {
         best = mid;
         bestPlainSize = static_cast<uint16_t>(plainSize);
-        bestSecureSize = static_cast<uint16_t>(secureSize);
+        bestSecureSize = metrics.wireLenFinal;
         low = mid + 1;
       } else {
+        lastRejectReason = metrics.reason ? metrics.reason : "secure_envelope_too_large";
+        LOGW(
+            "RPV2_PLAN_CHUNK_REJECT deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u pointCount=%u reason=%s wireLenFinal=%u limit=128",
+            (unsigned long)deviceId,
+            commandId && commandId[0] ? commandId : "-",
+            (unsigned long long)radioCommandId,
+            (unsigned)(plan->totalChunks + 1),
+            (unsigned)mid,
+            metrics.reason ? metrics.reason : "secure_envelope_too_large",
+            (unsigned)metrics.wireLenFinal);
         if (mid == 0) break;
         high = mid - 1;
       }
     }
     if (best == 0) {
-      if (reason) *reason = "no_point_fits_in_frame";
+      if (reason) {
+        *reason = strcmp(lastRejectReason, "secure_envelope_too_large") == 0
+                      ? "secure_envelope_too_large"
+                      : "no_point_fits_in_frame";
+      }
       return false;
     }
     Rpv2FenceChunkPlanItem& item = plan->items[plan->totalChunks];
@@ -3039,6 +3122,16 @@ static bool buildFenceRpv2Plan(
     item.pointCount = static_cast<uint8_t>(best);
     item.plainFrameSize = bestPlainSize;
     item.secureWireSize = bestSecureSize;
+    LOGI(
+        "RPV2_PLAN_CHUNK_FIT deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u plainPayloadLen=%u wireLenFinal=%u limit=128",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned)item.fragmentIndex,
+        (unsigned)item.startPointIndex,
+        (unsigned)item.pointCount,
+        (unsigned)item.plainFrameSize,
+        (unsigned)item.secureWireSize);
     plan->totalChunks++;
     start += best;
   }
@@ -3057,7 +3150,17 @@ static bool sendFenceCommandRpv2Session(
   const uint64_t radioCommandId = rpv2::fnv1a64(commandId && commandId[0] ? commandId : "set_fence");
   const uint32_t sessionNonce = esp_random();
   Rpv2FenceChunkPlan plan;
-  if (!buildFenceRpv2Plan(pointsResolution.points, scopeId, deviceId, &plan, reason)) {
+  if (!buildFenceRpv2Plan(
+          pointsResolution.points,
+          scopeId,
+          deviceId,
+          radioCommandId,
+          sessionNonce,
+          commandId,
+          &plan,
+          reason)) {
+    activeSimpleCommand.lastReasonCode =
+        reason ? rpv2ReasonCodeFromLabel(*reason) : rpv2::REASON_NONE;
     return false;
   }
 
@@ -3080,19 +3183,86 @@ static bool sendFenceCommandRpv2Session(
   header.fragmentIndex = 0;
   header.fragmentTotal = plan.totalChunks;
   const size_t beginLen = rpv2::encodeFrame(header, begin, framePayload, sizeof(framePayload));
+  LoRaFrame beginTx;
+  beginTx.deviceId = deviceId;
+  beginTx.scopeId = scopeId == 0 ? bindingScopeIdValue() : scopeId;
+  beginTx.msgType = MsgType::SET_FENCE;
+  beginTx.seq = 1;
+  beginTx.timestamp = 0;
+  memset(beginTx.nonce, 0xA5, sizeof(beginTx.nonce));
+  beginTx.payloadLen = static_cast<uint8_t>(beginLen);
+  memcpy(beginTx.payload, framePayload, beginLen);
+  SecureWireMetrics beginMetrics;
+  buildExactSecureWireMetrics(beginTx, &beginMetrics, nullptr, 0);
+  LOGI(
+      "RPV2_BEGIN_SIZE_EVAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=0 pointCount=%u plainPayloadLen=%u packedLen=%u cipherPayloadLen=%u wireLenFinal=%u limit=128",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)plan.totalPoints,
+      (unsigned)beginMetrics.plainPayloadLen,
+      (unsigned)beginMetrics.packedLen,
+      (unsigned)beginMetrics.cipherPayloadLen,
+      (unsigned)beginMetrics.wireLenFinal);
+  publishFenceTransportState(deviceId, "awaiting_begin_ack");
+  LOGI(
+      "RPV2_WAIT_ACK_BEGIN deviceId=%lu commandId=%s radioCommandId=%llu retryCount=%u",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)activeSimpleCommand.retryCount);
   if (beginLen == 0 || !sendLoRaBinaryFrame(deviceId, MsgType::SET_FENCE, scopeId, framePayload, beginLen, reason)) {
+    activeSimpleCommand.lastReasonCode =
+        reason ? rpv2ReasonCodeFromLabel(*reason) : rpv2::REASON_NONE;
     return false;
   }
+  appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      "rpv2_begin_sent",
+      nullptr,
+      nullptr);
+  LOGI(
+      "RPV2_BEGIN_TX_OK deviceId=%lu commandId=%s radioCommandId=%llu retryCount=%u",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)activeSimpleCommand.retryCount);
 
   Rpv2AwaitedResponse response;
   if (!waitForRpv2Response(deviceId, radioCommandId, sessionNonce, rpv2::BEGIN_ACK_TIMEOUT_MS, &response)) {
     if (reason) *reason = "begin_timeout";
+    activeSimpleCommand.lastReasonCode = rpv2::REASON_BEGIN_TIMEOUT;
+    publishFenceTransportState(deviceId, "failed", "begin_timeout", rpv2::REASON_BEGIN_TIMEOUT, true, false);
     return false;
   }
   if (!response.ack || response.applyStatus || response.nack) {
-    if (reason) *reason = rpv2::reasonCodeLabel(response.reasonCode ? response.reasonCode : rpv2::REASON_BEGIN_REJECTED);
+    const uint16_t code = response.reasonCode ? response.reasonCode : rpv2::REASON_BEGIN_REJECTED;
+    if (reason) *reason = rpv2::reasonCodeLabel(code);
+    activeSimpleCommand.lastReasonCode = code;
+    LOGW(
+        "RPV2_RX_NACK deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u reasonCode=%u",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned)response.fragmentIndex,
+        (unsigned)code);
+    publishFenceTransportState(deviceId, "failed", *reason, code, true, false);
     return false;
   }
+  appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      "rpv2_begin_ack",
+      nullptr,
+      nullptr);
+  LOGI(
+      "RPV2_RX_ACK deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u acceptedPoints=%u",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)response.fragmentIndex,
+      (unsigned)response.acceptedPoints);
 
   for (uint16_t i = 0; i < plan.totalChunks; ++i) {
     const Rpv2FenceChunkPlanItem& item = plan.items[i];
@@ -3109,17 +3279,65 @@ static bool sendFenceCommandRpv2Session(
         item.pointCount,
         framePayload,
         sizeof(framePayload));
+    publishFenceTransportState(deviceId, "awaiting_points_ack");
+    LOGI(
+        "RPV2_WAIT_ACK_POINTS deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u retryCount=%u",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned)item.fragmentIndex,
+        (unsigned)activeSimpleCommand.retryCount);
     if (pointsLen == 0 || !sendLoRaBinaryFrame(deviceId, MsgType::SET_FENCE, scopeId, framePayload, pointsLen, reason)) {
+      activeSimpleCommand.lastReasonCode =
+          reason ? rpv2ReasonCodeFromLabel(*reason) : rpv2::REASON_NONE;
       return false;
     }
+    appendPropertyCommandEvent(
+        activeSimpleCommand.propertyId,
+        activeSimpleCommand.commandId,
+        "rpv2_points_sent",
+        nullptr,
+        nullptr);
+    LOGI(
+        "RPV2_POINTS_TX_OK deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u pointCount=%u",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned)item.fragmentIndex,
+        (unsigned)item.pointCount);
     if (!waitForRpv2Response(deviceId, radioCommandId, sessionNonce, rpv2::POINTS_ACK_TIMEOUT_MS, &response)) {
       if (reason) *reason = "points_timeout";
+      activeSimpleCommand.lastReasonCode = rpv2::REASON_POINTS_TIMEOUT;
+      publishFenceTransportState(deviceId, "failed", "points_timeout", rpv2::REASON_POINTS_TIMEOUT, true, false);
       return false;
     }
     if (!response.ack || response.nack || response.applyStatus) {
-      if (reason) *reason = rpv2::reasonCodeLabel(response.reasonCode ? response.reasonCode : rpv2::REASON_POINTS_OUT_OF_ORDER);
+      const uint16_t code = response.reasonCode ? response.reasonCode : rpv2::REASON_POINTS_OUT_OF_ORDER;
+      if (reason) *reason = rpv2::reasonCodeLabel(code);
+      activeSimpleCommand.lastReasonCode = code;
+      LOGW(
+          "RPV2_RX_NACK deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u reasonCode=%u",
+          (unsigned long)deviceId,
+          commandId && commandId[0] ? commandId : "-",
+          (unsigned long long)radioCommandId,
+          (unsigned)response.fragmentIndex,
+          (unsigned)code);
+      publishFenceTransportState(deviceId, "failed", *reason, code, true, false);
       return false;
     }
+    appendPropertyCommandEvent(
+        activeSimpleCommand.propertyId,
+        activeSimpleCommand.commandId,
+        "rpv2_points_ack",
+        nullptr,
+        nullptr);
+    LOGI(
+        "RPV2_RX_ACK deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u acceptedPoints=%u",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned)response.fragmentIndex,
+        (unsigned)response.acceptedPoints);
     delay(rpv2::INTER_FRAME_GAP_MS);
   }
 
@@ -3135,25 +3353,117 @@ static bool sendFenceCommandRpv2Session(
   header.fragmentIndex = 0;
   header.fragmentTotal = plan.totalChunks;
   const size_t commitLen = rpv2::encodeFrame(header, commit, framePayload, sizeof(framePayload));
+  LoRaFrame commitTx;
+  commitTx.deviceId = deviceId;
+  commitTx.scopeId = scopeId == 0 ? bindingScopeIdValue() : scopeId;
+  commitTx.msgType = MsgType::SET_FENCE;
+  commitTx.seq = 1;
+  commitTx.timestamp = 0;
+  memset(commitTx.nonce, 0xA5, sizeof(commitTx.nonce));
+  commitTx.payloadLen = static_cast<uint8_t>(commitLen);
+  memcpy(commitTx.payload, framePayload, commitLen);
+  SecureWireMetrics commitMetrics;
+  buildExactSecureWireMetrics(commitTx, &commitMetrics, nullptr, 0);
+  LOGI(
+      "RPV2_COMMIT_SIZE_EVAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=0 pointCount=%u plainPayloadLen=%u packedLen=%u cipherPayloadLen=%u wireLenFinal=%u limit=128",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)plan.totalPoints,
+      (unsigned)commitMetrics.plainPayloadLen,
+      (unsigned)commitMetrics.packedLen,
+      (unsigned)commitMetrics.cipherPayloadLen,
+      (unsigned)commitMetrics.wireLenFinal);
+  publishFenceTransportState(deviceId, "awaiting_commit_ack");
+  LOGI(
+      "RPV2_WAIT_ACK_COMMIT deviceId=%lu commandId=%s radioCommandId=%llu retryCount=%u",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)activeSimpleCommand.retryCount);
   if (commitLen == 0 || !sendLoRaBinaryFrame(deviceId, MsgType::SET_FENCE, scopeId, framePayload, commitLen, reason)) {
+    activeSimpleCommand.lastReasonCode =
+        reason ? rpv2ReasonCodeFromLabel(*reason) : rpv2::REASON_NONE;
     return false;
   }
+  appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      "rpv2_commit_sent",
+      nullptr,
+      nullptr);
+  LOGI(
+      "RPV2_COMMIT_TX_OK deviceId=%lu commandId=%s radioCommandId=%llu",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId);
   if (!waitForRpv2Response(deviceId, radioCommandId, sessionNonce, rpv2::COMMIT_ACK_TIMEOUT_MS, &response)) {
     if (reason) *reason = "commit_timeout";
+    activeSimpleCommand.lastReasonCode = rpv2::REASON_COMMIT_TIMEOUT;
+    publishFenceTransportState(deviceId, "failed", "commit_timeout", rpv2::REASON_COMMIT_TIMEOUT, true, false);
     return false;
   }
   if (!response.ack || response.nack || response.applyStatus) {
-    if (reason) *reason = rpv2::reasonCodeLabel(response.reasonCode ? response.reasonCode : rpv2::REASON_COMMIT_REJECTED);
+    const uint16_t code = response.reasonCode ? response.reasonCode : rpv2::REASON_COMMIT_REJECTED;
+    if (reason) *reason = rpv2::reasonCodeLabel(code);
+    activeSimpleCommand.lastReasonCode = code;
+    LOGW(
+        "RPV2_RX_NACK deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u reasonCode=%u",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned)response.fragmentIndex,
+        (unsigned)code);
+    publishFenceTransportState(deviceId, "failed", *reason, code, true, false);
     return false;
   }
+  appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      "rpv2_commit_ack",
+      nullptr,
+      nullptr);
+  publishFenceTransportState(deviceId, "awaiting_apply_status");
+  LOGI(
+      "RPV2_WAIT_APPLY_STATUS deviceId=%lu commandId=%s radioCommandId=%llu retryCount=%u",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)activeSimpleCommand.retryCount);
   if (!waitForRpv2Response(deviceId, radioCommandId, sessionNonce, rpv2::APPLY_STATUS_TIMEOUT_MS, &response)) {
     if (reason) *reason = "apply_timeout";
+    activeSimpleCommand.lastReasonCode = rpv2::REASON_APPLY_FAILED;
+    publishFenceTransportState(deviceId, "failed", "apply_timeout", rpv2::REASON_APPLY_FAILED, true, false);
     return false;
   }
   if (!response.applyStatus || !response.ack) {
-    if (reason) *reason = rpv2::reasonCodeLabel(response.reasonCode ? response.reasonCode : rpv2::REASON_APPLY_FAILED);
+    const uint16_t code = response.reasonCode ? response.reasonCode : rpv2::REASON_APPLY_FAILED;
+    if (reason) *reason = rpv2::reasonCodeLabel(code);
+    activeSimpleCommand.lastReasonCode = code;
+    LOGW(
+        "RPV2_RX_APPLY_STATUS deviceId=%lu commandId=%s radioCommandId=%llu apply=0 reasonCode=%u activePoints=%u",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned)code,
+        (unsigned)response.activePoints);
+    publishFenceTransportState(deviceId, "failed", *reason, code, true, false);
     return false;
   }
+  activeSimpleCommand.lastReasonCode = rpv2::REASON_NONE;
+  LOGI(
+      "RPV2_RX_APPLY_STATUS deviceId=%lu commandId=%s radioCommandId=%llu apply=1 reasonCode=0 activePoints=%u",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)response.activePoints);
+  appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      "rpv2_apply_status_ok",
+      nullptr,
+      nullptr);
+  publishFenceTransportState(deviceId, "applied", nullptr, rpv2::REASON_NONE, true, true);
   return true;
 }
 
@@ -4069,6 +4379,7 @@ static bool dispatchQueuedSimpleCommand(
   activeSimpleCommand.active = true;
   activeSimpleCommand.dispatchAtMs = millis();
   activeSimpleCommand.lastAttemptAtMs = 0;
+  activeSimpleCommand.lastReasonCode = rpv2::REASON_NONE;
   activeSimpleCommand.createdAtMs = commandDoc["createdAtMs"] | 0ULL;
   activeSimpleCommand.expiresAtMs = commandDoc["expiresAtMs"] | 0ULL;
   copyStringToBuffer(activeSimpleCommand.commandId, sizeof(activeSimpleCommand.commandId), commandId.c_str());
@@ -4105,6 +4416,10 @@ static bool dispatchQueuedSimpleCommand(
           payloadDoc["origin_doc_id"],
           payloadDoc["originDocId"],
           payloadDoc["operation_id"]));
+  copyStringToBuffer(
+      activeSimpleCommand.transportState,
+      sizeof(activeSimpleCommand.transportState),
+      "queued");
   if (!cacheActiveSimpleCommandPayload(payloadDoc.as<JsonVariantConst>(), reason)) {
     clearActiveSimpleCommand();
     return false;
@@ -4159,15 +4474,6 @@ static bool dispatchQueuedSimpleCommand(
         clearActiveSimpleCommand();
         return false;
       }
-      if (strcmp(command, "SET_FENCE") == 0 &&
-          payloadUsesFenceRpv2(payloadDoc.as<JsonVariantConst>())) {
-        activeSimpleCommand.targets[idx].terminal = true;
-        activeSimpleCommand.targets[idx].ok = true;
-        copyStringToBuffer(
-            activeSimpleCommand.targets[idx].status,
-            sizeof(activeSimpleCommand.targets[idx].status),
-            "applied");
-      }
       sentAny = true;
     }
   } else if (!targetGatewayIds.isNull() && targetGatewayIds.size() > 0) {
@@ -4205,9 +4511,7 @@ static bool dispatchQueuedSimpleCommand(
   activeSimpleCommand.lastAttemptAtMs = millis();
   activeSimpleCommand.retryCount = 1;
   AS_MATRIX_COMMAND_MARK_DISPATCHING_BEGIN(commandId.c_str(), command);
-  publishSimpleCommandResult(
-      allActiveSimpleTargetsTerminal() ? "applied" : "dispatching",
-      nullptr);
+  publishSimpleCommandResult("dispatching", nullptr);
   return true;
 }
 

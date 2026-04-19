@@ -73,6 +73,12 @@ Estado de partida consolidado nesta rodada:
   - planejamento por tamanho real do frame seguro na matriz
   - sessao `BEGIN -> POINTS -> COMMIT` na matriz
   - recepcao binaria na coleira com `ACK/NACK/APPLY_STATUS`
+- [x] Corrigir o `RPv2` para usar medicao exata e status real:
+  - planner usando o mesmo pipeline do envio real
+  - remocao de `applied` precoce na matriz
+  - `transportState` e `reasonCode` persistidos no resultado
+  - logs estruturados extras na matriz e na coleira
+  - testes nativos de codec, CRC e planner
 - [ ] Regravar firmwares usados na bancada se a instrumentacao `[AREA_SYNC]` ainda nao estiver embarcada nas placas
 - [x] Consolidar resultado binario da fase:
   - `Queue/downlink cloud (SET_FENCE): FALHOU`
@@ -169,6 +175,22 @@ Base de reaproveitamento confirmada nesta rodada:
   - matriz: `Global variables use 72884 bytes (22%)`
   - coleira: `Sketch uses 1154549 bytes (58%)`
   - coleira: `Global variables use 68464 bytes (20%)`
+- nova rodada aplicada nesta sessao:
+  - causa-raiz confirmada: o planner ainda nao usava o mesmo pipeline do envio real para medir o frame seguro
+  - `LoRaGateway` agora expõe uma medicao unica do frame seguro reutilizada pelo envio e pelo planner
+  - o planner do `RPv2` passou a medir `LoRaFrame` real de candidato e registrar as metricas por etapa
+  - foram removidos os caminhos que marcavam `SET_FENCE` como `applied` antes de `APPLY_STATUS ok`
+  - `publishSimpleCommandResult()` passou a persistir `transport`, `transportState` e `reasonCode`
+  - a coleira ganhou logs adicionais para `BEGIN`, `POINTS`, `COMMIT`, `ACK/NACK`, `APPLY_STATUS`, CRC e reset de sessao
+  - foram criados testes nativos para `codec`, `crc` e `planner`
+- relatorio curto desta rodada salvo em:
+  - `tools/audit/output/20260419_004824/correcao_rpv2_set_fence_planejamento_e_status_2026-04-19.md`
+- validacao local desta rodada:
+  - testes nativos `rpv2_codec_test`, `rpv2_crc_test` e `rpv2_fence_planner_test`: ok
+  - matriz: `Sketch uses 1356875 bytes (69%)`
+  - matriz: `Global variables use 72916 bytes (22%)`
+  - coleira: `Sketch uses 1156369 bytes (58%)`
+  - coleira: `Global variables use 68464 bytes (20%)`
 
 ## Next step
 
@@ -183,6 +205,8 @@ Base de reaproveitamento confirmada nesta rodada:
    - `FENCE_CHUNK_PLAN fit=0/1` -> decisao real do planner com payload serializado
    - `FENCE_CHUNK_SIZE_EVAL` -> chunking real por bytes
    - `ACK/NACK/APPLY_STATUS` binarios do `RPv2` -> validacao do novo transporte
+   - `RPV2_*_SIZE_EVAL` -> prova da medicao usando o pipeline exato do frame seguro
+   - `transportState` e `reasonCode` persistidos no backend -> prova de status real sem falso `applied`
 5. Se ainda travar, corrigir apenas o ponto funcional revelado pelos novos logs
 
 ## Related

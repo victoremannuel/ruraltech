@@ -1033,6 +1033,13 @@ static void resetHerdChunkRx() {
 }
 
 static void resetRpv2FenceSession() {
+  if (rpv2FenceSession_.active) {
+    LOGI(
+        "RPV2_SESSION_RESET radioCommandId=%llu sessionNonce=%lu expectedFragment=%u",
+        (unsigned long long)rpv2FenceSession_.radioCommandId,
+        (unsigned long)rpv2FenceSession_.sessionNonce,
+        (unsigned)rpv2FenceSession_.expectedFragment);
+  }
   rpv2FenceSession_ = Rpv2FenceSessionState{};
 }
 
@@ -1104,6 +1111,14 @@ static void sendRpv2Ack(
   body.acceptedPoints = acceptedPoints;
   body.observedCrc32 = observedCrc32;
   const size_t len = rpv2::encodeFrame(header, body, payload, sizeof(payload));
+  LOGI(
+      "RPV2_ACK_SENT radioCommandId=%llu sessionNonce=%lu ackedMsgType=%u fragmentIndex=%u nextExpected=%u acceptedPoints=%u",
+      (unsigned long long)req.radioCommandId,
+      (unsigned long)req.sessionNonce,
+      (unsigned)ackedMsgType,
+      (unsigned)ackedFragmentIndex,
+      (unsigned)nextExpectedFragment,
+      (unsigned)acceptedPoints);
   sendRpv2BinaryReply(cmd, static_cast<uint8_t>(MsgType::ACK), payload, len);
 }
 
@@ -1133,6 +1148,15 @@ static void sendRpv2Nack(
   body.nextExpectedFragment = nextExpectedFragment;
   body.detail = detail;
   const size_t len = rpv2::encodeFrame(header, body, payload, sizeof(payload));
+  LOGW(
+      "RPV2_NACK_SENT radioCommandId=%llu sessionNonce=%lu nackOfMsgType=%u fragmentIndex=%u reasonCode=%u nextExpected=%u detail=%lu",
+      (unsigned long long)req.radioCommandId,
+      (unsigned long)req.sessionNonce,
+      (unsigned)nackOfMsgType,
+      (unsigned)nackFragmentIndex,
+      (unsigned)reasonCode,
+      (unsigned)nextExpectedFragment,
+      (unsigned long)detail);
   sendRpv2BinaryReply(cmd, static_cast<uint8_t>(MsgType::NACK), payload, len);
 }
 
@@ -1160,6 +1184,14 @@ static void sendRpv2ApplyStatus(
   body.activePoints = activePoints;
   body.activeBankId = applied ? 1 : 0;
   const size_t len = rpv2::encodeFrame(header, body, payload, sizeof(payload));
+  LOGI(
+      "RPV2_APPLY_STATUS_SENT radioCommandId=%llu sessionNonce=%lu applied=%d reasonCode=%u activePoints=%u activeCrc32=%lu",
+      (unsigned long long)req.radioCommandId,
+      (unsigned long)req.sessionNonce,
+      applied ? 1 : 0,
+      (unsigned)reasonCode,
+      (unsigned)activePoints,
+      (unsigned long)activeCrc32);
   sendRpv2BinaryReply(cmd, static_cast<uint8_t>(MsgType::EVENT), payload, len);
 }
 
@@ -1170,6 +1202,11 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
   }
 
   if (header.msgType == rpv2::FENCE_BEGIN) {
+    LOGI(
+        "RPV2_BEGIN_RX radioCommandId=%llu sessionNonce=%lu fragmentTotal=%u",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce,
+        (unsigned)header.fragmentTotal);
     rpv2::FenceBeginBody body{};
     if (!rpv2::decodeFenceBegin(frame.payload, frame.payloadLen, &header, &body)) {
       sendRpv2Nack(frame, header, rpv2::FENCE_BEGIN, 0, rpv2::REASON_INVALID_HEADER, 0, 0);
@@ -1184,6 +1221,10 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
       return true;
     }
     if (isRpv2ReplayBlocked(header.radioCommandId, header.sessionNonce)) {
+      LOGW(
+          "RPV2_REPLAY_BLOCKED radioCommandId=%llu sessionNonce=%lu",
+          (unsigned long long)header.radioCommandId,
+          (unsigned long)header.sessionNonce);
       sendRpv2Nack(frame, header, rpv2::FENCE_BEGIN, 0, rpv2::REASON_REPLAY_BLOCKED, 0, 0);
       return true;
     }
@@ -1217,6 +1258,11 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
   }
 
   if (header.msgType == rpv2::FENCE_POINTS) {
+    LOGI(
+        "RPV2_POINTS_RX radioCommandId=%llu sessionNonce=%lu fragmentIndex=%u",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce,
+        (unsigned)header.fragmentIndex);
     rpv2::FencePointsPrefix prefix{};
     const rpv2::PointLatLonE7* points = nullptr;
     if (!rpv2::decodeFencePoints(frame.payload, frame.payloadLen, &header, &prefix, &points)) {
@@ -1246,8 +1292,20 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
     }
     rpv2FenceSession_.nextPointIndex += prefix.pointCount;
     rpv2FenceSession_.expectedFragment++;
+    LOGI(
+        "RPV2_STAGE_PROGRESS radioCommandId=%llu sessionNonce=%lu nextPointIndex=%u totalPoints=%u expectedFragment=%u",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce,
+        (unsigned)rpv2FenceSession_.nextPointIndex,
+        (unsigned)rpv2FenceSession_.totalPoints,
+        (unsigned)rpv2FenceSession_.expectedFragment);
     if (rpv2FenceSession_.nextPointIndex == rpv2FenceSession_.totalPoints) {
       rpv2FenceSession_.stageComplete = true;
+      LOGI(
+          "RPV2_STAGE_COMPLETE radioCommandId=%llu sessionNonce=%lu totalPoints=%u",
+          (unsigned long long)header.radioCommandId,
+          (unsigned long)header.sessionNonce,
+          (unsigned)rpv2FenceSession_.totalPoints);
     }
     sendRpv2Ack(
         frame,
@@ -1261,6 +1319,10 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
   }
 
   if (header.msgType == rpv2::FENCE_COMMIT) {
+    LOGI(
+        "RPV2_COMMIT_RX radioCommandId=%llu sessionNonce=%lu",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce);
     rpv2::FenceCommitBody body{};
     if (!rpv2::decodeFixedBodyFrame(rpv2::FENCE_COMMIT, frame.payload, frame.payloadLen, &header, &body)) {
       sendRpv2Nack(frame, header, rpv2::FENCE_COMMIT, 0, rpv2::REASON_INVALID_HEADER, rpv2FenceSession_.expectedFragment, 0);
@@ -1278,9 +1340,22 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
     }
     const uint32_t crc = rpv2::crc32Fence(encoded, rpv2FenceSession_.fence.count);
     if (crc != body.fenceCrc32 || crc != body.stagedCrc32Expected) {
+      LOGW(
+          "RPV2_CRC_FAIL radioCommandId=%llu sessionNonce=%lu crc=%lu expected=%lu stagedExpected=%lu",
+          (unsigned long long)header.radioCommandId,
+          (unsigned long)header.sessionNonce,
+          (unsigned long)crc,
+          (unsigned long)body.fenceCrc32,
+          (unsigned long)body.stagedCrc32Expected);
       sendRpv2Nack(frame, header, rpv2::FENCE_COMMIT, 0, rpv2::REASON_CRC_MISMATCH, rpv2FenceSession_.expectedFragment, crc);
       return true;
     }
+    LOGI(
+        "RPV2_CRC_OK radioCommandId=%llu sessionNonce=%lu crc=%lu pointCount=%u",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce,
+        (unsigned long)crc,
+        (unsigned)rpv2FenceSession_.fence.count);
     if (!persistFence(rpv2FenceSession_.fence)) {
       sendRpv2Nack(frame, header, rpv2::FENCE_COMMIT, 0, rpv2::REASON_STAGE_STORAGE_ERROR, rpv2FenceSession_.expectedFragment, 0);
       return true;
@@ -1300,6 +1375,10 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
   }
 
   if (header.msgType == rpv2::FENCE_ABORT) {
+    LOGW(
+        "RPV2_ABORT_RX radioCommandId=%llu sessionNonce=%lu",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce);
     rememberRpv2Replay(header.radioCommandId, header.sessionNonce);
     resetRpv2FenceSession();
     return true;
