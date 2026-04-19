@@ -1,0 +1,57 @@
+{
+  "generated_at": "2026-04-19T03:58:35.987517+00:00",
+  "output_dir": "tools/audit/output/20260419_004824",
+  "commandId": "AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:7685085E8B9186D1:23A00185B336A70A",
+  "summary": {
+    "property_commands_count": 5,
+    "command_events_count": 1,
+    "matrix_queue_count": 1,
+    "property_events_count": 0,
+    "matrix_raw_bytes": 4946,
+    "collar_raw_bytes": 24939,
+    "matrix_area_sync_events": 0,
+    "collar_area_sync_events": 0
+  },
+  "matrix_listener": {
+    "role": "MATRIX",
+    "port": "/dev/tty.usbserial-59470049741",
+    "baud": 115200,
+    "filter_cmd": "",
+    "started_at": "2026-04-19T03:48:25.123285+00:00",
+    "open_ok": true,
+    "lines_read": 32,
+    "area_sync_events": 0,
+    "last_line_at": "2026-04-19T03:58:08.864446+00:00",
+    "stopped_at": "",
+    "stop_reason": ""
+  },
+  "collar_listener": {
+    "role": "COLLAR",
+    "port": "/dev/tty.usbserial-1420",
+    "baud": 115200,
+    "filter_cmd": "",
+    "started_at": "2026-04-19T03:48:25.118587+00:00",
+    "open_ok": true,
+    "lines_read": 273,
+    "area_sync_events": 0,
+    "last_line_at": "2026-04-19T03:56:48.462680+00:00",
+    "stopped_at": "",
+    "stop_reason": ""
+  },
+  "classification": "ha sinais em ambas as pontas; revisar parser ou correlacao fina por commandId",
+  "rationale": "existem indícios seriais nas duas pontas, entao o problema pode estar na instrumentacao do teste ou na correlacao",
+  "answers": {
+    "comando_criado": true,
+    "entrou_na_fila_da_matriz": true,
+    "matriz_viu_o_comando": true,
+    "matriz_tentou_enviar_lora": false,
+    "coleira_recebeu": true,
+    "houve_ack_ou_retorno_backend": false
+  },
+  "recommended_next_steps": [
+    "confirmar serial manual da matriz antes do proximo teste",
+    "confirmar porta serial e firmware gravado na matriz",
+    "repetir rodada com listener stdout/stderr capturados",
+    "comparar se a matriz em bancada esta consumindo matrix_command_queues para o runtime_id esperado"
+  ]
+}

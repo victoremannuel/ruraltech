@@ -1,0 +1,33 @@
+{
+  "generated_at": "2026-04-19T03:45:00.592100+00:00",
+  "output_dir": "tools/audit/output/20260419_002501",
+  "commandId": "AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:B222C54D07E35367:23A00185B336A70A",
+  "summary": {
+    "property_commands_count": 5,
+    "command_events_count": 1,
+    "matrix_queue_count": 1,
+    "property_events_count": 0,
+    "matrix_raw_bytes": 0,
+    "collar_raw_bytes": 0,
+    "matrix_area_sync_events": 0,
+    "collar_area_sync_events": 0
+  },
+  "matrix_listener": {},
+  "collar_listener": {},
+  "classification": "fila nao consumida pela matriz ou captura serial inexistente",
+  "rationale": "o comando entrou em matrix_command_queues, mas nao ha qualquer evidência serial da matriz no run",
+  "answers": {
+    "comando_criado": true,
+    "entrou_na_fila_da_matriz": true,
+    "matriz_viu_o_comando": false,
+    "matriz_tentou_enviar_lora": false,
+    "coleira_recebeu": false,
+    "houve_ack_ou_retorno_backend": false
+  },
+  "recommended_next_steps": [
+    "confirmar serial manual da matriz antes do proximo teste",
+    "confirmar porta serial e firmware gravado na matriz",
+    "repetir rodada com listener stdout/stderr capturados",
+    "comparar se a matriz em bancada esta consumindo matrix_command_queues para o runtime_id esperado"
+  ]
+}

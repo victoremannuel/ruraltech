@@ -137,6 +137,23 @@ def apply_light_delta(perimeter: list) -> list:
     return new_perim
 
 
+def proc_log_paths(out_dir: str, name: str) -> tuple[str, str]:
+    stdout_path = os.path.join(out_dir, f"{name}_stdout.log")
+    stderr_path = os.path.join(out_dir, f"{name}_stderr.log")
+    return stdout_path, stderr_path
+
+
+def start_process(cmd: list[str], out_dir: str, name: str) -> subprocess.Popen:
+    stdout_path, stderr_path = proc_log_paths(out_dir, name)
+    stdout_f = open(stdout_path, "w", encoding="utf-8")
+    stderr_f = open(stderr_path, "w", encoding="utf-8")
+    proc = subprocess.Popen(cmd, stdout=stdout_f, stderr=stderr_f)
+    proc._audit_stdout = stdout_f  # type: ignore[attr-defined]
+    proc._audit_stderr = stderr_f  # type: ignore[attr-defined]
+    proc._audit_name = name  # type: ignore[attr-defined]
+    return proc
+
+
 def start_listener(port: str, role: str, out_dir: str, command_id: str) -> subprocess.Popen | None:
     if not port:
         print(f"[e2e] {role}_SERIAL_PORT não definido — listener {role} desabilitado.")
@@ -151,7 +168,7 @@ def start_listener(port: str, role: str, out_dir: str, command_id: str) -> subpr
     if command_id:
         cmd += ["--filter-cmd", command_id]
     print(f"[e2e] Iniciando listener {role} em {port}")
-    return subprocess.Popen(cmd)
+    return start_process(cmd, out_dir, f"listener_{role.lower()}")
 
 
 def start_poller(area_id: str, property_id: str, command_id: str, out_dir: str) -> subprocess.Popen:
@@ -164,7 +181,7 @@ def start_poller(area_id: str, property_id: str, command_id: str, out_dir: str) 
     if command_id:
         cmd += ["--command-id", command_id]
     print(f"[e2e] Iniciando poller Supabase")
-    return subprocess.Popen(cmd)
+    return start_process(cmd, out_dir, "supabase_poller")
 
 
 def generate_report(
@@ -282,6 +299,33 @@ def resolve_command_id_from_outputs(out_dir: str) -> str:
     return ""
 
 
+def close_process_logs(proc: subprocess.Popen | None) -> None:
+    if not proc:
+        return
+    for attr in ("_audit_stdout", "_audit_stderr"):
+        fh = getattr(proc, attr, None)
+        if fh:
+            fh.close()
+
+
+def detect_process_issue(proc: subprocess.Popen | None, out_dir: str) -> str:
+    if not proc:
+        return ""
+    if proc.poll() is None:
+        return ""
+    name = getattr(proc, "_audit_name", "process")
+    stdout_path, stderr_path = proc_log_paths(out_dir, name)
+    details = []
+    for label, path in (("stdout", stdout_path), ("stderr", stderr_path)):
+        if os.path.exists(path):
+            with open(path, encoding="utf-8", errors="replace") as f:
+                content = f.read().strip()
+            if content:
+                details.append(f"{label}: {content.splitlines()[-1]}")
+    suffix = f" ({'; '.join(details)})" if details else ""
+    return f"{name} encerrou prematuramente com exit code {proc.returncode}{suffix}"
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Orquestrador E2E de homologacao SET_FENCE via AREA_SYNC"
@@ -344,6 +388,11 @@ def main():
     matrix_proc = start_listener(MATRIX_PORT, "MATRIX", out_dir, "")
     collar_proc = start_listener(COLLAR_PORT, "COLLAR", out_dir, "")
     time.sleep(1)  # pequena espera para os listeners abrirem a porta
+    for proc in (matrix_proc, collar_proc):
+        issue = detect_process_issue(proc, out_dir)
+        if issue:
+            failures.append(issue)
+            log(issue)
 
     # --- Fase 4: disparar atualização da área
     # Supabase espera [{lat, lon}], não [[lat, lon]]
@@ -374,6 +423,12 @@ def main():
     while elapsed < MAX_WAIT_S:
         time.sleep(poll_s)
         elapsed += poll_s
+
+        for proc in (matrix_proc, collar_proc):
+            issue = detect_process_issue(proc, out_dir)
+            if issue and issue not in failures:
+                failures.append(issue)
+                log(issue)
 
         # Verificar se poller terminou
         if poller_proc.poll() is not None:
@@ -416,6 +471,7 @@ def main():
     for proc in [matrix_proc, collar_proc, poller_proc]:
         if proc and proc.poll() is None:
             proc.terminate()
+        close_process_logs(proc)
 
     # --- Fase 8 (opcional): restaurar polígono
     if RESTORE:

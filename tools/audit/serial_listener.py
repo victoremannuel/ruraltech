@@ -45,6 +45,11 @@ def parse_area_sync_line(line: str) -> dict | None:
     }
 
 
+def write_metadata(path: str, payload: dict) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Listener de serial para auditoria [AREA_SYNC]")
     parser.add_argument("--port", required=True, help="Porta serial (ex: /dev/cu.usbserial-XXX)")
@@ -64,18 +69,41 @@ def main():
     role_lower = args.role.lower()
     raw_path = os.path.join(out_dir, f"serial_{role_lower}_raw.log")
     sync_path = os.path.join(out_dir, f"serial_{role_lower}_area_sync.jsonl")
+    meta_path = os.path.join(out_dir, f"serial_{role_lower}_listener_meta.json")
+    started_at = datetime.now(timezone.utc).isoformat()
+    meta = {
+        "role": args.role,
+        "port": args.port,
+        "baud": args.baud,
+        "filter_cmd": args.filter_cmd or "",
+        "started_at": started_at,
+        "open_ok": False,
+        "lines_read": 0,
+        "area_sync_events": 0,
+        "last_line_at": "",
+        "stopped_at": "",
+        "stop_reason": "",
+    }
+    write_metadata(meta_path, meta)
 
     print(f"[listener] Abrindo {args.port} @ {args.baud} baud")
     print(f"[listener] Raw  → {raw_path}")
     print(f"[listener] Sync → {sync_path}")
+    print(f"[listener] Meta → {meta_path}")
     if args.filter_cmd:
         print(f"[listener] Filtro commandId={args.filter_cmd}")
 
     try:
         ser = serial.Serial(args.port, args.baud, timeout=1)
     except serial.SerialException as e:
+        meta["stopped_at"] = datetime.now(timezone.utc).isoformat()
+        meta["stop_reason"] = f"open_failed: {e}"
+        write_metadata(meta_path, meta)
         print(f"[ERRO] Não foi possível abrir porta: {e}", file=sys.stderr)
         sys.exit(1)
+
+    meta["open_ok"] = True
+    write_metadata(meta_path, meta)
 
     with open(raw_path, "w", encoding="utf-8") as raw_f, \
          open(sync_path, "w", encoding="utf-8") as sync_f:
@@ -97,6 +125,8 @@ def main():
                     continue
 
                 now_str = datetime.now(timezone.utc).isoformat()
+                meta["lines_read"] += 1
+                meta["last_line_at"] = now_str
                 raw_f.write(f"{now_str}  {line}\n")
                 raw_f.flush()
 
@@ -105,11 +135,19 @@ def main():
                     # filtro por commandId
                     if args.filter_cmd and parsed.get("commandId") != args.filter_cmd:
                         continue
+                    meta["area_sync_events"] += 1
                     print(f"  [{parsed['level']}][{parsed['event']}] {parsed}")
                     sync_f.write(json.dumps(parsed) + "\n")
                     sync_f.flush()
+                write_metadata(meta_path, meta)
         except KeyboardInterrupt:
+            meta["stop_reason"] = "keyboard_interrupt"
             print("\n[listener] Encerrado pelo usuário.")
+        finally:
+            if not meta["stop_reason"]:
+                meta["stop_reason"] = "terminated"
+            meta["stopped_at"] = datetime.now(timezone.utc).isoformat()
+            write_metadata(meta_path, meta)
     ser.close()
     print(f"[listener] Arquivos salvos em {out_dir}")
 

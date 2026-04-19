@@ -30,11 +30,13 @@ Estado de partida consolidado nesta rodada:
 - [x] Ajustar `tools/e2e/area_sync_e2e.py` para:
   - expor `--help` sem falhar antes por ambiente
   - consolidar `commandId` no relatorio final a partir dos artefatos do poller
+- [x] Executar uma rodada real de homologacao E2E `SET_FENCE` com:
+  - matriz em `/dev/tty.usbserial-59470049741`
+  - coleira em `/dev/tty.usbserial-1420`
+  - restauracao do poligono original ao final
 - [ ] Regravar firmwares usados na bancada se a instrumentacao `[AREA_SYNC]` ainda nao estiver embarcada nas placas
-- [ ] Executar auditoria de campo do fluxo `SET_FENCE` correlacionando tudo por `commandId`
-- [ ] Consolidar resultado binario da fase:
-  - `Queue/downlink cloud (SET_FENCE): PASSOU`
-  - ou `Queue/downlink cloud (SET_FENCE): FALHOU`
+- [x] Consolidar resultado binario da fase:
+  - `Queue/downlink cloud (SET_FENCE): FALHOU`
 
 ## Status
 
@@ -46,15 +48,26 @@ Base de reaproveitamento confirmada nesta rodada:
 - os scripts de auditoria e orquestracao ja existem no repositorio
 - o ambiente local agora tem `.venv` dedicado em `tools/audit/.venv`, suficiente para executar `serial_listener.py`, `supabase_poller.py` e `area_sync_e2e.py`
 - o orquestrador E2E agora consegue gerar relatorio com `commandId` resolvido a partir dos artefatos do poller, fortalecendo a correlacao exigida pelo plano
-- a homologacao binaria ainda depende de bancada real, acesso serial e credenciais Supabase validas
-- nenhuma mudanca adicional de firmware foi necessaria nesta rodada para abrir a trilha de downlink cloud
+- a homologacao E2E foi executada de fato no run `tools/audit/output/20260419_004824`
+- resultado objetivo do run:
+  - `Queue/downlink cloud (SET_FENCE): FALHOU`
+  - `commandId`: `AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:7685085E8B9186D1:23A00185B336A70A`
+  - o comando foi criado em `property_commands`
+  - o comando entrou em `matrix_command_queues`
+  - nao houve transicao alem de `queued`
+  - nao houve eventos `[AREA_SYNC]` da matriz nem da coleira para esse `commandId`
+  - nao houve `ACK`, `NACK` nem `propertyEvents` finais
+- a serial da matriz mostrou backhaul conectado e `decrypt_failed` de uplink da coleira, mas nao mostrou consumo auditavel do downlink `SET_FENCE`
+- a serial da coleira mostrou operacao normal de uplink/deep sleep, sem evidenciar recepcao do comando `SET_FENCE`
 
 ## Next step
 
-1. Garantir que matriz e coleira gravadas em bancada contem a instrumentacao `[AREA_SYNC]`
-2. Rodar a trilha usando o Python do ambiente local: `tools/audit/.venv/bin/python tools/e2e/area_sync_e2e.py`
-3. Coletar serial da matriz, serial da coleira e snapshots Supabase no mesmo `output/<timestamp>`
-4. Fechar a fase com resultado objetivo por `commandId`
+1. Confirmar manualmente na matriz em bancada a presenca de logs `[AREA_SYNC][MATRIX]` para consumo de fila
+2. Confirmar se a matriz gravada realmente consome `matrix_command_queues` para `runtime_id=matriz_fazenda_01`
+3. Repetir a rodada com foco em distinguir:
+   - fila nao consumida pela matriz
+   - consumo existente, mas sem logs `[AREA_SYNC]` embarcados
+4. So depois abrir correcoes especificas na matriz ou no parser
 
 ## Related
 
