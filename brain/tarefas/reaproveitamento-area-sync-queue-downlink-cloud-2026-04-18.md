@@ -63,6 +63,11 @@ Estado de partida consolidado nesta rodada:
   - planner especifico do `SET_FENCE` com overhead real do chunk
   - remocao de metadados redundantes por parte
   - log explicito de tamanho avaliado por chunk antes do envio
+- [x] Implementar rodada de correcao `point_chunk_too_large` focada em chunk candidato real:
+  - planner progressivo baseado no payload realmente serializado
+  - reducao da faixa de pontos ate caber no limite LoRa
+  - reuso da mesma montagem de chunk no planejamento e no envio final
+  - log explicito das tentativas do planner
 - [ ] Regravar firmwares usados na bancada se a instrumentacao `[AREA_SYNC]` ainda nao estiver embarcada nas placas
 - [x] Consolidar resultado binario da fase:
   - `Queue/downlink cloud (SET_FENCE): FALHOU`
@@ -132,6 +137,18 @@ Base de reaproveitamento confirmada nesta rodada:
   - novo log adicionado: `FENCE_CHUNK_SIZE_EVAL`
 - relatorio curto desta rodada salvo em:
   - `tools/audit/output/20260419_004824/correcao_set_fence_payload_too_large_2026-04-19.md`
+- nova rodada aplicada nesta sessao:
+  - causa-raiz atual confirmada: ainda havia diferenca entre o chunk planejado e o chunk realmente serializado
+  - `splitFencePointArrayForPayload()` agora testa payloads candidatos reais, do maior intervalo para o menor
+  - o planner reduz progressivamente a faixa de pontos ate encontrar um chunk valido
+  - `sendFenceCommandChunked()` passou a reutilizar a mesma rotina de montagem usada no planejamento
+  - novo log adicionado: `FENCE_CHUNK_PLAN`
+  - se nem um ponto couber, a falha agora fica explicita como `fence_single_point_chunk_too_large`
+- relatorio curto desta rodada salvo em:
+  - `tools/audit/output/20260419_004824/correcao_set_fence_point_chunk_too_large_2026-04-19.md`
+- build desta rodada:
+  - `Sketch uses 1346995 bytes (68%)`
+  - `Global variables use 72884 bytes (22%)`
 
 ## Next step
 
@@ -143,6 +160,7 @@ Base de reaproveitamento confirmada nesta rodada:
    - `QUEUE_DESERIALIZE_ERROR` -> erro real de parse/memoria
    - `FENCE_POINTS_RESOLVED` -> origem real dos pontos no payload normalizado
    - `QUEUE_COMMAND_LOADED pointCount>0` -> saida efetiva de `missing_points`
+   - `FENCE_CHUNK_PLAN fit=0/1` -> decisao real do planner com payload serializado
    - `FENCE_CHUNK_SIZE_EVAL` -> chunking real por bytes
    - `LORA_TX_ATTEMPT part=0 total>1` ou `LORA_TX_OK` -> envio LoRa finalmente liberado
 5. Se ainda travar, corrigir apenas o ponto funcional revelado pelos novos logs

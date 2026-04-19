@@ -44,6 +44,11 @@
     "commandId=%s part=%d total=%d jsonBytes=%d packedBytes=%d cipherBytes=%d limitBytes=%d", \
     cmdId, (int)(part), (int)(total), (int)(jsonBytes), (int)(packedBytes), (int)(cipherBytes), (int)(limitBytes))
 
+#define AS_MATRIX_FENCE_CHUNK_PLAN(cmdId, start, end, pointCount, jsonBytes, packedBytes, cipherBytes, limitBytes, fit) \
+  AS_MATRIX_INFO("FENCE_CHUNK_PLAN", \
+    "commandId=%s start=%d end=%d pointCount=%d jsonBytes=%d packedBytes=%d cipherBytes=%d limitBytes=%d fit=%d", \
+    cmdId, (int)(start), (int)(end), (int)(pointCount), (int)(jsonBytes), (int)(packedBytes), (int)(cipherBytes), (int)(limitBytes), (int)(fit))
+
 #define AS_MATRIX_QUEUE_ACCEPTED(cmdId, areaId, propId, scopeId) \
   AS_MATRIX_INFO("QUEUE_COMMAND_ACCEPTED", \
     "commandId=%s areaId=%s propertyId=%s scopeId=%s", \

@@ -2934,24 +2934,17 @@ static bool sendFenceCommandChunked(uint32_t deviceId, const JsonVariantConst pa
 
   for (uint8_t part = 0; part < chunkCount; ++part) {
     StaticJsonDocument<384> chunkDoc;
-    chunkDoc["chunked"] = true;
-    chunkDoc["part"] = part;
-    chunkDoc["total"] = chunkCount;
-    const char* scopeId = pickFirstText(payload["scope_id"], payload["property_scope_id"]);
-    const char* polygonKind = pickFirstText(payload["polygon_kind"], payload["polygonKind"]);
-    const char* originDocType = pickFirstText(payload["origin_doc_type"], payload["originDocType"]);
-    const char* originDocId = pickFirstText(payload["origin_doc_id"], payload["originDocId"]);
-    if (commandId[0] != '\0') chunkDoc["cmd_id"] = commandId;
-    if (scopeId[0] != '\0') chunkDoc["scope_id"] = scopeId;
-    if (polygonKind[0] != '\0') chunkDoc["polygon_kind"] = polygonKind;
-    if (originDocType[0] != '\0') chunkDoc["origin_doc_type"] = originDocType;
-    if (originDocId[0] != '\0') chunkDoc["origin_doc_id"] = originDocId;
-    JsonArray chunkPoints = chunkDoc["points"].to<JsonArray>();
-    for (uint8_t i = starts[part]; i < ends[part]; ++i) {
-      const JsonArrayConst srcPair = points[i].as<JsonArrayConst>();
-      JsonArray dstPair = chunkPoints.add<JsonArray>();
-      dstPair.add(srcPair[0].as<double>());
-      dstPair.add(srcPair[1].as<double>());
+    if (!buildFenceChunkPayload(
+            chunkDoc,
+            payload,
+            points,
+            commandId,
+            part,
+            chunkCount,
+            starts[part],
+            ends[part],
+            reason)) {
+      return false;
     }
 
     const size_t jsonBytes = measureJson(chunkDoc.as<JsonVariantConst>());
@@ -3226,6 +3219,46 @@ static void estimateLoRaPayloadSizes(
   if (radioBytes) *radioBytes = radio;
 }
 
+static bool buildFenceChunkPayload(
+    StaticJsonDocument<384>& chunkDoc,
+    const JsonVariantConst payload,
+    const JsonArrayConst& points,
+    const char* commandId,
+    uint8_t part,
+    uint8_t total,
+    uint8_t start,
+    uint8_t end,
+    const char** reason) {
+  chunkDoc.clear();
+  chunkDoc["chunked"] = true;
+  chunkDoc["part"] = part;
+  chunkDoc["total"] = total;
+
+  const char* scopeId = pickFirstText(payload["scope_id"], payload["property_scope_id"]);
+  const char* polygonKind = pickFirstText(payload["polygon_kind"], payload["polygonKind"]);
+  const char* originDocType = pickFirstText(payload["origin_doc_type"], payload["originDocType"]);
+  const char* originDocId = pickFirstText(payload["origin_doc_id"], payload["originDocId"]);
+  if (commandId && commandId[0] != '\0') chunkDoc["cmd_id"] = commandId;
+  if (scopeId[0] != '\0') chunkDoc["scope_id"] = scopeId;
+  if (polygonKind[0] != '\0') chunkDoc["polygon_kind"] = polygonKind;
+  if (originDocType[0] != '\0') chunkDoc["origin_doc_type"] = originDocType;
+  if (originDocId[0] != '\0') chunkDoc["origin_doc_id"] = originDocId;
+
+  JsonArray chunkPoints = chunkDoc["points"].to<JsonArray>();
+  for (uint8_t i = start; i < end; ++i) {
+    double lat = 0.0;
+    double lon = 0.0;
+    if (!readPointPair(points[i].as<JsonArrayConst>(), lat, lon)) {
+      if (reason) *reason = "invalid_point_value";
+      return false;
+    }
+    JsonArray dstPair = chunkPoints.add<JsonArray>();
+    dstPair.add(lat);
+    dstPair.add(lon);
+  }
+  return true;
+}
+
 static bool splitFencePointArrayForPayload(
     const JsonVariantConst payload,
     const JsonArrayConst& points,
@@ -3242,74 +3275,74 @@ static bool splitFencePointArrayForPayload(
     return false;
   }
 
-  StaticJsonDocument<384> probe;
-  probe["chunked"] = true;
-  probe["part"] = 99;
-  probe["total"] = 99;
   const char* commandId = pickFirstText(
       payload["cmd_id"],
       payload["command_id"],
       payload["payload"]["cmd_id"],
       payload["payload"]["command_id"]);
-  const char* scopeId = pickFirstText(payload["scope_id"], payload["property_scope_id"]);
-  const char* originDocType = pickFirstText(payload["origin_doc_type"], payload["originDocType"]);
-  const char* originDocId = pickFirstText(payload["origin_doc_id"], payload["originDocId"]);
-  const char* polygonKind = pickFirstText(payload["polygon_kind"], payload["polygonKind"]);
-  if (commandId[0] != '\0') probe["cmd_id"] = commandId;
-  if (scopeId[0] != '\0') probe["scope_id"] = scopeId;
-  if (polygonKind[0] != '\0') probe["polygon_kind"] = polygonKind;
-  if (originDocType[0] != '\0') probe["origin_doc_type"] = originDocType;
-  if (originDocId[0] != '\0') probe["origin_doc_id"] = originDocId;
-  JsonArray probePoints = probe["points"].to<JsonArray>();
-  const size_t overheadBytes = measureJson(probe);
-
-  uint16_t pointCosts[cfg::MAX_POLYGON_POINTS]{};
-  size_t previousSize = overheadBytes;
-  for (uint8_t i = 0; i < totalPoints; ++i) {
-    const JsonArrayConst srcPair = points[i].as<JsonArrayConst>();
-    double lat = 0.0;
-    double lon = 0.0;
-    if (!readPointPair(srcPair, lat, lon)) {
-      if (reason) *reason = "invalid_point_value";
+  uint8_t start = 0;
+  while (start < totalPoints) {
+    if (chunkCount >= cfg::MAX_POLYGON_POINTS) {
+      if (reason) *reason = "chunk_count_exceeded";
       return false;
     }
 
-    JsonArray dstPair = probePoints.add<JsonArray>();
-    dstPair.add(lat);
-    dstPair.add(lon);
-    const size_t measured = measureJson(probe);
-    if (measured <= previousSize) {
-      if (reason) *reason = "invalid_point_value";
-      return false;
-    }
-    const size_t delta = measured - previousSize;
-    if (delta > 0xFFFF) {
-      if (reason) *reason = "point_chunk_too_large";
-      return false;
-    }
-    pointCosts[i] = (uint16_t)delta;
-    previousSize = measured;
-  }
+    const uint8_t remainingPoints = totalPoints - start;
+    const uint8_t worstCaseTotal = remainingPoints;
+    const uint8_t worstCasePart = worstCaseTotal > 0 ? (uint8_t)(worstCaseTotal - 1) : 0;
+    bool fitFound = false;
 
-  rtcmd::ChunkRange ranges[cfg::MAX_POLYGON_POINTS]{};
-  const rtcmd::ValidationCode chunkCode = rtcmd::planPointChunks(
-      pointCosts,
-      totalPoints,
-      (uint16_t)overheadBytes,
-      cfg::LORA_MAX_PAYLOAD_BYTES,
-      cfg::MAX_POLYGON_POINTS,
-      ranges,
-      cfg::MAX_POLYGON_POINTS,
-      &chunkCount);
-  if (chunkCode != rtcmd::ValidationCode::kOk) {
-    if (reason) *reason = rtcmd::validationCodeToReason(chunkCode);
+    for (uint8_t end = totalPoints; end > start; --end) {
+      StaticJsonDocument<384> candidateDoc;
+      if (!buildFenceChunkPayload(
+              candidateDoc,
+              payload,
+              points,
+              commandId,
+              worstCasePart,
+              worstCaseTotal,
+              start,
+              end,
+              reason)) {
+        return false;
+      }
+
+      const size_t jsonBytes = measureJson(candidateDoc.as<JsonVariantConst>());
+      size_t packedBytes = 0;
+      size_t cipherBytes = 0;
+      size_t radioBytes = 0;
+      estimateLoRaPayloadSizes(jsonBytes, &packedBytes, &cipherBytes, &radioBytes);
+      const bool fit = jsonBytes <= cfg::LORA_MAX_PAYLOAD_BYTES;
+      AS_MATRIX_FENCE_CHUNK_PLAN(
+          commandId[0] ? commandId : "-",
+          start,
+          end,
+          end - start,
+          jsonBytes,
+          packedBytes,
+          cipherBytes,
+          cfg::LORA_MAX_PAYLOAD_BYTES,
+          fit);
+      if (!fit) continue;
+
+      starts[chunkCount] = start;
+      ends[chunkCount] = end;
+      chunkCount++;
+      start = end;
+      fitFound = true;
+      break;
+    }
+
+    if (fitFound) continue;
+
+    if (reason) {
+      *reason = remainingPoints <= 1
+                    ? "fence_single_point_chunk_too_large"
+                    : "point_chunk_too_large";
+    }
     return false;
   }
 
-  for (uint8_t i = 0; i < chunkCount; ++i) {
-    starts[i] = ranges[i].start;
-    ends[i] = ranges[i].end;
-  }
   return true;
 }
 
