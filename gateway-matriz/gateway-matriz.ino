@@ -3212,10 +3212,36 @@ static bool dispatchQueuedSimpleCommand(
 }
 
 static void processNextQueuedCommand() {
-  if (!queuePollingConfigured() || !bindingReady) return;
-  if (!backhaulWindowOpen()) return;
-  if (herdOp.active || activeSimpleCommand.active) return;
   const uint32_t nowMsTick = millis();
+  static uint32_t lastQueuePollSkipLogAtMs = 0;
+  static uint32_t lastQueueEmptyLogAtMs = 0;
+  const bool queueConfigured = queuePollingConfigured();
+  const bool backhaulOpen = backhaulWindowOpen();
+  const bool herdActive = herdOp.active;
+  const bool simpleActive = activeSimpleCommand.active;
+  if (!queueConfigured || !bindingReady || !backhaulOpen || herdActive || simpleActive) {
+    if ((uint32_t)(nowMsTick - lastQueuePollSkipLogAtMs) >= 10000UL) {
+      const String runtimeId = matrixCloudId();
+      const char* reason = !queueConfigured
+                               ? "queue_polling_not_configured"
+                           : !bindingReady
+                               ? "binding_not_ready"
+                           : !backhaulOpen
+                               ? "backhaul_window_closed"
+                           : herdActive
+                               ? "herding_operation_active"
+                               : "simple_command_active";
+      AS_MATRIX_QUEUE_POLL_SKIPPED(
+          reason,
+          runtimeId.c_str(),
+          bindingReady,
+          backhaulOpen,
+          herdActive,
+          simpleActive);
+      lastQueuePollSkipLogAtMs = nowMsTick;
+    }
+    return;
+  }
   const bool forceDispatch = queueDispatchRequested;
   if (!forceDispatch &&
       queuePollAtMs != 0 &&
@@ -3228,7 +3254,14 @@ static void processNextQueuedCommand() {
 
   String commandId;
   DynamicJsonDocument commandDoc(16384);
-  if (!loadNextQueuedCommand(commandId, commandDoc)) return;
+  if (!loadNextQueuedCommand(commandId, commandDoc)) {
+    if ((uint32_t)(nowMsTick - lastQueueEmptyLogAtMs) >= 10000UL) {
+      const String runtimeId = matrixCloudId();
+      AS_MATRIX_QUEUE_EMPTY(runtimeId.c_str(), strlen(cfg::RTDB_QUEUE_KEY));
+      lastQueueEmptyLogAtMs = nowMsTick;
+    }
+    return;
+  }
 
   const char* command = commandDoc["command"] | "";
   const char* propertyId = commandDoc["propertyId"] | "";

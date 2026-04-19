@@ -34,6 +34,15 @@ Estado de partida consolidado nesta rodada:
   - matriz em `/dev/tty.usbserial-59470049741`
   - coleira em `/dev/tty.usbserial-1420`
   - restauracao do poligono original ao final
+- [x] Executar verificacao estatica/evidencial do `SET_FENCE` preso em `queued` cobrindo:
+  - contrato backend -> matriz
+  - consistencia de `matrixRuntimeId`
+  - consistencia de `queue_key`
+  - comparacao `PING` vs `SET_FENCE`
+  - localizacao da primeira transicao de status no codigo
+- [x] Aplicar instrumentacao minima na matriz para fechar o ponto cego antes do dispatcher:
+  - evento `[AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED]`
+  - evento `[AREA_SYNC][MATRIX][INFO][QUEUE_EMPTY]`
 - [ ] Regravar firmwares usados na bancada se a instrumentacao `[AREA_SYNC]` ainda nao estiver embarcada nas placas
 - [x] Consolidar resultado binario da fase:
   - `Queue/downlink cloud (SET_FENCE): FALHOU`
@@ -59,15 +68,29 @@ Base de reaproveitamento confirmada nesta rodada:
   - nao houve `ACK`, `NACK` nem `propertyEvents` finais
 - a serial da matriz mostrou backhaul conectado e `decrypt_failed` de uplink da coleira, mas nao mostrou consumo auditavel do downlink `SET_FENCE`
 - a serial da coleira mostrou operacao normal de uplink/deep sleep, sem evidenciar recepcao do comando `SET_FENCE`
+- a verificacao estatica/evidencial desta rodada fechou em:
+  - payload `SET_FENCE` compativel com o consumidor da matriz
+  - `matrixRuntimeId` consistente entre backend, Supabase e firmware gravado
+  - `queue_key` consistente entre `matrix_queue_keys` e `RTDB_QUEUE_KEY` do firmware gravado
+  - primeira transicao `queued -> dispatching` existe no codigo para `SET_FENCE`
+  - a primeira divergencia real entre `PING` e `SET_FENCE` fica apenas no envio LoRa (`sendLoRaJsonFrame` vs `sendFenceCommandChunked`)
+  - como o run real nao mostrou `QUEUE_COMMAND_LOADED`, o primeiro ponto provavel da quebra fica antes do dispatcher ou na carga da fila
+- conclusao tecnica atual:
+  - classificacao principal: `lacuna de observabilidade`
+  - ponto provavel: `gateway-matriz/gateway-matriz.ino::processNextQueuedCommand()`
+  - a mudanca minima util ja foi aplicada para expor gates silenciosos e fila vazia
+- relatorio detalhado desta verificacao salvo em:
+  - `tools/audit/output/20260419_004824/verificacao_set_fence_queued_2026-04-19.md`
 
 ## Next step
 
-1. Confirmar manualmente na matriz em bancada a presenca de logs `[AREA_SYNC][MATRIX]` para consumo de fila
-2. Confirmar se a matriz gravada realmente consome `matrix_command_queues` para `runtime_id=matriz_fazenda_01`
-3. Repetir a rodada com foco em distinguir:
-   - fila nao consumida pela matriz
-   - consumo existente, mas sem logs `[AREA_SYNC]` embarcados
-4. So depois abrir correcoes especificas na matriz ou no parser
+1. Regravar a matriz com a instrumentacao nova desta rodada
+2. Repetir a homologacao E2E `SET_FENCE`
+3. Classificar o novo run usando os novos eventos:
+   - `QUEUE_POLL_SKIPPED` -> bloqueio antes do consumo
+   - `QUEUE_EMPTY` -> caminho/consulta sem item visivel
+   - `QUEUE_COMMAND_LOADED` -> entrada real no dispatcher
+4. So depois abrir correcao funcional especifica, se ainda necessario
 
 ## Related
 

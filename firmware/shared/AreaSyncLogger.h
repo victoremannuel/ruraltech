@@ -38,6 +38,15 @@
   AS_MATRIX_WARN("QUEUE_COMMAND_REJECTED", \
     "commandId=%s reason=%s", cmdId, reason)
 
+#define AS_MATRIX_QUEUE_POLL_SKIPPED(reason, runtimeId, bindingReady, backhaulOpen, herdActive, simpleActive) \
+  AS_MATRIX_WARN("QUEUE_POLL_SKIPPED", \
+    "reason=%s runtimeId=%s bindingReady=%d backhaulOpen=%d herdActive=%d simpleActive=%d", \
+    reason, runtimeId, (int)(bindingReady), (int)(backhaulOpen), (int)(herdActive), (int)(simpleActive))
+
+#define AS_MATRIX_QUEUE_EMPTY(runtimeId, queueKeyLen) \
+  AS_MATRIX_INFO("QUEUE_EMPTY", \
+    "runtimeId=%s queueKeyLen=%d", runtimeId, (int)(queueKeyLen))
+
 // Despacho LoRa
 #define AS_MATRIX_DISPATCH_BEGIN(cmdId, areaId, propId, targetCount) \
   AS_MATRIX_INFO("DISPATCH_BEGIN", \
