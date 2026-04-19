@@ -4,89 +4,55 @@
 
 ### Sprint 1: Fundações (2 semanas)
 
-- [ ] **Q1: Tokens de cor**
-  - Criar `lib/design/colors.dart` com `RTColors` class
-  - Implementar conversão OKLCH → Flutter Color()
-  - Adicionar ao `ThemeData` customizado
-  - Testar em Device Details com novos tons
+- [x] **Q1: Tokens de cor** ✅ commit `2b82b70a`
+  - `lib/design/colors.dart` com RTColors + conversão OKLCH
+  - Integrado ao ThemeData
 
-- [ ] **Q2: Tipografia**
-  - Importar Inter Tight + JetBrains Mono em `pubspec.yaml`
-  - Criar `lib/design/typography.dart` com `RTTextTheme`
-  - Aplicar ao ThemeData
-  - Testar em todos os títulos + dados técnicos
+- [x] **Q2: Tipografia** ✅ commit `2b82b70a`
+  - Inter Tight + JetBrains Mono em `pubspec.yaml`
+  - `lib/design/typography.dart` com RTTypography
 
-- [ ] **Q3: Device Details (Detalhes da coleira)**
-  - Remover ListTiles
-  - Implementar `RTStatusHero` (card verde com subsistemas)
-  - Implementar `RTDataGrid` (coordenadas em mono)
-  - Implementar `RTActionRow` (geofence, conduzir, log)
-  - Testar com dados reais
+- [x] **Q3: Device Details** ✅ commit `df5e5f4b`
+  - RTHealthHero, RTTelemetryGrid, RTActionRow implementados
+  - `device_details_screen.dart` redesenhado com tokens v2
 
-- [ ] **Q4: Eventos**
-  - Redesenhar `events_screen.dart`
-  - Implementar `RTEventCard` (ícone tonal + severidade)
-  - Implementar filtros por chip
-  - Adicionar empty state
+- [x] **Q4: Eventos** ✅ commit `df5e5f4b`
+  - RTEventCard com severidade, filtros por chip, empty state
 
-- [ ] **Q5: Login**
-  - Redesenhar `login_screen.dart`
-  - Implementar hero topográfico (SVG padrão)
-  - Implementar `RTField` com ícone e toggle senha
-  - Adicionar hint de offline
+- [x] **Q5: Login** ✅ commit `df5e5f4b`
+  - RTAuthScaffold com hero topográfico, RTField, hint offline
 
 ---
 
 ### Sprint 2: Navegação (2 semanas)
 
-- [ ] **S1: Bottom Navigation persistente**
-  - Substituir Navigator.push por BottomNavigationBar
-  - 4 abas: Mapa (índice 0), Eventos, Operações, Perfil
-  - Tela raiz com ScaffoldWithNavBar
-  - Preservar state ao trocar de aba (PageStorageKey)
+- [x] **S1: Bottom Navigation persistente** ✅ commit `df5e5f4b`
+  - HomeShell com NavigationBar M3, 4 abas preservando state
 
-- [ ] **S2a: Refatorar Dashboard (parte 1)**
-  - Dividir `dashboard_screen.dart` em módulos
-  - `MapLayer` — apenas mapa + gestos
-  - `MapControls` — stack de controles (camadas, GPS, bússola)
-  - `SearchBar` — busca + notificações
+- [x] **S2a/S2b: Dashboard + RTCollarSheet** ✅ commits `df5e5f4b` + `8ce9ca31`
+  - RTCollarSheet integrada no tap de marker
+  - RTFilterChips, RTMapControls, RTFAB speed-dial implementados
 
-- [ ] **S2b: Refatorar Dashboard (parte 2)**
-  - `CollarSheet` — bottom sheet dinâmica
-  - `FilterChips` — chips de filtro
-  - `FAB` — extendido com speed-dial
-  - Integração final
+- [x] **S3: Controles do mapa em coluna vertical** ✅ commit `df5e5f4b`
+  - RTMapControls com stack vertical à direita
 
-- [ ] **S3: Controles do mapa em coluna vertical**
-  - Remover layout horizontal de botões
-  - Stack vertical à direita
-  - Ícones maiores (40×40 min)
-  - Touch target 44px
-
-- [ ] **S4: Bottom sheet de coleira**
-  - Implementar `DraggableScrollableSheet`
-  - Peek inicial 180px
-  - Conteúdo: identidade → telemetria → ações
-  - Drag handle visível
+- [x] **S4: Bottom sheet de coleira** ✅ commit `8ce9ca31`
+  - DraggableScrollableSheet com peek 180px integrada
 
 ---
 
 ### Sprint 3: Operações (2 semanas)
 
-- [ ] **S5: Arrebanhamento wizard**
-  - Converter para `PageView` 3 páginas
-  - Implementar `RTStepper` visual
-  - **Página 1:** Lista de coleiras com checkbox
-  - **Página 2:** Mapa com polígono-alvo
-  - **Página 3:** Revisão + confirmação
-  - Aviso em amarelo antes de publicar
+- [x] **S5: Arrebanhamento wizard** ✅ commit `15879c97`
+  - PageView 3 páginas com RTStepper no AppBar
+  - Etapa 1: seletor propriedade + lista coleiras checkbox + status dot
+  - Etapa 2: mapa com HUD vértices/área + controls undo/clear
+  - Etapa 3: revisão + RTConfirmLoRa + botão publicar accent
+  - Novos primitivos: RTChip, RTStepper, RTConfirmLoRa
 
-- [ ] **S6: Geofence**
-  - Usar tile escuro (MapTiler night variant ou custom)
-  - Implementar `RTMapHUD` com contador
-  - `RTPolyEditor` com vértices numerados
-  - Controles (undo, clear, publicar)
-  - Snap automático (threshold 10m)
+- [x] **S6: Geofence** ✅ commit `fdb2739f`
+  - Tile escuro, RTMapHUD com contador, controles undo/clear/publicar
+  - RTConfirmBanner integrado
 
 - [ ] **S7: FAB com speed-dial**
   - FAB extendido "🔧 Novo"
