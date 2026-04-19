@@ -68,6 +68,11 @@ Estado de partida consolidado nesta rodada:
   - reducao da faixa de pontos ate caber no limite LoRa
   - reuso da mesma montagem de chunk no planejamento e no envio final
   - log explicito das tentativas do planner
+- [x] Implementar nucleo firmware do `SET_FENCE` via `RPv2` binario:
+  - contratos compartilhados (`constants`, `types`, `reason codes`, `id`, `crc`, `codec`)
+  - planejamento por tamanho real do frame seguro na matriz
+  - sessao `BEGIN -> POINTS -> COMMIT` na matriz
+  - recepcao binaria na coleira com `ACK/NACK/APPLY_STATUS`
 - [ ] Regravar firmwares usados na bancada se a instrumentacao `[AREA_SYNC]` ainda nao estiver embarcada nas placas
 - [x] Consolidar resultado binario da fase:
   - `Queue/downlink cloud (SET_FENCE): FALHOU`
@@ -149,6 +154,21 @@ Base de reaproveitamento confirmada nesta rodada:
 - build desta rodada:
   - `Sketch uses 1346995 bytes (68%)`
   - `Global variables use 72884 bytes (22%)`
+- nova rodada aplicada nesta sessao:
+  - o enlace matriz -> coleira passou a ter um caminho binario `RPv2` para `SET_FENCE`
+  - foram criados os contratos compartilhados de protocolo em `firmware/shared/`
+  - a matriz agora calcula `radio_command_id` com `FNV-1a 64`, `CRC32` do fence e planeja por tamanho real do frame seguro
+  - a matriz envia sessao binaria `BEGIN -> POINTS -> COMMIT` e aguarda `ACK/NACK/APPLY_STATUS`
+  - a coleira agora reconhece o payload binario `RPv2`, remonta em staging de memoria, valida CRC no `COMMIT` e so entao persiste/aplica a cerca
+  - a coleira responde com `ACK/NACK` binarios por etapa e `APPLY_STATUS` binario ao final
+  - esta rodada ainda nao migra capability cache/backend/app para o fluxo completo do plano
+- relatorio curto desta rodada salvo em:
+  - `tools/audit/output/20260419_004824/implementacao_radio_proto_v2_set_fence_2026-04-19.md`
+- builds desta rodada:
+  - matriz: `Sketch uses 1351251 bytes (68%)`
+  - matriz: `Global variables use 72884 bytes (22%)`
+  - coleira: `Sketch uses 1154549 bytes (58%)`
+  - coleira: `Global variables use 68464 bytes (20%)`
 
 ## Next step
 
@@ -162,7 +182,7 @@ Base de reaproveitamento confirmada nesta rodada:
    - `QUEUE_COMMAND_LOADED pointCount>0` -> saida efetiva de `missing_points`
    - `FENCE_CHUNK_PLAN fit=0/1` -> decisao real do planner com payload serializado
    - `FENCE_CHUNK_SIZE_EVAL` -> chunking real por bytes
-   - `LORA_TX_ATTEMPT part=0 total>1` ou `LORA_TX_OK` -> envio LoRa finalmente liberado
+   - `ACK/NACK/APPLY_STATUS` binarios do `RPv2` -> validacao do novo transporte
 5. Se ainda travar, corrigir apenas o ponto funcional revelado pelos novos logs
 
 ## Related
