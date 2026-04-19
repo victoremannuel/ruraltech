@@ -280,8 +280,28 @@ async function handleMatrixCommandQueues(
       .eq("queue_key", queueKey)
       .order("created_at_ms", { ascending: true });
     if (error) throw new Error(error.message);
+    const rows = (data ?? []) as JsonMap[];
+    const firstRow = rows[0] ?? null;
+    const firstCommandId = normalizeId(firstRow?.command_id);
+    const firstPayload = firstRow?.payload && typeof firstRow.payload === "object"
+      ? firstRow.payload as JsonMap
+      : {};
+    const firstCreatedAtMs = Number(
+      firstPayload.createdAtMs ?? firstPayload.created_at_ms ?? 0,
+    ) || null;
+    const maskedQueueKey = queueKey.length > 12
+      ? `${queueKey.slice(0, 6)}...${queueKey.slice(-6)}`
+      : queueKey;
+    console.log("matrix_queue_get", {
+      runtimeId,
+      queueKey: maskedQueueKey,
+      itemCount: rows.length,
+      firstCommandId: firstCommandId || null,
+      firstCreatedAtMs,
+      empty: rows.length === 0,
+    });
     const out: Record<string, unknown> = {};
-    for (const row of data ?? []) {
+    for (const row of rows) {
       const commandId = normalizeId((row as JsonMap).command_id);
       if (!commandId) continue;
       out[commandId] = (row as JsonMap).payload ?? null;

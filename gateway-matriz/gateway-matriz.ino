@@ -3015,36 +3015,218 @@ static void pollQueueCommandStream() {
   if (queueStreamConnected) closeQueueCommandStream("poll_only");
 }
 
+static String queueBodyPrefix(const String& body, size_t maxLen = 220) {
+  String prefix = body;
+  prefix.replace("\r", " ");
+  prefix.replace("\n", " ");
+  prefix.trim();
+  if (prefix.length() > maxLen) {
+    prefix = prefix.substring(0, maxLen);
+    prefix += "...";
+  }
+  return prefix;
+}
+
+static const char* queueBodyShape(const DynamicJsonDocument& doc) {
+  if (doc.is<JsonArrayConst>()) return "array";
+  if (doc.is<JsonObjectConst>()) return "object";
+  if (doc.is<const char*>()) return "string";
+  if (doc.is<bool>()) return "bool";
+  if (doc.is<long>() || doc.is<unsigned long>() || doc.is<float>() || doc.is<double>()) return "number";
+  if (doc.isNull()) return "null";
+  return "unknown";
+}
+
 static bool loadNextQueuedCommand(String& commandIdOut, DynamicJsonDocument& commandDocOut) {
   if (!queuePollingConfigured()) return false;
+  const String runtimeId = matrixCloudId();
   String body;
-  if (!rtdbRead(queueRootPath(), body)) return false;
+  CloudWriteTrace trace;
+  if (!rtdbRead(queueRootPath(), body, &trace)) {
+    AS_MATRIX_QUEUE_FETCH_HTTP_FAIL(
+        runtimeId.c_str(),
+        strlen(cfg::RTDB_QUEUE_KEY),
+        trace.httpStatus,
+        trace.stage,
+        trace.detail);
+    return false;
+  }
   body.trim();
-  if (body.isEmpty() || body == "null") return false;
+  const String bodyPrefix = queueBodyPrefix(body);
+  if (body.isEmpty() || body == "null") {
+    AS_MATRIX_QUEUE_FETCH_HTTP_OK_UNEXPECTED_SHAPE(
+        runtimeId.c_str(),
+        strlen(cfg::RTDB_QUEUE_KEY),
+        trace.httpStatus,
+        body.length(),
+        body.isEmpty() ? "empty" : "null",
+        bodyPrefix.c_str());
+    return false;
+  }
 
-  DynamicJsonDocument queueDoc(16384);
-  if (deserializeJson(queueDoc, body) != DeserializationError::Ok ||
-      !queueDoc.is<JsonObjectConst>()) {
+  DynamicJsonDocument queueDoc(24576);
+  if (deserializeJson(queueDoc, body) != DeserializationError::Ok) {
+    AS_MATRIX_QUEUE_FETCH_HTTP_OK_INVALID_JSON(
+        runtimeId.c_str(),
+        strlen(cfg::RTDB_QUEUE_KEY),
+        trace.httpStatus,
+        body.length(),
+        bodyPrefix.c_str());
     return false;
   }
 
   String selectedId;
   String selectedBody;
-  for (JsonPairConst kv : queueDoc.as<JsonObjectConst>()) {
-    const String key = kv.key().c_str();
-    if (!selectedId.isEmpty() && key >= selectedId) continue;
-    String candidateBody;
-    serializeJson(kv.value(), candidateBody);
-    selectedId = key;
-    selectedBody = candidateBody;
+  int itemCount = 0;
+  if (queueDoc.is<JsonArrayConst>()) {
+    JsonArrayConst items = queueDoc.as<JsonArrayConst>();
+    itemCount = (int)items.size();
+    if (itemCount == 0) {
+      AS_MATRIX_QUEUE_FETCH_HTTP_OK_EMPTY_ARRAY(
+          runtimeId.c_str(),
+          strlen(cfg::RTDB_QUEUE_KEY),
+          trace.httpStatus,
+          body.length(),
+          bodyPrefix.c_str());
+      return false;
+    }
+    for (JsonVariantConst item : items) {
+      if (!item.is<JsonObjectConst>()) continue;
+      const char* candidateId =
+          pickFirstText(item["commandId"], item["command_id"], item["payload"]["commandId"], item["payload"]["command_id"]);
+      if (!candidateId[0]) continue;
+      String candidateBody;
+      if (item["payload"].is<JsonObjectConst>()) {
+        serializeJson(item["payload"], candidateBody);
+      } else {
+        serializeJson(item, candidateBody);
+      }
+      if (!selectedId.isEmpty() && String(candidateId) >= selectedId) continue;
+      selectedId = candidateId;
+      selectedBody = candidateBody;
+    }
+    AS_MATRIX_QUEUE_FETCH_HTTP_OK_NONEMPTY_ARRAY(
+        runtimeId.c_str(),
+        strlen(cfg::RTDB_QUEUE_KEY),
+        trace.httpStatus,
+        body.length(),
+        itemCount,
+        selectedId.isEmpty() ? "-" : selectedId.c_str(),
+        bodyPrefix.c_str());
+  } else if (queueDoc.is<JsonObjectConst>()) {
+    JsonObjectConst queueObject = queueDoc.as<JsonObjectConst>();
+    itemCount = (int)queueObject.size();
+    if (itemCount == 0) {
+      AS_MATRIX_QUEUE_FETCH_HTTP_OK_UNEXPECTED_SHAPE(
+          runtimeId.c_str(),
+          strlen(cfg::RTDB_QUEUE_KEY),
+          trace.httpStatus,
+          body.length(),
+          "empty_object",
+          bodyPrefix.c_str());
+      return false;
+    }
+    for (JsonPairConst kv : queueObject) {
+      const String key = kv.key().c_str();
+      if (!selectedId.isEmpty() && key >= selectedId) continue;
+      String candidateBody;
+      serializeJson(kv.value(), candidateBody);
+      selectedId = key;
+      selectedBody = candidateBody;
+    }
+    AS_MATRIX_QUEUE_FETCH_HTTP_OK_OBJECT(
+        runtimeId.c_str(),
+        strlen(cfg::RTDB_QUEUE_KEY),
+        trace.httpStatus,
+        body.length(),
+        itemCount,
+        selectedId.isEmpty() ? "-" : selectedId.c_str(),
+        bodyPrefix.c_str());
+  } else {
+    AS_MATRIX_QUEUE_FETCH_HTTP_OK_UNEXPECTED_SHAPE(
+        runtimeId.c_str(),
+        strlen(cfg::RTDB_QUEUE_KEY),
+        trace.httpStatus,
+        body.length(),
+        queueBodyShape(queueDoc),
+        bodyPrefix.c_str());
+    return false;
   }
   if (selectedId.isEmpty() || selectedBody.isEmpty()) return false;
 
   commandDocOut.clear();
   if (deserializeJson(commandDocOut, selectedBody) != DeserializationError::Ok) {
+    AS_MATRIX_QUEUE_PARSE_FAIL(
+        runtimeId.c_str(),
+        strlen(cfg::RTDB_QUEUE_KEY),
+        "selected_item_invalid_json",
+        queueBodyPrefix(selectedBody).c_str());
     return false;
   }
+  if (!commandDocOut.is<JsonObjectConst>()) {
+    AS_MATRIX_QUEUE_PARSE_FAIL(
+        runtimeId.c_str(),
+        strlen(cfg::RTDB_QUEUE_KEY),
+        "selected_item_not_object",
+        queueBodyPrefix(selectedBody).c_str());
+    return false;
+  }
+
+  if (!commandDocOut["command"].is<const char*>() &&
+      commandDocOut["payload"].is<JsonObjectConst>() &&
+      commandDocOut["payload"]["command"].is<const char*>()) {
+    commandDocOut["command"] = commandDocOut["payload"]["command"].as<const char*>();
+  }
+  if (!commandDocOut["commandId"].is<const char*>() &&
+      commandDocOut["payload"].is<JsonObjectConst>() &&
+      commandDocOut["payload"]["commandId"].is<const char*>()) {
+    commandDocOut["commandId"] = commandDocOut["payload"]["commandId"].as<const char*>();
+  }
+  if (!commandDocOut["propertyId"].is<const char*>() &&
+      commandDocOut["payload"].is<JsonObjectConst>() &&
+      commandDocOut["payload"]["propertyId"].is<const char*>()) {
+    commandDocOut["propertyId"] = commandDocOut["payload"]["propertyId"].as<const char*>();
+  }
+  if (!commandDocOut["propertyScopeId"].is<const char*>() &&
+      commandDocOut["payload"].is<JsonObjectConst>() &&
+      commandDocOut["payload"]["propertyScopeId"].is<const char*>()) {
+    commandDocOut["propertyScopeId"] = commandDocOut["payload"]["propertyScopeId"].as<const char*>();
+  }
+  if (!commandDocOut["matrixGatewayId"].is<const char*>() &&
+      commandDocOut["payload"].is<JsonObjectConst>() &&
+      commandDocOut["payload"]["matrixGatewayId"].is<const char*>()) {
+    commandDocOut["matrixGatewayId"] = commandDocOut["payload"]["matrixGatewayId"].as<const char*>();
+  }
+  if (!commandDocOut["targetDeviceIds"].is<JsonArrayConst>() &&
+      commandDocOut["payload"].is<JsonObjectConst>() &&
+      commandDocOut["payload"]["targetDeviceIds"].is<JsonArrayConst>()) {
+    commandDocOut["targetDeviceIds"] = commandDocOut["payload"]["targetDeviceIds"].as<JsonArrayConst>();
+  }
+  if (!commandDocOut["targetGatewayIds"].is<JsonArrayConst>() &&
+      commandDocOut["payload"].is<JsonObjectConst>() &&
+      commandDocOut["payload"]["targetGatewayIds"].is<JsonArrayConst>()) {
+    commandDocOut["targetGatewayIds"] = commandDocOut["payload"]["targetGatewayIds"].as<JsonArrayConst>();
+  }
+  if (!commandDocOut["createdAtMs"].is<uint64_t>() &&
+      commandDocOut["payload"].is<JsonObjectConst>() &&
+      !commandDocOut["payload"]["createdAtMs"].isNull()) {
+    commandDocOut["createdAtMs"] = commandDocOut["payload"]["createdAtMs"].as<uint64_t>();
+  }
+  if (!commandDocOut["expiresAtMs"].is<uint64_t>() &&
+      commandDocOut["payload"].is<JsonObjectConst>() &&
+      !commandDocOut["payload"]["expiresAtMs"].isNull()) {
+    commandDocOut["expiresAtMs"] = commandDocOut["payload"]["expiresAtMs"].as<uint64_t>();
+  }
+
   commandIdOut = selectedId;
+  const char* command = commandDocOut["command"] | "";
+  const char* propertyId = commandDocOut["propertyId"] | "";
+  AS_MATRIX_QUEUE_ITEM_FOUND(
+      runtimeId.c_str(),
+      commandIdOut.c_str(),
+      command,
+      propertyId,
+      commandDocOut["payload"].is<JsonObjectConst>());
   return true;
 }
 
@@ -3207,6 +3389,7 @@ static bool dispatchQueuedSimpleCommand(
   }
   activeSimpleCommand.lastAttemptAtMs = millis();
   activeSimpleCommand.retryCount = 1;
+  AS_MATRIX_COMMAND_MARK_DISPATCHING_BEGIN(commandId.c_str(), command);
   publishSimpleCommandResult("dispatching", nullptr);
   return true;
 }
@@ -3287,20 +3470,37 @@ static void processNextQueuedCommand() {
   if (expiresAtMs != 0 && expiresAtMs <= nowMs) {
     failStatus = "expired";
     failReason = "command_expired";
+    char expected[24];
+    char actual[24];
+    snprintf(expected, sizeof(expected), ">%llu", (unsigned long long)nowMs);
+    snprintf(actual, sizeof(actual), "%llu", (unsigned long long)expiresAtMs);
+    AS_MATRIX_QUEUE_ITEM_FILTERED_OUT(commandId.c_str(), "expiresAtMs", expected, actual);
   } else if (!bindingReady) {
     failStatus = "rejected";
     failReason = "property_binding_missing";
+    AS_MATRIX_QUEUE_ITEM_FILTERED_OUT(commandId.c_str(), "bindingReady", "1", "0");
   } else if (strcmp(propertyId, bindingPropertyId) != 0) {
     failStatus = "rejected";
     failReason = "property_binding_mismatch";
+    AS_MATRIX_QUEUE_ITEM_FILTERED_OUT(commandId.c_str(), "propertyId", bindingPropertyId, propertyId);
   } else if (!rtcmd::isValidScopeId(propertyScopeId) ||
              strcmp(propertyScopeId, bindingPropertyScopeId) != 0) {
     failStatus = "rejected";
     failReason = "property_scope_mismatch";
+    AS_MATRIX_QUEUE_ITEM_FILTERED_OUT(
+        commandId.c_str(),
+        "propertyScopeId",
+        bindingPropertyScopeId,
+        propertyScopeId[0] ? propertyScopeId : "invalid_or_empty");
   } else if (bindingMatrixGatewayId[0] != '\0' &&
              strcmp(matrixGatewayId, bindingMatrixGatewayId) != 0) {
     failStatus = "rejected";
     failReason = "matrix_gateway_mismatch";
+    AS_MATRIX_QUEUE_ITEM_FILTERED_OUT(
+        commandId.c_str(),
+        "matrixGatewayId",
+        bindingMatrixGatewayId,
+        matrixGatewayId);
   }
 
   if (failStatus) {

@@ -43,6 +43,11 @@ Estado de partida consolidado nesta rodada:
 - [x] Aplicar instrumentacao minima na matriz para fechar o ponto cego antes do dispatcher:
   - evento `[AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED]`
   - evento `[AREA_SYNC][MATRIX][INFO][QUEUE_EMPTY]`
+- [x] Implementar rodada de correcao `queue_empty` focada em leitura/interpretação da fila:
+  - instrumentacao de HTTP + shape + parse na matriz
+  - compatibilidade do loader com resposta em objeto e array
+  - logs de item encontrado e item filtrado
+  - observabilidade da edge function `matrix-cloud` para quantidade de itens retornados
 - [ ] Regravar firmwares usados na bancada se a instrumentacao `[AREA_SYNC]` ainda nao estiver embarcada nas placas
 - [x] Consolidar resultado binario da fase:
   - `Queue/downlink cloud (SET_FENCE): FALHOU`
@@ -81,16 +86,25 @@ Base de reaproveitamento confirmada nesta rodada:
   - a mudanca minima util ja foi aplicada para expor gates silenciosos e fila vazia
 - relatorio detalhado desta verificacao salvo em:
   - `tools/audit/output/20260419_004824/verificacao_set_fence_queued_2026-04-19.md`
+- nova rodada aplicada nesta sessao:
+  - `loadNextQueuedCommand()` agora registra `httpStatus`, tamanho do corpo, prefixo truncado, shape e contagem de itens
+  - o loader agora aceita tanto objeto mapeado por `commandId` quanto array de itens
+  - campos aninhados em `payload` passam a ser promovidos para o topo quando necessario
+  - filtros locais (`expiresAtMs`, `binding`, `propertyId`, `propertyScopeId`, `matrixGatewayId`) agora registram `expected` vs `actual`
+  - a edge function `matrix-cloud` passou a logar `itemCount`, `firstCommandId` e `firstCreatedAtMs` para GET da fila
+- relatorio curto desta rodada salvo em:
+  - `tools/audit/output/20260419_004824/correcao_set_fence_queue_empty_2026-04-19.md`
 
 ## Next step
 
 1. Regravar a matriz com a instrumentacao nova desta rodada
 2. Repetir a homologacao E2E `SET_FENCE`
 3. Classificar o novo run usando os novos eventos:
-   - `QUEUE_POLL_SKIPPED` -> bloqueio antes do consumo
-   - `QUEUE_EMPTY` -> caminho/consulta sem item visivel
-   - `QUEUE_COMMAND_LOADED` -> entrada real no dispatcher
-4. So depois abrir correcao funcional especifica, se ainda necessario
+   - `QUEUE_FETCH_HTTP_OK_*` -> shape real da resposta
+   - `QUEUE_ITEM_FOUND` -> item carregado da fila
+   - `QUEUE_ITEM_FILTERED_OUT` -> descarte local com motivo
+   - `QUEUE_COMMAND_LOADED` / `DISPATCH_BEGIN` -> saida efetiva de `QUEUE_EMPTY`
+4. Se ainda travar, corrigir o ponto funcional exato revelado pelos novos logs
 
 ## Related
 

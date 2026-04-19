@@ -47,6 +47,55 @@
   AS_MATRIX_INFO("QUEUE_EMPTY", \
     "runtimeId=%s queueKeyLen=%d", runtimeId, (int)(queueKeyLen))
 
+#define AS_MATRIX_QUEUE_FETCH_HTTP_OK_EMPTY_ARRAY(runtimeId, queueKeyLen, httpStatus, bodyLen, bodyPrefix) \
+  AS_MATRIX_INFO("QUEUE_FETCH_HTTP_OK_EMPTY_ARRAY", \
+    "runtimeId=%s queueKeyLen=%d httpStatus=%d bodyLen=%d bodyPrefix=%s", \
+    runtimeId, (int)(queueKeyLen), (int)(httpStatus), (int)(bodyLen), bodyPrefix)
+
+#define AS_MATRIX_QUEUE_FETCH_HTTP_OK_NONEMPTY_ARRAY(runtimeId, queueKeyLen, httpStatus, bodyLen, itemCount, firstCommandId, bodyPrefix) \
+  AS_MATRIX_INFO("QUEUE_FETCH_HTTP_OK_NONEMPTY_ARRAY", \
+    "runtimeId=%s queueKeyLen=%d httpStatus=%d bodyLen=%d itemCount=%d firstCommandId=%s bodyPrefix=%s", \
+    runtimeId, (int)(queueKeyLen), (int)(httpStatus), (int)(bodyLen), (int)(itemCount), firstCommandId, bodyPrefix)
+
+#define AS_MATRIX_QUEUE_FETCH_HTTP_OK_OBJECT(runtimeId, queueKeyLen, httpStatus, bodyLen, itemCount, firstCommandId, bodyPrefix) \
+  AS_MATRIX_INFO("QUEUE_FETCH_HTTP_OK_OBJECT", \
+    "runtimeId=%s queueKeyLen=%d httpStatus=%d bodyLen=%d itemCount=%d firstCommandId=%s bodyPrefix=%s", \
+    runtimeId, (int)(queueKeyLen), (int)(httpStatus), (int)(bodyLen), (int)(itemCount), firstCommandId, bodyPrefix)
+
+#define AS_MATRIX_QUEUE_FETCH_HTTP_OK_UNEXPECTED_SHAPE(runtimeId, queueKeyLen, httpStatus, bodyLen, shape, bodyPrefix) \
+  AS_MATRIX_WARN("QUEUE_FETCH_HTTP_OK_UNEXPECTED_SHAPE", \
+    "runtimeId=%s queueKeyLen=%d httpStatus=%d bodyLen=%d shape=%s bodyPrefix=%s", \
+    runtimeId, (int)(queueKeyLen), (int)(httpStatus), (int)(bodyLen), shape, bodyPrefix)
+
+#define AS_MATRIX_QUEUE_FETCH_HTTP_OK_INVALID_JSON(runtimeId, queueKeyLen, httpStatus, bodyLen, bodyPrefix) \
+  AS_MATRIX_ERR("QUEUE_FETCH_HTTP_OK_INVALID_JSON", \
+    "runtimeId=%s queueKeyLen=%d httpStatus=%d bodyLen=%d bodyPrefix=%s", \
+    runtimeId, (int)(queueKeyLen), (int)(httpStatus), (int)(bodyLen), bodyPrefix)
+
+#define AS_MATRIX_QUEUE_FETCH_HTTP_FAIL(runtimeId, queueKeyLen, httpStatus, stage, detail) \
+  AS_MATRIX_ERR("QUEUE_FETCH_HTTP_FAIL", \
+    "runtimeId=%s queueKeyLen=%d httpStatus=%d stage=%s detail=%s", \
+    runtimeId, (int)(queueKeyLen), (int)(httpStatus), stage, detail)
+
+#define AS_MATRIX_QUEUE_PARSE_FAIL(runtimeId, queueKeyLen, reason, bodyPrefix) \
+  AS_MATRIX_ERR("QUEUE_PARSE_FAIL", \
+    "runtimeId=%s queueKeyLen=%d reason=%s bodyPrefix=%s", \
+    runtimeId, (int)(queueKeyLen), reason, bodyPrefix)
+
+#define AS_MATRIX_QUEUE_ITEM_FOUND(runtimeId, commandId, command, propertyId, hasPayload) \
+  AS_MATRIX_INFO("QUEUE_ITEM_FOUND", \
+    "runtimeId=%s commandId=%s command=%s propertyId=%s hasPayload=%d", \
+    runtimeId, commandId, command, propertyId, (int)(hasPayload))
+
+#define AS_MATRIX_QUEUE_ITEM_FILTERED_OUT(commandId, filterName, expectedValue, actualValue) \
+  AS_MATRIX_WARN("QUEUE_ITEM_FILTERED_OUT", \
+    "commandId=%s filter=%s expected=%s actual=%s", \
+    commandId, filterName, expectedValue, actualValue)
+
+#define AS_MATRIX_COMMAND_MARK_DISPATCHING_BEGIN(commandId, command) \
+  AS_MATRIX_INFO("COMMAND_MARK_DISPATCHING_BEGIN", \
+    "commandId=%s command=%s", commandId, command)
+
 // Despacho LoRa
 #define AS_MATRIX_DISPATCH_BEGIN(cmdId, areaId, propId, targetCount) \
   AS_MATRIX_INFO("DISPATCH_BEGIN", \
