@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include "../firmware/shared/radio_transport_v1_constants.h"
 
 namespace rtrwake {
 
@@ -27,6 +28,7 @@ struct SessionCore {
   bool active = false;
   State state = State::IDLE;
   uint32_t deviceId = 0;
+  uint32_t uplinkSeq = 0;
   uint64_t pageSessionId = 0;
   uint32_t pageMessageId = 0;
   uint8_t campaignCount = 0;
@@ -39,8 +41,17 @@ struct SessionCore {
   uint32_t pageAckDeadlineAtMs = 0;
   bool pageSent = false;
   bool pageAcked = false;
+  bool cloudTxDeferred = false;
   bool sessionStarted = false;
   bool finished = false;
+};
+
+struct FastPathMetric {
+  bool valid = false;
+  uint32_t rxAcceptedAtMs = 0;
+  uint32_t pageTxAtMs = 0;
+  uint32_t deltaMs = 0;
+  bool deadlineMet = false;
 };
 
 static inline const char* stateLabel(State state) {
@@ -83,6 +94,7 @@ static inline bool noteUplinkHint(
   if (!session || !session->active || session->deviceId != deviceId) return false;
   session->lastUplinkAtMs = nowMs;
   session->nextPageAttemptAtMs = nowMs;
+  session->cloudTxDeferred = true;
   if (session->state == State::PAGING_WAITING_UPLINK ||
       session->state == State::PAGING_READY_TO_SEND) {
     session->state = State::PAGING_READY_TO_SEND;
@@ -152,7 +164,40 @@ static inline void scheduleRetryWaitingUplink(
   session->pageAcked = false;
   session->pageAckDeadlineAtMs = 0;
   session->nextPageAttemptAtMs = nowMs;
+  session->cloudTxDeferred = false;
   session->state = State::PAGING_WAITING_UPLINK;
+}
+
+static inline FastPathMetric computeFastPathMetric(
+    const SessionCore& session,
+    uint32_t deadlineMs) {
+  FastPathMetric metric{};
+  if (session.lastUplinkAtMs == 0 || session.lastPageSentAtMs == 0) return metric;
+  if ((int32_t)(session.lastPageSentAtMs - session.lastUplinkAtMs) < 0) return metric;
+  metric.valid = true;
+  metric.rxAcceptedAtMs = session.lastUplinkAtMs;
+  metric.pageTxAtMs = session.lastPageSentAtMs;
+  metric.deltaMs = session.lastPageSentAtMs - session.lastUplinkAtMs;
+  metric.deadlineMet = metric.deltaMs <= deadlineMs;
+  return metric;
+}
+
+static inline bool shouldDeferCloudTx(
+    const SessionCore& session,
+    uint32_t deviceId) {
+  return session.active &&
+      session.deviceId == deviceId &&
+      (session.state == State::PAGING_WAITING_UPLINK ||
+       session.state == State::PAGING_READY_TO_SEND);
+}
+
+static inline const char* aggregateCommandStatus(
+    bool allTerminal,
+    bool anyFailed,
+    bool anyPendingWake) {
+  if (allTerminal) return anyFailed ? "failed" : "completed";
+  if (anyPendingWake) return "paging_waiting_uplink";
+  return "dispatching";
 }
 
 }  // namespace rtrwake

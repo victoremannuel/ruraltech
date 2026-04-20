@@ -4,6 +4,7 @@
  */
 #include "LoRaManager.h"
 #include "Logger.h"
+#include "../firmware/shared/radio_transport_v1_reason_codes.h"
 #include <cstring>
 
 namespace {
@@ -180,11 +181,23 @@ bool LoRaManager::receiveFrame(LoRaFrame& frame, uint32_t windowMs) {
             tagHex,
             headHex,
             (unsigned long)decryptFailCount_);
+        LOGW(
+            "RTR_RAW_DOWNLINK_DROP rawLen=%u msgType=0 rssi=%d snr=%.1f targetDeviceId=0 scopeId=0 reason=%s",
+            (unsigned)len,
+            (int)lastRssi_,
+            lastSnr_,
+            rtrv1::rawDropReasonLabel(rtrv1::RawDropReason::DECRYPT_FAILED));
         LOGW("LoRa RX descartado: decrypt_or_hmac_failed len=%u", (unsigned)len);
         continue;
       }
       memcpy(plain + cipherLen, tag, 16);
       if (!LoRaProtocol::decodePlain(plain, cipherLen + 16, frame)) {
+        LOGW(
+            "RTR_RAW_DOWNLINK_DROP rawLen=%u msgType=0 rssi=%d snr=%.1f targetDeviceId=0 scopeId=0 reason=%s",
+            (unsigned)len,
+            (int)lastRssi_,
+            lastSnr_,
+            rtrv1::rawDropReasonLabel(rtrv1::RawDropReason::INVALID_HEADER));
         LOGW("LoRa RX descartado: invalid_plain_frame len=%u", (unsigned)len);
         continue;
       }
@@ -204,7 +217,24 @@ bool LoRaManager::receiveFrame(LoRaFrame& frame, uint32_t windowMs) {
 
       // A coleira só deve consumir comandos destinados a ela (ou broadcast).
       const bool targetMatch = frame.deviceId == cfg::DEVICE_ID || frame.deviceId == 0;
+      LOGI(
+          "RTR_RAW_DOWNLINK_RX rawLen=%u msgType=%u rssi=%d snr=%.1f targetDeviceId=%lu scopeId=%016llX",
+          (unsigned)len,
+          (unsigned)frame.msgType,
+          (int)lastRssi_,
+          lastSnr_,
+          (unsigned long)frame.deviceId,
+          (unsigned long long)frame.scopeId);
       if (!targetMatch) {
+        LOGW(
+            "RTR_RAW_DOWNLINK_DROP rawLen=%u msgType=%u rssi=%d snr=%.1f targetDeviceId=%lu scopeId=%016llX reason=%s",
+            (unsigned)len,
+            (unsigned)frame.msgType,
+            (int)lastRssi_,
+            lastSnr_,
+            (unsigned long)frame.deviceId,
+            (unsigned long long)frame.scopeId,
+            rtrv1::rawDropReasonLabel(rtrv1::RawDropReason::TARGET_MISMATCH));
         LOGI(
             "LoRa RX ignorado: target=%lu self=%lu",
             (unsigned long)frame.deviceId,
@@ -217,17 +247,44 @@ bool LoRaManager::receiveFrame(LoRaFrame& frame, uint32_t windowMs) {
           frame.msgType == MsgType::SET_FENCE ||
           frame.msgType == MsgType::SET_HERDING_PLAN ||
           frame.msgType == MsgType::SET_PARAMS ||
-          frame.msgType == MsgType::PING;
+          frame.msgType == MsgType::PING ||
+          frame.msgType == MsgType::RTR_CONTROL;
       if (!downlinkCommand) {
+        LOGW(
+            "RTR_RAW_DOWNLINK_DROP rawLen=%u msgType=%u rssi=%d snr=%.1f targetDeviceId=%lu scopeId=%016llX reason=%s",
+            (unsigned)len,
+            (unsigned)frame.msgType,
+            (int)lastRssi_,
+            lastSnr_,
+            (unsigned long)frame.deviceId,
+            (unsigned long long)frame.scopeId,
+            rtrv1::rawDropReasonLabel(rtrv1::RawDropReason::UNKNOWN_TYPE));
         LOGI("LoRa RX ignorado: unsupported_type=%u", (unsigned)frame.msgType);
         continue;
       }
 
       if (frame.seq <= lastSeqSeen_) {
         replayRejectCount_++;
+        LOGW(
+            "RTR_RAW_DOWNLINK_DROP rawLen=%u msgType=%u rssi=%d snr=%.1f targetDeviceId=%lu scopeId=%016llX reason=%s",
+            (unsigned)len,
+            (unsigned)frame.msgType,
+            (int)lastRssi_,
+            lastSnr_,
+            (unsigned long)frame.deviceId,
+            (unsigned long long)frame.scopeId,
+            rtrv1::rawDropReasonLabel(rtrv1::RawDropReason::REPLAY_BLOCKED));
         LOGW("Replay detectado seq=%lu", frame.seq);
         continue;
       }
+      LOGI(
+          "RTR_RAW_DOWNLINK_ACCEPT rawLen=%u msgType=%u rssi=%d snr=%.1f targetDeviceId=%lu scopeId=%016llX reason=accepted",
+          (unsigned)len,
+          (unsigned)frame.msgType,
+          (int)lastRssi_,
+          lastSnr_,
+          (unsigned long)frame.deviceId,
+          (unsigned long long)frame.scopeId);
       LOGI(
           "LoRa RX aceito type=%u seq=%lu scope=%016llX",
           (unsigned)frame.msgType,

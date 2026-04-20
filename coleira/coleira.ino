@@ -282,11 +282,14 @@ static void refreshRtrSessionActivity(const char* reason) {
 
 static void logRtrDropReason(const char* reason, const LoRaFrame& frame) {
   LOGW(
-      "RTR_DROP_REASON reason=%s type=%u deviceId=%lu scope=%016llX",
-      reason ? reason : "unknown",
+      "RTR_RAW_DOWNLINK_DROP rawLen=%u msgType=%u rssi=%d snr=%.1f targetDeviceId=%lu scopeId=%016llX reason=%s",
+      (unsigned)frame.payloadLen,
       (unsigned)frame.msgType,
+      (int)lora.lastRssi(),
+      lora.lastSnr(),
       (unsigned long)frame.deviceId,
-      (unsigned long long)frame.scopeId);
+      (unsigned long long)frame.scopeId,
+      reason ? reason : "unknown");
 }
 
 static const char* pickFirstText(
@@ -2550,6 +2553,12 @@ static bool handleRtrControlDownlink(const LoRaFrame& frame) {
       (unsigned long long)rtrSessionMode_.sessionId,
       (unsigned long)rtrSessionMode_.wakeLockUntilMs,
       (unsigned)rtrSessionMode_.commandType);
+  const uint32_t ackPrepareAtMs = millis();
+  LOGI(
+      "RTR_PAGE_ACK_PREPARE targetDeviceId=%lu sessionId=%llu messageId=%lu reason=page_rx_valid",
+      (unsigned long)cfg::DEVICE_ID,
+      (unsigned long long)header.sessionId,
+      (unsigned long)header.messageId);
 
   rtrv1::Header ackHeader{};
   ackHeader.version = rtrv1::PROTOCOL_VERSION;
@@ -2578,16 +2587,26 @@ static bool handleRtrControlDownlink(const LoRaFrame& frame) {
       rtrv1::encodeFrame(ackHeader, ack, payload, sizeof(payload));
   if (payloadLen == 0 || !sendRtrControlReply(frame, ackHeader, payload, payloadLen)) {
     LOGW(
-        "RTR_PAGE_ACK_TX_FAIL sessionId=%llu messageId=%lu",
+        "RTR_PAGE_ACK_TX_FAIL targetDeviceId=%lu sessionId=%llu messageId=%lu reason=%s",
+        (unsigned long)cfg::DEVICE_ID,
         (unsigned long long)header.sessionId,
-        (unsigned long)header.messageId);
+        (unsigned long)header.messageId,
+        payloadLen == 0 ? "encode_failed" : "lora_send_failed");
     return true;
   }
+  const uint32_t ackTxAtMs = millis();
   LOGI(
-      "RTR_PAGE_ACK_TX sessionId=%llu messageId=%lu suggestedRxWindowMs=%u",
+      "RTR_PAGE_ACK_TX targetDeviceId=%lu sessionId=%llu messageId=%lu suggestedRxWindowMs=%u",
+      (unsigned long)cfg::DEVICE_ID,
       (unsigned long long)header.sessionId,
       (unsigned long)header.messageId,
       (unsigned)ack.suggestedRxWindowMs);
+  LOGI(
+      "RTR_PAGE_TO_ACK_LATENCY targetDeviceId=%lu sessionId=%llu messageId=%lu deltaMs=%lu",
+      (unsigned long)cfg::DEVICE_ID,
+      (unsigned long long)header.sessionId,
+      (unsigned long)header.messageId,
+      (unsigned long)(ackTxAtMs - ackPrepareAtMs));
   return true;
 }
 
@@ -3295,7 +3314,10 @@ void loop() {
   LoRaFrame down;
   uint32_t rxWindowMs = otaSessionLikelyActive
                             ? cfg::OTA_UPLOAD_RX_WINDOW_MS
-                            : cfg::RX_WINDOW_MS;
+                            : rtrv1::discoveryWindowMs(
+                                  cfg::RTR_BENCH_EXTENDED_DISCOVERY,
+                                  cfg::RTR_DISCOVERY_WINDOW_MS_NORMAL,
+                                  cfg::RTR_DISCOVERY_WINDOW_MS_BENCH);
   if (cfg::RTR_FORCE_DISCOVERY_RX_OPEN && rxWindowMs < rtrv1::DISCOVERY_RX_WINDOW_MS) {
     rxWindowMs = rtrv1::DISCOVERY_RX_WINDOW_MS;
   }
@@ -3401,6 +3423,22 @@ void loop() {
     LOGW("Pending event drain desabilitado para bancada");
   }
   logLoopCheckpoint("after_pending_events_loop");
+
+  const bool sessionModeNow = isRtrSessionModeActive();
+  if (rtrv1::shouldOpenSecondaryRxWindow(handledDownlink, sessionModeNow)) {
+    LOGI(
+        "RTR_DISCOVERY_WINDOW_SECONDARY_OPEN windowMs=%lu",
+        (unsigned long)cfg::RTR_SECONDARY_RX_WINDOW_MS);
+    bool secondaryHandled = false;
+    if (lora.receiveFrame(down, cfg::RTR_SECONDARY_RX_WINDOW_MS)) {
+      applyDownlink(down);
+      secondaryHandled = true;
+    }
+    LOGI(
+        "RTR_DISCOVERY_WINDOW_SECONDARY_CLOSE handled=%d",
+        secondaryHandled ? 1 : 0);
+    handledDownlink = handledDownlink || secondaryHandled;
+  }
 
   // Com Wi-Fi/OTA ativo, permanece online continuamente para manutenção remota.
   if (wifiOtaEnabled) {

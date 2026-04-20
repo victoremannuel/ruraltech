@@ -21,12 +21,14 @@ constexpr uint32_t IDLE_SESSION_TIMEOUT_MS = 30000;
 constexpr uint32_t PAGE_ACK_TIMEOUT_MS = 1500;
 constexpr uint32_t LINK_ACK_TIMEOUT_MS = 1500;
 constexpr uint32_t APP_ACK_TIMEOUT_MS = 3000;
+constexpr uint32_t FAST_PAGE_DEADLINE_MS = 300;
 constexpr uint32_t INTER_FRAME_GAP_MS = 80;
 constexpr uint32_t RELAY_FORWARD_DELAY_MIN_MS = 30;
 constexpr uint32_t RELAY_FORWARD_DELAY_MAX_MS = 80;
 
 constexpr uint8_t MAX_FRAGMENT_RETRIES = 1;
 constexpr uint8_t MAX_PAGE_CAMPAIGNS = 2;
+constexpr uint8_t MAX_PAGE_ATTEMPTS = MAX_PAGE_CAMPAIGNS;
 constexpr uint8_t DEFAULT_TTL = 4;
 constexpr uint16_t DEDUP_CACHE_TTL_SEC = 120;
 constexpr uint16_t SESSION_CACHE_TTL_SEC = 600;

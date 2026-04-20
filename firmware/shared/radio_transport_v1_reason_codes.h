@@ -35,6 +35,17 @@ enum ReasonCode : uint16_t {
   REASON_DROP_ROUTE_MISSING = 210,
 };
 
+enum class RawDropReason : uint8_t {
+  NONE = 0,
+  DECRYPT_FAILED = 1,
+  AUTH_FAILED = 2,
+  SCOPE_MISMATCH = 3,
+  TARGET_MISMATCH = 4,
+  UNKNOWN_TYPE = 5,
+  INVALID_HEADER = 6,
+  REPLAY_BLOCKED = 7,
+};
+
 static inline const char* reasonCodeLabel(uint16_t code) {
   switch (code) {
     case REASON_NONE: return "none";
@@ -65,6 +76,20 @@ static inline const char* reasonCodeLabel(uint16_t code) {
     case REASON_DROP_INVALID_FRAGMENT: return "drop_invalid_fragment";
     case REASON_DROP_QUEUE_FULL: return "drop_queue_full";
     case REASON_DROP_ROUTE_MISSING: return "drop_route_missing";
+    default: return "unknown";
+  }
+}
+
+static inline const char* rawDropReasonLabel(RawDropReason reason) {
+  switch (reason) {
+    case RawDropReason::NONE: return "none";
+    case RawDropReason::DECRYPT_FAILED: return "decrypt_failed";
+    case RawDropReason::AUTH_FAILED: return "auth_failed";
+    case RawDropReason::SCOPE_MISMATCH: return "scope_mismatch";
+    case RawDropReason::TARGET_MISMATCH: return "target_mismatch";
+    case RawDropReason::UNKNOWN_TYPE: return "unknown_type";
+    case RawDropReason::INVALID_HEADER: return "invalid_header";
+    case RawDropReason::REPLAY_BLOCKED: return "replay_blocked";
     default: return "unknown";
   }
 }

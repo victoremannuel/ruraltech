@@ -2843,6 +2843,47 @@ static void processAcceptedUplink(const LoRaFrame& rx) {
   if (handlePendingWakePageAck(rx)) {
     return;
   }
+
+  const int wakeIdx = findPendingWakeSessionByDeviceId(rx.deviceId);
+  PendingWakeSession* wakeSession = wakeIdx >= 0 ? &pendingWakeSessions[wakeIdx] : nullptr;
+  const bool deferCloudTx =
+      wakeSession &&
+      rtrwake::shouldDeferCloudTx(wakeSession->core, rx.deviceId);
+  if (deferCloudTx) {
+    LOGI(
+        "RTR_WAKE_UPLINK_DEFERRED_CLOUD_TX deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu reason=%s",
+        (unsigned long)rx.deviceId,
+        wakeSession->commandId[0] ? wakeSession->commandId : "-",
+        (unsigned long)wakeSession->core.uplinkSeq,
+        (unsigned long)wakeSession->core.lastUplinkAtMs,
+        pendingWakeStateLabel(wakeSession->core.state));
+    LOGI(
+        "RTR_WAKE_FAST_PATH_START deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu deadlineMs=%lu",
+        (unsigned long)rx.deviceId,
+        wakeSession->commandId[0] ? wakeSession->commandId : "-",
+        (unsigned long)wakeSession->core.uplinkSeq,
+        (unsigned long)wakeSession->core.lastUplinkAtMs,
+        (unsigned long)rtrv1::FAST_PAGE_DEADLINE_MS);
+    if (wakeSession->core.state == rtrwake::State::PAGING_READY_TO_SEND) {
+      const char* fastPathReason = nullptr;
+      if (!trySendRtrPage(*wakeSession, &fastPathReason)) {
+        LOGW(
+            "RTR_WAKE_FAST_PATH_SKIP deviceId=%lu commandId=%s uplinkSeq=%lu reason=%s",
+            (unsigned long)rx.deviceId,
+            wakeSession->commandId[0] ? wakeSession->commandId : "-",
+            (unsigned long)wakeSession->core.uplinkSeq,
+            fastPathReason && fastPathReason[0] ? fastPathReason : "page_send_failed");
+      }
+    } else {
+      LOGI(
+          "RTR_WAKE_FAST_PATH_SKIP deviceId=%lu commandId=%s uplinkSeq=%lu reason=%s",
+          (unsigned long)rx.deviceId,
+          wakeSession->commandId[0] ? wakeSession->commandId : "-",
+          (unsigned long)wakeSession->core.uplinkSeq,
+          pendingWakeStateLabel(wakeSession->core.state));
+    }
+  }
+
   handleSimpleCommandFeedback(rx);
   handleHerdingOperationFeedback(rx);
   handleHerdingOperationEvent(rx);
@@ -2882,6 +2923,14 @@ static void processAcceptedUplink(const LoRaFrame& rx) {
     publishTelemetryToCloud(rx);
     publishDailyHealthToCloud(rx);
     publishEventToCloud(rx);
+    if (deferCloudTx && wakeSession && wakeSession->core.active) {
+      wakeSession->core.cloudTxDeferred = false;
+      LOGI(
+          "RTR_WAKE_CLOUD_TX_RESUMED deviceId=%lu commandId=%s uplinkSeq=%lu reason=post_page_attempt",
+          (unsigned long)rx.deviceId,
+          wakeSession->commandId[0] ? wakeSession->commandId : "-",
+          (unsigned long)wakeSession->core.uplinkSeq);
+    }
   }
 }
 
@@ -3109,6 +3158,7 @@ static void notePendingWakeHintFromUplink(const LoRaFrame& rx) {
   PendingWakeSession& session = pendingWakeSessions[idx];
   const char* fromState = pendingWakeStateLabel(session.core.state);
   const uint32_t nowMs = millis();
+  session.core.uplinkSeq = rx.seq;
   if (!rtrwake::noteUplinkHint(&session.core, rx.deviceId, nowMs)) return;
   publishFenceTransportState(session.core.deviceId, "paging_ready");
   LOGI(
@@ -3244,6 +3294,20 @@ static bool trySendRtrPage(
       "rtr_page_sent",
       nullptr,
       nullptr);
+  const rtrwake::FastPathMetric fastPathMetric =
+      rtrwake::computeFastPathMetric(session.core, rtrv1::FAST_PAGE_DEADLINE_MS);
+  if (fastPathMetric.valid) {
+    LOGI(
+        "RTR_WAKE_TO_PAGE_LATENCY deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu pageTxAtMs=%lu deltaMs=%lu deadlineMs=%lu deadlineMet=%d reason=page_tx_ok",
+        (unsigned long)session.core.deviceId,
+        session.commandId[0] ? session.commandId : "-",
+        (unsigned long)session.core.uplinkSeq,
+        (unsigned long)fastPathMetric.rxAcceptedAtMs,
+        (unsigned long)fastPathMetric.pageTxAtMs,
+        (unsigned long)fastPathMetric.deltaMs,
+        (unsigned long)rtrv1::FAST_PAGE_DEADLINE_MS,
+        fastPathMetric.deadlineMet ? 1 : 0);
+  }
   LOGI(
       "RTR_PAGE_TX_OK deviceId=%lu commandId=%s sessionId=%llu messageId=%lu campaignCount=%u",
       (unsigned long)session.core.deviceId,
@@ -4200,6 +4264,12 @@ static void processPendingWakeSessions() {
                 (unsigned long)session.core.deviceId,
                 session.commandId[0] ? session.commandId : "-",
                 (unsigned)session.core.campaignCount);
+            appendPropertyCommandEvent(
+                activeSimpleCommand.propertyId,
+                activeSimpleCommand.commandId,
+                "rtr_page_timeout_final",
+                nullptr,
+                nullptr);
             failPendingWakeSession(
                 session,
                 rtrv1::REASON_PAGE_TIMEOUT_FINAL,
