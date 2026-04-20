@@ -90,12 +90,20 @@ Estado de partida consolidado nesta rodada:
   - coleira respondendo `RTR_PAGE_ACK` e entrando em `session mode`
   - bloqueio de `deep sleep` com `wake lock` durante a sessão
   - logs obrigatórios de `RTR_DISCOVERY_WINDOW_*`, `RTR_PAGE_*` e `RTR_SESSION_MODE_*`
+- [x] Implementar a correção cirúrgica do wake/paging na matriz:
+  - `PendingWakeSession` por alvo de `SET_FENCE`
+  - state machine assíncrono `paging_waiting_uplink -> paging_ready -> awaiting_page_ack -> page_acked -> session_start_ready`
+  - presença recente por `deviceId` e promoção por uplink válido
+  - `RTR_PAGE_ACK` tratado de forma assíncrona no loop principal
+  - handoff assíncrono para o `RPv2` já existente
+  - desativação do page single-shot bloqueante no caminho cloud de `SET_FENCE`
+  - testes host do orquestrador e correlação de ACK
 
 ## Status
 
 **Atualizado: 2026-04-19**
 
-Rodada de implementação RPv2 concluída e primeira entrega de `RTRv1 paging + wake lock` aplicada localmente. Validação host aprovada, aguardando validação de bancada.
+Rodada de implementação RPv2 concluída, `RTRv1 paging + wake lock` aplicada e correção do wake orchestration assíncrono da matriz concluída localmente. Validação host e builds aprovados; validação física de bancada segue pendente.
 
 Base de reaproveitamento confirmada nesta rodada:
 - a task `auditoria-area-sync-e2e.md` ja serve como fundacao da trilha `queue/downlink cloud`
@@ -218,27 +226,69 @@ Base de reaproveitamento confirmada nesta rodada:
   - coleira: `Global variables use 68496 bytes (20%)`
   - matriz: `Sketch uses 1358231 bytes (69%)`
   - matriz: `Global variables use 72916 bytes (22%)`
+- nova rodada aplicada nesta sessao:
+  - a matriz ganhou `PendingWakeSession` em buffer fixo, com estado explícito e correlação de `PAGE_ACK`
+  - a matriz agora mantém o `SET_FENCE` pendente em `paging_waiting_uplink` em vez de falhar por tentativa única imediata
+  - uplink válido da coleira agora vira `wake hint`, atualiza presença e promove a sessão para `paging_ready`
+  - `RTR_PAGE` passou a ser enviado por scheduler não bloqueante, com até 2 campanhas
+  - `RTR_PAGE_ACK` passou a ser tratado no caminho assíncrono de uplink aceito, sem `waitForRtrPageAck()` no fluxo cloud principal
+  - o handoff para `RPv2` agora acontece apenas após `page_acked`, em tick separado
+  - o caminho antigo de retry de `activeSimpleCommand` foi neutralizado para `SET_FENCE` quando houver wake sessions pendentes
+  - foi criado `gateway-matriz/RtrWakeOrchestrator.h` para concentrar a lógica pura do state machine e permitir testes host
+- validacao local desta rodada:
+  - testes nativos `rtrv1_wake_scheduler_test`, `rtrv1_page_ack_correlation_test` e `rtrv1_presence_hint_test`: ok
+  - `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz`: ok
+  - `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs coleira`: ok
+  - `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway`: ok
+  - matriz: `Sketch uses 1375563 bytes (69%)`
+  - matriz: `Global variables use 85588 bytes (26%)`
+  - coleira: `Sketch uses 1158533 bytes (58%)`
+  - coleira: `Global variables use 68496 bytes (20%)`
+  - gateway comum: `Sketch uses 1916207 bytes (97%)`
+  - gateway comum: `Global variables use 75332 bytes (22%)`
 
 Historico adicional desta rodada:
 - 2026-04-19: recebido plano cirúrgico externo para transporte LoRa confiável orientado a sessão
 - 2026-04-19: recorte executado deliberadamente em `Fase 0 + Fase 1`, preservando o `RPv2` já implantado para `SET_FENCE`
 - 2026-04-19: `RTRv1` foi introduzido como camada de controle interna sem reescrever o envelope `LoRaFrame`
 - 2026-04-19: o fluxo atual ficou `RTR_PAGE -> RTR_PAGE_ACK -> RPV2 BEGIN/POINTS/COMMIT`, preparando a migração incremental para a sessão confiável completa do plano
+- 2026-04-19: novo plano cirúrgico confirmou que o gargalo restante não era o `RPv2`, mas o `PAGE` single-shot da matriz
+- 2026-04-19: a matriz foi migrada para wake orchestration assíncrono baseado em uplink aceito da coleira
+- 2026-04-19: `SET_FENCE` vindo da fila cloud deixou de chamar o page bloqueante diretamente e passou a criar sessão pendente por alvo
+- 2026-04-19: `PAGE_ACK` passou a ser correlacionado por `deviceId + sessionId + messageId` no loop principal
+- 2026-04-19: a próxima evidência necessária saiu do escopo local e depende de bancada com logs reais do ciclo `wake hint -> page -> page ack -> rpv2`
 
 ## Next step
 
-### Validação da fase RTRv1 paging + wake lock (próxima rodada de bancada)
+### Validação da fase wake orchestration assíncrono (próxima rodada de bancada)
 
 1. Regravar matriz e coleira com a rodada `RTRv1 + RPv2`
-2. Validar em bancada o handshake:
+2. Repetir `SET_FENCE` pelo app/cloud e validar em bancada o handshake completo:
+   - `QUEUE_COMMAND_LOADED`
+   - `RTR_WAKE_SESSION_CREATED`
+   - `RTR_PAGE_DEFERRED_WAITING_UPLINK` ou `paging_ready`
+   - após uplink real da coleira:
+   - `RTR_DEVICE_PRESENCE_UPDATE`
+   - `RTR_WAKE_HINT_FROM_UPLINK`
+   - `RTR_PAGE_READY_TO_SEND`
    - `RTR_PAGE_PLAN`
    - `RTR_PAGE_TX_OK`
    - `RTR_PAGE_RX`
    - `RTR_PAGE_ACK_TX`
    - `RTR_PAGE_ACK_RX`
    - `RTR_SESSION_MODE_ENTER`
+   - `RTR_TO_RPV2_START`
+   - sequência `RPV2_*`
 3. Confirmar que a coleira permanece acordada por wake lock e não entra em `deep sleep` antes do término ou timeout da sessão
-4. Repetir a homologação E2E `SET_FENCE` já existente com o novo paging à frente da sessão `RPv2`
+4. Confirmar no backend:
+   - `transport=radio_fence_v2`
+   - `transportState=applied`
+   - falha, se houver, com `reasonCode`/`reasonLabel` ligados ao page
+5. Se ainda falhar, identificar se o próximo gargalo está em:
+   - ausência de uplink útil após o comando
+   - page não recebido pela coleira
+   - page ack não correlacionado na matriz
+   - handoff `PAGE_ACKED -> RPV2` não executado
 
 ### Validação da fase RPv2 (continuação após paging)
 

@@ -35,6 +35,7 @@
 #include "Logger.h"
 #include "BlePresence.h"
 #include "LoRaGateway.h"
+#include "RtrWakeOrchestrator.h"
 #include "SdLogger.h"
 #include "ApiServer.h"
 #include "QueueStreamSupport.h"
@@ -280,6 +281,26 @@ struct Rpv2AwaitedResponse {
   uint16_t activePoints = 0;
 };
 
+struct PendingWakeSession {
+  rtrwake::SessionCore core{};
+  char commandId[48]{};
+  uint64_t scopeId = 0;
+  MsgType commandType = MsgType::SET_FENCE;
+  uint64_t radioCommandId = 0;
+  uint32_t sessionNonce = 0;
+  uint16_t estimatedFragments = 0;
+  uint16_t lastReasonCode = rtrv1::REASON_NONE;
+  char lastReasonLabel[48]{};
+  bool rpv2PlanReady = false;
+  Rpv2FenceChunkPlan plan{};
+};
+
+constexpr uint8_t kMaxPendingWakeSessions = cfg::MAX_HERD_OPERATION_DEVICES;
+constexpr uint8_t kMaxDevicePresenceEntries = cfg::MAX_HERD_OPERATION_DEVICES;
+constexpr uint32_t kRecentWakeHintMs = 4000;
+PendingWakeSession pendingWakeSessions[kMaxPendingWakeSessions]{};
+rtrwake::Presence devicePresence[kMaxDevicePresenceEntries]{};
+
 struct CloudPublishContext {
   uint32_t nowSec = 0;
   uint64_t nowMs = 0;
@@ -305,6 +326,8 @@ struct TelemetryPublishTrace {
   CloudWriteTrace latest{};
   CloudWriteTrace history{};
 };
+
+struct FencePointsResolution;
 
 static void setWatchdogEnabled(bool enabled);
 static void feedWatchdogIfEnabled();
@@ -387,6 +410,37 @@ static bool splitFencePointArrayForPayload(
     uint8_t ends[cfg::MAX_POLYGON_POINTS],
     uint8_t& chunkCount,
     const char** reason = nullptr);
+static bool hasPendingWakeSessions();
+static int findPendingWakeSessionByDeviceId(uint32_t deviceId);
+static int findPendingWakeSessionByCommandId(const char* commandId);
+static int findPendingWakeSessionByPageCorrelation(uint32_t deviceId, uint64_t sessionId, uint32_t messageId);
+static PendingWakeSession* allocatePendingWakeSession();
+static void clearPendingWakeSession(int idx, const char* reason);
+static const char* pendingWakeStateLabel(rtrwake::State state);
+static void transitionPendingWakeState(PendingWakeSession& session, rtrwake::State nextState, const char* reason);
+static void setPendingWakeReason(PendingWakeSession& session, uint16_t reasonCode, const char* reasonLabel);
+static void updateDevicePresenceFromAcceptedUplink(const LoRaFrame& rx);
+static rtrwake::Presence* findDevicePresence(uint32_t deviceId);
+static void notePendingWakeHintFromUplink(const LoRaFrame& rx);
+static bool handlePendingWakePageAck(const LoRaFrame& rx);
+static bool trySendRtrPage(PendingWakeSession& session, const char** reason = nullptr);
+static bool executeFenceCommandRpv2Plan(
+    uint32_t deviceId,
+    uint64_t scopeId,
+    uint64_t radioCommandId,
+    uint32_t sessionNonce,
+    const char* commandId,
+    const Rpv2FenceChunkPlan& plan,
+    const char** reason);
+static bool prepareFenceWakeSession(
+    uint32_t deviceId,
+    const JsonVariantConst payload,
+    const char* commandId,
+    const FencePointsResolution& pointsResolution,
+    const char** reason);
+static void finalizeFenceCommandIfAllTargetsTerminal();
+static void failPendingWakeSession(PendingWakeSession& session, uint16_t reasonCode, const char* reasonLabel);
+static void processPendingWakeSessions();
 
 enum class QueueLoadResult : uint8_t {
   kLoaded = 0,
@@ -1915,6 +1969,9 @@ static void clearActiveSimpleCommand() {
   if (deferredUplinkQueueCount > 0 && deferredUplinkFlushAtMs == 0) {
     deferredUplinkFlushAtMs = millis() + cfg::SIMPLE_COMMAND_ACK_POST_FLUSH_DELAY_MS;
   }
+  for (uint8_t i = 0; i < kMaxPendingWakeSessions; ++i) {
+    pendingWakeSessions[i] = PendingWakeSession{};
+  }
   activeSimpleCommand = ActiveSimpleCommandState{};
   simpleAckWaitActive = false;
   simpleAckWaitDeviceId = 0;
@@ -1943,6 +2000,9 @@ static bool isHealthDailyEvent(const LoRaFrame& rx) {
 
 static void scheduleActiveSimpleCommandRetryForRx(const LoRaFrame& rx) {
   if (!activeSimpleCommand.active || activeSimpleCommand.targetCount == 0) return;
+  if (strcmp(activeSimpleCommand.command, "SET_FENCE") == 0 && hasPendingWakeSessions()) {
+    return;
+  }
   bool matchesTarget = false;
   for (uint8_t i = 0; i < activeSimpleCommand.targetCount; ++i) {
     if (targetStateMatchesDeviceId(activeSimpleCommand.targets[i], rx.deviceId)) {
@@ -2105,6 +2165,10 @@ static bool resendActiveSimpleCommand(
     const LoRaFrame* triggerRx,
     const char** reason) {
   if (!activeSimpleCommand.active || !activeSimpleCommand.commandId[0]) return false;
+  if (strcmp(activeSimpleCommand.command, "SET_FENCE") == 0 && hasPendingWakeSessions()) {
+    if (reason) *reason = "wake_session_pending";
+    return false;
+  }
   if (!activeSimpleCommand.payloadJson[0]) {
     if (reason) *reason = "missing_cached_payload";
     return false;
@@ -2168,6 +2232,7 @@ static bool resendActiveSimpleCommand(
 
 static void processScheduledActiveSimpleCommandRetry() {
   if (!activeSimpleCommand.active || !activeSimpleCommand.targetedRetryPending) return;
+  if (strcmp(activeSimpleCommand.command, "SET_FENCE") == 0 && hasPendingWakeSessions()) return;
   const uint32_t nowTick = millis();
   if ((int32_t)(nowTick - activeSimpleCommand.targetedRetryAtMs) < 0) return;
   if (lora.lastRawRxAtMs() != 0 &&
@@ -2773,6 +2838,11 @@ static bool processPrioritySimpleCommandFeedbackWindow() {
 }
 
 static void processAcceptedUplink(const LoRaFrame& rx) {
+  updateDevicePresenceFromAcceptedUplink(rx);
+  notePendingWakeHintFromUplink(rx);
+  if (handlePendingWakePageAck(rx)) {
+    return;
+  }
   handleSimpleCommandFeedback(rx);
   handleHerdingOperationFeedback(rx);
   handleHerdingOperationEvent(rx);
@@ -2887,6 +2957,175 @@ static void publishFenceTransportState(
   publishSimpleCommandResult(transportState, reason);
 }
 
+static const char* pendingWakeStateLabel(rtrwake::State state) {
+  return rtrwake::stateLabel(state);
+}
+
+static bool hasPendingWakeSessions() {
+  for (uint8_t i = 0; i < kMaxPendingWakeSessions; ++i) {
+    if (pendingWakeSessions[i].core.active) return true;
+  }
+  return false;
+}
+
+static int findPendingWakeSessionByDeviceId(uint32_t deviceId) {
+  if (deviceId == 0) return -1;
+  for (uint8_t i = 0; i < kMaxPendingWakeSessions; ++i) {
+    if (pendingWakeSessions[i].core.active &&
+        pendingWakeSessions[i].core.deviceId == deviceId) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+static int findPendingWakeSessionByCommandId(const char* commandId) {
+  if (!commandId || !commandId[0]) return -1;
+  for (uint8_t i = 0; i < kMaxPendingWakeSessions; ++i) {
+    if (!pendingWakeSessions[i].core.active) continue;
+    if (strcmp(pendingWakeSessions[i].commandId, commandId) == 0) return i;
+  }
+  return -1;
+}
+
+static int findPendingWakeSessionByPageCorrelation(
+    uint32_t deviceId,
+    uint64_t sessionId,
+    uint32_t messageId) {
+  for (uint8_t i = 0; i < kMaxPendingWakeSessions; ++i) {
+    if (rtrwake::pageAckMatches(
+            pendingWakeSessions[i].core, deviceId, sessionId, messageId)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+static PendingWakeSession* allocatePendingWakeSession() {
+  for (uint8_t i = 0; i < kMaxPendingWakeSessions; ++i) {
+    if (!pendingWakeSessions[i].core.active) return &pendingWakeSessions[i];
+  }
+  return nullptr;
+}
+
+static void setPendingWakeReason(
+    PendingWakeSession& session,
+    uint16_t reasonCode,
+    const char* reasonLabel) {
+  session.lastReasonCode = reasonCode;
+  copyStringToBuffer(
+      session.lastReasonLabel,
+      sizeof(session.lastReasonLabel),
+      reasonLabel ? reasonLabel : "");
+}
+
+static void transitionPendingWakeState(
+    PendingWakeSession& session,
+    rtrwake::State nextState,
+    const char* reason) {
+  const rtrwake::State previous = session.core.state;
+  if (previous == nextState) return;
+  session.core.state = nextState;
+  LOGI(
+      "RTR_STATE_TRANSITION commandId=%s deviceId=%lu fromState=%s toState=%s campaignCount=%u reason=%s",
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long)session.core.deviceId,
+      pendingWakeStateLabel(previous),
+      pendingWakeStateLabel(nextState),
+      (unsigned)session.core.campaignCount,
+      reason ? reason : "-");
+}
+
+static rtrwake::Presence* findDevicePresence(uint32_t deviceId) {
+  if (deviceId == 0) return nullptr;
+  for (uint8_t i = 0; i < kMaxDevicePresenceEntries; ++i) {
+    if (devicePresence[i].valid && devicePresence[i].deviceId == deviceId) {
+      return &devicePresence[i];
+    }
+  }
+  for (uint8_t i = 0; i < kMaxDevicePresenceEntries; ++i) {
+    if (!devicePresence[i].valid) return &devicePresence[i];
+  }
+  return &devicePresence[0];
+}
+
+static void updateDevicePresenceFromAcceptedUplink(const LoRaFrame& rx) {
+  if (rx.deviceId == 0) return;
+  rtrwake::Presence* presence = findDevicePresence(rx.deviceId);
+  if (!presence) return;
+  const uint32_t nowMs = millis();
+  const uint32_t previousSeenAtMs = presence->lastSeenAtMs;
+  rtrwake::updatePresence(presence, rx.deviceId, nowMs);
+  LOGI(
+      "RTR_DEVICE_PRESENCE_UPDATE deviceId=%lu lastSeenAtMs=%lu estimatedCycleMs=%lu previousSeenAtMs=%lu",
+      (unsigned long)presence->deviceId,
+      (unsigned long)presence->lastSeenAtMs,
+      (unsigned long)presence->estimatedCycleMs,
+      (unsigned long)previousSeenAtMs);
+}
+
+static void finalizeFenceCommandIfAllTargetsTerminal() {
+  if (!activeSimpleCommand.active) return;
+  if (strcmp(activeSimpleCommand.command, "SET_FENCE") != 0) return;
+  if (!allActiveSimpleTargetsTerminal()) return;
+  const char* finalStatus = anyActiveSimpleTargetFailed() ? "failed" : "applied";
+  publishSimpleCommandResult(finalStatus, nullptr);
+  clearActiveSimpleCommand();
+}
+
+static void clearPendingWakeSession(int idx, const char* reason) {
+  if (idx < 0 || idx >= kMaxPendingWakeSessions) return;
+  PendingWakeSession& session = pendingWakeSessions[idx];
+  if (!session.core.active) return;
+  LOGI(
+      "RTR_WAKE_SESSION_CLEARED commandId=%s deviceId=%lu state=%s campaignCount=%u reason=%s",
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long)session.core.deviceId,
+      pendingWakeStateLabel(session.core.state),
+      (unsigned)session.core.campaignCount,
+      reason ? reason : "-");
+  session = PendingWakeSession{};
+  finalizeFenceCommandIfAllTargetsTerminal();
+}
+
+static void failPendingWakeSession(
+    PendingWakeSession& session,
+    uint16_t reasonCode,
+    const char* reasonLabel) {
+  setPendingWakeReason(session, reasonCode, reasonLabel);
+  transitionPendingWakeState(session, rtrwake::State::FAILED, reasonLabel);
+  publishFenceTransportState(
+      session.core.deviceId,
+      "failed",
+      reasonLabel,
+      reasonCode,
+      true,
+      false);
+}
+
+static void notePendingWakeHintFromUplink(const LoRaFrame& rx) {
+  const int idx = findPendingWakeSessionByDeviceId(rx.deviceId);
+  if (idx < 0) return;
+  PendingWakeSession& session = pendingWakeSessions[idx];
+  const char* fromState = pendingWakeStateLabel(session.core.state);
+  const uint32_t nowMs = millis();
+  if (!rtrwake::noteUplinkHint(&session.core, rx.deviceId, nowMs)) return;
+  publishFenceTransportState(session.core.deviceId, "paging_ready");
+  LOGI(
+      "RTR_WAKE_HINT_FROM_UPLINK deviceId=%lu commandId=%s stateBefore=%s lastSeenAtMs=%lu campaignCount=%u",
+      (unsigned long)rx.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      fromState,
+      (unsigned long)session.core.lastUplinkAtMs,
+      (unsigned)session.core.campaignCount);
+  transitionPendingWakeState(session, rtrwake::State::PAGING_READY_TO_SEND, "uplink_hint");
+  LOGI(
+      "RTR_PAGE_READY_TO_SEND deviceId=%lu commandId=%s campaignCount=%u",
+      (unsigned long)rx.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned)session.core.campaignCount);
+}
+
 static int32_t coordinateToE7(double value) {
   const double scaled = value * 10000000.0;
   return static_cast<int32_t>(scaled >= 0.0 ? scaled + 0.5 : scaled - 0.5);
@@ -2935,6 +3174,86 @@ static bool sendLoRaBinaryFrame(
   return ok;
 }
 
+static bool trySendRtrPage(
+    PendingWakeSession& session,
+    const char** reason) {
+  rtrv1::Header header{};
+  header.version = rtrv1::PROTOCOL_VERSION;
+  header.trafficClass = rtrv1::TRAFFIC_CLASS_P0;
+  header.innerMsgType = rtrv1::RTR_PAGE;
+  header.flags = rtrv1::FLAG_ACK_REQUIRED | rtrv1::FLAG_PAGE | rtrv1::FLAG_WAKE_LOCK;
+  header.sessionId = session.core.pageSessionId;
+  header.messageId = session.core.pageMessageId;
+  header.sourceId = 0;
+  header.finalDestId = session.core.deviceId;
+  header.nextHopId = session.core.deviceId;
+  header.fragmentIndex = 0;
+  header.fragmentTotal = 1;
+  header.hopCount = 0;
+  header.ttl = rtrv1::DEFAULT_TTL;
+
+  rtrv1::PageBody body{};
+  body.commandType = static_cast<uint8_t>(session.commandType);
+  body.priority = rtrv1::TRAFFIC_CLASS_P1;
+  body.estimatedFragments = session.estimatedFragments;
+  body.sessionTimeoutSec = rtrv1::SESSION_CACHE_TTL_SEC;
+  body.wakeLockSec = rtrv1::SESSION_WAKE_LOCK_MS / 1000UL;
+  body.routeId = 0;
+
+  uint8_t payload[sizeof(rtrv1::Header) + sizeof(rtrv1::PageBody)]{};
+  const size_t payloadLen = rtrv1::encodeFrame(header, body, payload, sizeof(payload));
+  if (payloadLen == 0) {
+    if (reason) *reason = "page_encode_failed";
+    return false;
+  }
+
+  LOGI(
+      "RTR_PAGE_PLAN deviceId=%lu commandId=%s sessionId=%llu messageId=%lu commandType=%u estimatedFragments=%u",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.core.pageSessionId,
+      (unsigned long)session.core.pageMessageId,
+      (unsigned)session.commandType,
+      (unsigned)session.estimatedFragments);
+  if (!sendLoRaBinaryFrame(
+          session.core.deviceId,
+          MsgType::RTR_CONTROL,
+          session.scopeId,
+          payload,
+          payloadLen,
+          reason)) {
+    setPendingWakeReason(
+        session,
+        rtrv1::REASON_PAGE_SEND_FAILED,
+        reason && *reason ? *reason : rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_SEND_FAILED));
+    LOGW(
+        "RTR_PAGE_TX_FAIL deviceId=%lu commandId=%s campaignCount=%u reason=%s",
+        (unsigned long)session.core.deviceId,
+        session.commandId[0] ? session.commandId : "-",
+        (unsigned)session.core.campaignCount,
+        session.lastReasonLabel[0] ? session.lastReasonLabel : "page_send_failed");
+    return false;
+  }
+  publishFenceTransportState(session.core.deviceId, "paging_sent");
+  rtrwake::markPageAttempt(&session.core, millis(), rtrv1::PAGE_ACK_TIMEOUT_MS);
+  transitionPendingWakeState(session, rtrwake::State::PAGING_AWAITING_ACK, "page_tx_ok");
+  publishFenceTransportState(session.core.deviceId, "awaiting_page_ack");
+  appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      "rtr_page_sent",
+      nullptr,
+      nullptr);
+  LOGI(
+      "RTR_PAGE_TX_OK deviceId=%lu commandId=%s sessionId=%llu messageId=%lu campaignCount=%u",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.core.pageSessionId,
+      (unsigned long)session.core.pageMessageId,
+      (unsigned)session.core.campaignCount);
+  return true;
+}
+
 static bool decodeRtrPageAckFrame(
     const LoRaFrame& rx,
     uint64_t sessionId,
@@ -2946,6 +3265,63 @@ static bool decodeRtrPageAckFrame(
   if (!rtrv1::decodePageAck(rx.payload, rx.payloadLen, &header, &body)) return false;
   if (header.sessionId != sessionId || header.messageId != messageId) return false;
   *outBody = body;
+  return true;
+}
+
+static bool handlePendingWakePageAck(const LoRaFrame& rx) {
+  if (rx.msgType != MsgType::RTR_CONTROL) return false;
+  rtrv1::Header header{};
+  rtrv1::PageAckBody ack{};
+  if (!rtrv1::decodePageAck(rx.payload, rx.payloadLen, &header, &ack)) return false;
+  const int idx = findPendingWakeSessionByPageCorrelation(
+      rx.deviceId, header.sessionId, header.messageId);
+  if (idx < 0) {
+    LOGW(
+        "RTR_PAGE_ACK_INVALID deviceId=%lu sessionId=%llu messageId=%lu accepted=%u sessionModeActive=%u",
+        (unsigned long)rx.deviceId,
+        (unsigned long long)header.sessionId,
+        (unsigned long)header.messageId,
+        (unsigned)ack.accepted,
+        (unsigned)ack.sessionModeActive);
+    return false;
+  }
+  PendingWakeSession& session = pendingWakeSessions[idx];
+  if (session.core.state != rtrwake::State::PAGING_AWAITING_ACK) {
+    LOGW(
+        "RTR_PAGE_ACK_INVALID deviceId=%lu commandId=%s state=%s",
+        (unsigned long)rx.deviceId,
+        session.commandId[0] ? session.commandId : "-",
+        pendingWakeStateLabel(session.core.state));
+    return false;
+  }
+  if (!ack.accepted || !ack.sessionModeActive) {
+    setPendingWakeReason(
+        session,
+        rtrv1::REASON_PAGE_ACK_INVALID,
+        rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_ACK_INVALID));
+    failPendingWakeSession(
+        session,
+        rtrv1::REASON_PAGE_ACK_INVALID,
+        rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_ACK_INVALID));
+    return true;
+  }
+  rtrwake::markPageAcked(&session.core);
+  transitionPendingWakeState(session, rtrwake::State::PAGE_ACKED, "page_ack_ok");
+  publishFenceTransportState(session.core.deviceId, "page_acked");
+  appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      "rtr_page_ack",
+      nullptr,
+      nullptr);
+  LOGI(
+      "RTR_PAGE_ACK_RX deviceId=%lu commandId=%s sessionId=%llu messageId=%lu suggestedRxWindowMs=%u wakeLockSec=%lu",
+      (unsigned long)rx.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)header.sessionId,
+      (unsigned long)header.messageId,
+      (unsigned)ack.suggestedRxWindowMs,
+      (unsigned long)ack.wakeLockUntilSec);
   return true;
 }
 
@@ -3295,42 +3671,14 @@ static bool buildFenceRpv2Plan(
   return true;
 }
 
-static bool sendFenceCommandRpv2Session(
+static bool executeFenceCommandRpv2Plan(
     uint32_t deviceId,
-    const JsonVariantConst payload,
+    uint64_t scopeId,
+    uint64_t radioCommandId,
+    uint32_t sessionNonce,
     const char* commandId,
-    const FencePointsResolution& pointsResolution,
+    const Rpv2FenceChunkPlan& plan,
     const char** reason) {
-  uint64_t scopeId = parseScopeIdHex(payload["scope_id"]);
-  if (scopeId == 0) scopeId = parseScopeIdHex(payload["property_scope_id"]);
-  const uint64_t radioCommandId = rpv2::fnv1a64(commandId && commandId[0] ? commandId : "set_fence");
-  const uint32_t sessionNonce = esp_random();
-  Rpv2FenceChunkPlan plan;
-  if (!buildFenceRpv2Plan(
-          pointsResolution.points,
-          scopeId,
-          deviceId,
-          radioCommandId,
-          sessionNonce,
-          commandId,
-          &plan,
-          reason)) {
-    activeSimpleCommand.lastReasonCode =
-        reason ? rpv2ReasonCodeFromLabel(*reason) : rpv2::REASON_NONE;
-    return false;
-  }
-  if (!sendRtrPageForCommand(
-          deviceId,
-          scopeId,
-          MsgType::SET_FENCE,
-          static_cast<uint16_t>(plan.totalChunks + 2),
-          radioCommandId,
-          sessionNonce,
-          commandId,
-          reason)) {
-    return false;
-  }
-
   uint8_t framePayload[128]{};
   rpv2::Header header{};
   header.protocolVersion = rpv2::PROTOCOL_VERSION;
@@ -3632,6 +3980,291 @@ static bool sendFenceCommandRpv2Session(
       nullptr);
   publishFenceTransportState(deviceId, "applied", nullptr, rpv2::REASON_NONE, true, true);
   return true;
+}
+
+static bool sendFenceCommandRpv2Session(
+    uint32_t deviceId,
+    const JsonVariantConst payload,
+    const char* commandId,
+    const FencePointsResolution& pointsResolution,
+    const char** reason) {
+  uint64_t scopeId = parseScopeIdHex(payload["scope_id"]);
+  if (scopeId == 0) scopeId = parseScopeIdHex(payload["property_scope_id"]);
+  const uint64_t radioCommandId = rpv2::fnv1a64(commandId && commandId[0] ? commandId : "set_fence");
+  const uint32_t sessionNonce = esp_random();
+  Rpv2FenceChunkPlan plan;
+  if (!buildFenceRpv2Plan(
+          pointsResolution.points,
+          scopeId,
+          deviceId,
+          radioCommandId,
+          sessionNonce,
+          commandId,
+          &plan,
+          reason)) {
+    activeSimpleCommand.lastReasonCode =
+        reason ? rpv2ReasonCodeFromLabel(*reason) : rpv2::REASON_NONE;
+    return false;
+  }
+  if (!sendRtrPageForCommand(
+          deviceId,
+          scopeId,
+          MsgType::SET_FENCE,
+          static_cast<uint16_t>(plan.totalChunks + 2),
+          radioCommandId,
+          sessionNonce,
+          commandId,
+          reason)) {
+    return false;
+  }
+  return executeFenceCommandRpv2Plan(
+      deviceId,
+      scopeId,
+      radioCommandId,
+      sessionNonce,
+      commandId,
+      plan,
+      reason);
+}
+
+static bool prepareFenceWakeSession(
+    uint32_t deviceId,
+    const JsonVariantConst payload,
+    const char* commandId,
+    const FencePointsResolution& pointsResolution,
+    const char** reason) {
+  const int existingIdx = findPendingWakeSessionByDeviceId(deviceId);
+  PendingWakeSession* session = existingIdx >= 0
+      ? &pendingWakeSessions[existingIdx]
+      : allocatePendingWakeSession();
+  if (!session) {
+    if (reason) *reason = "pending_wake_session_full";
+    return false;
+  }
+
+  uint64_t scopeId = parseScopeIdHex(payload["scope_id"]);
+  if (scopeId == 0) scopeId = parseScopeIdHex(payload["property_scope_id"]);
+  const uint64_t radioCommandId =
+      rpv2::fnv1a64(commandId && commandId[0] ? commandId : "set_fence");
+  const uint32_t sessionNonce = esp_random();
+  Rpv2FenceChunkPlan plan;
+  if (!buildFenceRpv2Plan(
+          pointsResolution.points,
+          scopeId,
+          deviceId,
+          radioCommandId,
+          sessionNonce,
+          commandId,
+          &plan,
+          reason)) {
+    activeSimpleCommand.lastReasonCode =
+        reason ? rpv2ReasonCodeFromLabel(*reason) : rpv2::REASON_NONE;
+    return false;
+  }
+
+  const uint32_t nowMs = millis();
+  const rtrwake::Presence* presence = findDevicePresence(deviceId);
+  const bool recentHint =
+      presence && presence->valid &&
+      presence->lastSeenAtMs != 0 &&
+      (uint32_t)(nowMs - presence->lastSeenAtMs) <= kRecentWakeHintMs;
+
+  if (existingIdx >= 0) {
+    LOGI(
+        "RTR_WAKE_SESSION_REUSED commandId=%s deviceId=%lu previousState=%s",
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long)deviceId,
+        pendingWakeStateLabel(session->core.state));
+  }
+  *session = PendingWakeSession{};
+  session->core.active = true;
+  session->core.deviceId = deviceId;
+  session->core.pageSessionId = rtrv1::makeSessionId(radioCommandId, deviceId, sessionNonce);
+  session->core.pageMessageId =
+      static_cast<uint32_t>(sessionNonce ^ deviceId ^ (uint32_t)MsgType::SET_FENCE);
+  session->core.maxCampaigns = rtrv1::MAX_PAGE_CAMPAIGNS;
+  session->core.createdAtMs = nowMs;
+  session->core.lastUplinkAtMs = presence && presence->valid ? presence->lastSeenAtMs : 0;
+  session->core.predictedWakeAtMs =
+      (presence && presence->valid && presence->estimatedCycleMs != 0)
+          ? presence->lastSeenAtMs + presence->estimatedCycleMs
+          : 0;
+  session->core.nextPageAttemptAtMs = recentHint ? nowMs : 0;
+  session->core.state = recentHint
+      ? rtrwake::State::PAGING_READY_TO_SEND
+      : rtrwake::State::PAGING_WAITING_UPLINK;
+  copyStringToBuffer(session->commandId, sizeof(session->commandId), commandId);
+  session->scopeId = scopeId == 0 ? bindingScopeIdValue() : scopeId;
+  session->commandType = MsgType::SET_FENCE;
+  session->radioCommandId = radioCommandId;
+  session->sessionNonce = sessionNonce;
+  session->estimatedFragments = static_cast<uint16_t>(plan.totalChunks + 2);
+  session->rpv2PlanReady = true;
+  session->plan = plan;
+  setPendingWakeReason(*session, rtrv1::REASON_NONE, "");
+
+  publishFenceTransportState(
+      deviceId,
+      recentHint ? "paging_ready" : "paging_waiting_uplink");
+  LOGI(
+      "RTR_WAKE_SESSION_CREATED commandId=%s deviceId=%lu state=%s estimatedFragments=%u predictedWakeAtMs=%lu lastUplinkAtMs=%lu",
+      session->commandId[0] ? session->commandId : "-",
+      (unsigned long)deviceId,
+      pendingWakeStateLabel(session->core.state),
+      (unsigned)session->estimatedFragments,
+      (unsigned long)session->core.predictedWakeAtMs,
+      (unsigned long)session->core.lastUplinkAtMs);
+  if (!recentHint) {
+    LOGI(
+        "RTR_PAGE_DEFERRED_WAITING_UPLINK commandId=%s deviceId=%lu campaignCount=%u",
+        session->commandId[0] ? session->commandId : "-",
+        (unsigned long)deviceId,
+        (unsigned)session->core.campaignCount);
+  }
+  return true;
+}
+
+static void processPendingWakeSessions() {
+  const uint32_t nowMs = millis();
+  for (uint8_t i = 0; i < kMaxPendingWakeSessions; ++i) {
+    PendingWakeSession& session = pendingWakeSessions[i];
+    if (!session.core.active) continue;
+
+    switch (session.core.state) {
+      case rtrwake::State::PAGING_WAITING_UPLINK:
+        if (rtrwake::predictedWakeReady(session.core, nowMs)) {
+          transitionPendingWakeState(
+              session, rtrwake::State::PAGING_READY_TO_SEND, "predicted_wake");
+          publishFenceTransportState(session.core.deviceId, "paging_ready");
+          LOGI(
+              "RTR_PAGE_READY_TO_SEND deviceId=%lu commandId=%s campaignCount=%u",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              (unsigned)session.core.campaignCount);
+        }
+        break;
+
+      case rtrwake::State::PAGING_READY_TO_SEND:
+        if (session.core.nextPageAttemptAtMs == 0 ||
+            (int32_t)(nowMs - session.core.nextPageAttemptAtMs) >= 0) {
+          const char* sendReason = nullptr;
+          if (!trySendRtrPage(session, &sendReason)) {
+            if (session.core.campaignCount < session.core.maxCampaigns) {
+              transitionPendingWakeState(
+                  session, rtrwake::State::PAGING_WAITING_UPLINK, "page_send_failed_retry");
+              rtrwake::scheduleRetryWaitingUplink(&session.core, nowMs);
+              publishFenceTransportState(
+                  session.core.deviceId,
+                  "paging_waiting_uplink",
+                  sendReason ? sendReason : session.lastReasonLabel,
+                  rtrv1::REASON_PAGE_SEND_FAILED,
+                  false,
+                  false);
+            } else {
+              failPendingWakeSession(
+                  session,
+                  rtrv1::REASON_PAGE_SEND_FAILED,
+                  session.lastReasonLabel[0]
+                      ? session.lastReasonLabel
+                      : rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_SEND_FAILED));
+            }
+          }
+        }
+        break;
+
+      case rtrwake::State::PAGING_AWAITING_ACK:
+        if (rtrwake::pageAckTimedOut(session.core, nowMs)) {
+          if (rtrwake::canRetryAfterTimeout(session.core)) {
+            LOGW(
+                "RTR_PAGE_TIMEOUT_RETRY deviceId=%lu commandId=%s campaignCount=%u",
+                (unsigned long)session.core.deviceId,
+                session.commandId[0] ? session.commandId : "-",
+                (unsigned)session.core.campaignCount);
+            transitionPendingWakeState(
+                session, rtrwake::State::PAGING_WAITING_UPLINK, "page_timeout_retry");
+            rtrwake::scheduleRetryWaitingUplink(&session.core, nowMs);
+            setPendingWakeReason(
+                session,
+                rtrv1::REASON_PAGE_TIMEOUT,
+                rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_TIMEOUT));
+            publishFenceTransportState(
+                session.core.deviceId,
+                "page_timeout_retry_scheduled",
+                rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_TIMEOUT),
+                rtrv1::REASON_PAGE_TIMEOUT,
+                false,
+                false);
+          } else {
+            LOGW(
+                "RTR_PAGE_TIMEOUT_FINAL deviceId=%lu commandId=%s campaignCount=%u",
+                (unsigned long)session.core.deviceId,
+                session.commandId[0] ? session.commandId : "-",
+                (unsigned)session.core.campaignCount);
+            failPendingWakeSession(
+                session,
+                rtrv1::REASON_PAGE_TIMEOUT_FINAL,
+                rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_TIMEOUT_FINAL));
+          }
+        }
+        break;
+
+      case rtrwake::State::PAGE_ACKED:
+        transitionPendingWakeState(
+            session, rtrwake::State::SESSION_START_READY, "page_ack_ok");
+        break;
+
+      case rtrwake::State::SESSION_START_READY: {
+        publishFenceTransportState(session.core.deviceId, "session_starting");
+        transitionPendingWakeState(
+            session, rtrwake::State::SESSION_IN_PROGRESS, "rpv2_start");
+        LOGI(
+            "RTR_TO_RPV2_START deviceId=%lu commandId=%s campaignCount=%u",
+            (unsigned long)session.core.deviceId,
+            session.commandId[0] ? session.commandId : "-",
+            (unsigned)session.core.campaignCount);
+        session.core.sessionStarted = true;
+        const char* sessionReason = nullptr;
+        if (executeFenceCommandRpv2Plan(
+                session.core.deviceId,
+                session.scopeId,
+                session.radioCommandId,
+                session.sessionNonce,
+                session.commandId,
+                session.plan,
+                &sessionReason)) {
+          transitionPendingWakeState(
+              session, rtrwake::State::COMPLETED, "rpv2_applied");
+        } else {
+          LOGW(
+              "RTR_TO_RPV2_ABORT deviceId=%lu commandId=%s reason=%s",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              sessionReason ? sessionReason : "session_start_failed");
+          failPendingWakeSession(
+              session,
+              activeSimpleCommand.lastReasonCode != rpv2::REASON_NONE
+                  ? activeSimpleCommand.lastReasonCode
+                  : rtrv1::REASON_SESSION_NOT_STARTED_AFTER_PAGE_ACK,
+              sessionReason && sessionReason[0]
+                  ? sessionReason
+                  : rtrv1::reasonCodeLabel(
+                        rtrv1::REASON_SESSION_NOT_STARTED_AFTER_PAGE_ACK));
+        }
+        break;
+      }
+
+      case rtrwake::State::COMPLETED:
+        clearPendingWakeSession(i, "completed");
+        break;
+
+      case rtrwake::State::FAILED:
+        clearPendingWakeSession(i, session.lastReasonLabel);
+        break;
+
+      default:
+        break;
+    }
+  }
 }
 
 static bool sendLoRaJsonFrame(uint32_t deviceId, MsgType msgType, const JsonVariantConst payload, const char** reason) {
@@ -4623,13 +5256,15 @@ static bool dispatchQueuedSimpleCommand(
           (unsigned long)deviceId);
       bool ok = false;
       if (strcmp(command, "SET_FENCE") == 0) {
-        AS_MATRIX_LORA_TX_ATTEMPT(commandId.c_str(), deviceId, 0, 1);
-        ok = sendFenceCommandChunked(deviceId, payloadDoc.as<JsonVariantConst>(), reason);
-        if (ok) {
-          const int pts = payloadDoc["points"].as<JsonArrayConst>().size();
-          AS_MATRIX_LORA_TX_OK(
-              commandId.c_str(), deviceId, 0, 1, activeSimpleCommand.originDocId, pts);
-        } else {
+        const FencePointsResolution pointsResolution =
+            resolveFencePoints(payloadDoc.as<JsonVariantConst>());
+        ok = prepareFenceWakeSession(
+            deviceId,
+            payloadDoc.as<JsonVariantConst>(),
+            commandId.c_str(),
+            pointsResolution,
+            reason);
+        if (!ok) {
           AS_MATRIX_LORA_TX_FAIL(commandId.c_str(), deviceId, reason ? *reason : "unknown");
         }
       } else if (strcmp(command, "SET_PARAMS") == 0 || strcmp(command, "PING") == 0) {
@@ -4678,7 +5313,9 @@ static bool dispatchQueuedSimpleCommand(
   activeSimpleCommand.lastAttemptAtMs = millis();
   activeSimpleCommand.retryCount = 1;
   AS_MATRIX_COMMAND_MARK_DISPATCHING_BEGIN(commandId.c_str(), command);
-  publishSimpleCommandResult("dispatching", nullptr);
+  publishSimpleCommandResult(
+      strcmp(command, "SET_FENCE") == 0 ? "paging_waiting_uplink" : "dispatching",
+      nullptr);
   return true;
 }
 
@@ -5907,13 +6544,16 @@ void loop() {
   if (cfg::FEATURE_CLOUD) processNextQueuedCommand();
   flushDeferredAcceptedUplinksIfReady();
   processQueuedAcceptedUplinks();
+  processPendingWakeSessions();
   if (activeSimpleCommand.active) {
     processScheduledActiveSimpleCommandRetry();
     const uint32_t nowTick = millis();
     const bool recentRawRx =
         lora.lastRawRxAtMs() != 0 &&
         (uint32_t)(nowTick - lora.lastRawRxAtMs()) < cfg::SIMPLE_COMMAND_RAW_RX_HOLDOFF_MS;
-    const bool allowBlindPeriodicRetry = !activeSimpleCommand.targetDeviceCommand;
+    const bool allowBlindPeriodicRetry =
+        !activeSimpleCommand.targetDeviceCommand &&
+        strcmp(activeSimpleCommand.command, "SET_FENCE") != 0;
     if (allowBlindPeriodicRetry &&
         !activeSimpleCommand.targetedRetryPending &&
         !recentRawRx) {

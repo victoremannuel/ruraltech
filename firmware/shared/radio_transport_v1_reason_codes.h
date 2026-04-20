@@ -18,6 +18,10 @@ enum ReasonCode : uint16_t {
   REASON_APP_ACK_TIMEOUT = 109,
   REASON_ABORTED_BY_MATRIX = 110,
   REASON_ABORTED_BY_COLLAR = 111,
+  REASON_PAGE_TIMEOUT_FINAL = 112,
+  REASON_PAGE_SEND_FAILED = 113,
+  REASON_PAGE_ACK_INVALID = 114,
+  REASON_SESSION_NOT_STARTED_AFTER_PAGE_ACK = 115,
   REASON_DROP_TARGET_MISMATCH = 200,
   REASON_DROP_SCOPE_MISMATCH = 201,
   REASON_DROP_DECRYPT_FAILED = 202,
@@ -46,6 +50,10 @@ static inline const char* reasonCodeLabel(uint16_t code) {
     case REASON_APP_ACK_TIMEOUT: return "app_ack_timeout";
     case REASON_ABORTED_BY_MATRIX: return "aborted_by_matrix";
     case REASON_ABORTED_BY_COLLAR: return "aborted_by_collar";
+    case REASON_PAGE_TIMEOUT_FINAL: return "page_timeout_final";
+    case REASON_PAGE_SEND_FAILED: return "page_send_failed";
+    case REASON_PAGE_ACK_INVALID: return "page_ack_invalid";
+    case REASON_SESSION_NOT_STARTED_AFTER_PAGE_ACK: return "session_not_started_after_page_ack";
     case REASON_DROP_TARGET_MISMATCH: return "drop_target_mismatch";
     case REASON_DROP_SCOPE_MISMATCH: return "drop_scope_mismatch";
     case REASON_DROP_DECRYPT_FAILED: return "drop_decrypt_failed";
