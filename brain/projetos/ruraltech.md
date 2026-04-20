@@ -10,20 +10,21 @@ Sistema em 3 camadas físicas (coleira → gateway → cloud) com app de gestão
 
 ## Details
 
-### Status atual (2026-04-11)
+### Status atual (2026-04-19)
 
-- Branch ativa: `audit/remove-firebase-complete` — app já consolidado em Supabase; backhaul RT permanece no despacho da matriz
+- Branch ativa: `fix/comandos/app-to-coleira` — implementação do protocolo RPv2 para SET_FENCE
 - Branch principal: `main`
 - Stack atual: Supabase Auth + Postgres + Realtime + Edge Functions; despacho cloud da matriz ainda usa `matrixId + writerKey` e fila RT
+- **Protocolo RPv2**: Implementado e testado localmente (validação de bancada pendente)
 
 ### Módulos
 
 - `app/` — Flutter, Supabase (Auth, Postgres, Realtime)
-- `coleira/` — ESP32 firmware (geofence NVS, herding, telemetria, health diário)
+- `coleira/` — ESP32 firmware (geofence NVS, herding, telemetria, health diário, protocolo RPv2)
 - `gateway/` — ESP32 firmware (LoRa bridge local, API HTTP/WS porta 81)
-- `gateway-matriz/` — Serviço de despacho LoRa central (stream RTDB + polling)
+- `gateway-matriz/` — Serviço de despacho LoRa central (stream RTDB + polling, protocolo RPv2 para SET_FENCE)
 - `supabase/` — Edge Functions: `queue-lora-command`, `matrix-cloud`, `admin-repair-cloud-state`, `poll-notifications`, `send-push`
-- `firmware/shared/` — `command_contract.cpp` (contrato compartilhado C++/Dart)
+- `firmware/shared/` — `command_contract.cpp` + `radio_proto_v2_*` (contrato compartilhado C++/Dart + protocolo binário)
 - `contracts/messages/` — Fixtures JSON de contratos app ↔ firmware
 
 ### Papéis de usuário
@@ -38,6 +39,7 @@ Sistema em 3 camadas físicas (coleira → gateway → cloud) com app de gestão
 - `supabase test db --local` — pgTAP RLS policies
 - `command_contract_test.cpp` — contrato firmware compilado com g++
 - `arduino-cli compile` — coleira, gateway, gateway-matriz
+- `rpv2_*_test.cpp` — testes nativos do protocolo RPv2 (codec, CRC, planner)
 
 ## Related
 
@@ -47,5 +49,6 @@ Sistema em 3 camadas físicas (coleira → gateway → cloud) com app de gestão
 [[modelagem-dados-supabase]]
 [[uiux-telas]]
 [[fluxos-comunicacao-ponta-a-ponta]]
+[[protocolo-rpv2]]
 
 #projetos #ruraltech 

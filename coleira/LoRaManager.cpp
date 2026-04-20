@@ -213,6 +213,7 @@ bool LoRaManager::receiveFrame(LoRaFrame& frame, uint32_t windowMs) {
       }
 
       const bool downlinkCommand =
+          frame.msgType == MsgType::RTR_CONTROL ||
           frame.msgType == MsgType::SET_FENCE ||
           frame.msgType == MsgType::SET_HERDING_PLAN ||
           frame.msgType == MsgType::SET_PARAMS ||

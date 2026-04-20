@@ -40,6 +40,10 @@
 #include "QueueStreamSupport.h"
 #include "../firmware/shared/command_contract.h"
 #include "../firmware/shared/AreaSyncLogger.h"
+#include "../firmware/shared/radio_transport_v1_codec.h"
+#include "../firmware/shared/radio_transport_v1_constants.h"
+#include "../firmware/shared/radio_transport_v1_reason_codes.h"
+#include "../firmware/shared/radio_transport_v1_session_id.h"
 #include "../firmware/shared/radio_proto_v2_codec.h"
 #include "../firmware/shared/radio_proto_v2_crc.h"
 #include "../firmware/shared/radio_proto_v2_id.h"
@@ -2522,6 +2526,7 @@ static bool isRelayCandidate(const LoRaFrame& frame) {
          frame.msgType == MsgType::EVENT ||
          frame.msgType == MsgType::ACK ||
          frame.msgType == MsgType::NACK ||
+         frame.msgType == MsgType::RTR_CONTROL ||
          frame.msgType == MsgType::SET_FENCE ||
          frame.msgType == MsgType::SET_HERDING_PLAN ||
          frame.msgType == MsgType::SET_PARAMS ||
@@ -2533,6 +2538,7 @@ static const char* uplinkTypeLabel(MsgType t) {
   if (t == MsgType::EVENT) return "event";
   if (t == MsgType::ACK) return "ack";
   if (t == MsgType::NACK) return "nack";
+  if (t == MsgType::RTR_CONTROL) return "rtr_control";
   return "lora";
 }
 
@@ -2929,6 +2935,156 @@ static bool sendLoRaBinaryFrame(
   return ok;
 }
 
+static bool decodeRtrPageAckFrame(
+    const LoRaFrame& rx,
+    uint64_t sessionId,
+    uint32_t messageId,
+    rtrv1::PageAckBody* outBody) {
+  if (!outBody || rx.msgType != MsgType::RTR_CONTROL) return false;
+  rtrv1::Header header{};
+  rtrv1::PageAckBody body{};
+  if (!rtrv1::decodePageAck(rx.payload, rx.payloadLen, &header, &body)) return false;
+  if (header.sessionId != sessionId || header.messageId != messageId) return false;
+  *outBody = body;
+  return true;
+}
+
+static bool waitForRtrPageAck(
+    uint32_t deviceId,
+    uint64_t sessionId,
+    uint32_t messageId,
+    uint32_t timeoutMs,
+    rtrv1::PageAckBody* outBody) {
+  const uint32_t startedAt = millis();
+  while ((uint32_t)(millis() - startedAt) < timeoutMs) {
+    LoRaFrame rx;
+    if (!lora.receive(rx)) {
+      delay(10);
+      continue;
+    }
+    if (rx.deviceId != deviceId) {
+      enqueueAcceptedUplink(rx);
+      continue;
+    }
+    if (decodeRtrPageAckFrame(rx, sessionId, messageId, outBody)) return true;
+    enqueueAcceptedUplink(rx);
+  }
+  return false;
+}
+
+static bool sendRtrPageForCommand(
+    uint32_t deviceId,
+    uint64_t scopeId,
+    MsgType commandType,
+    uint16_t estimatedFragments,
+    uint64_t logicalMessageId,
+    uint32_t entropy,
+    const char* commandId,
+    const char** reason) {
+  const uint64_t sessionId =
+      rtrv1::makeSessionId(logicalMessageId, deviceId, entropy);
+  const uint32_t messageId = static_cast<uint32_t>(entropy ^ deviceId ^ (uint32_t)commandType);
+
+  rtrv1::Header header{};
+  header.version = rtrv1::PROTOCOL_VERSION;
+  header.trafficClass = rtrv1::TRAFFIC_CLASS_P0;
+  header.innerMsgType = rtrv1::RTR_PAGE;
+  header.flags = rtrv1::FLAG_ACK_REQUIRED | rtrv1::FLAG_PAGE | rtrv1::FLAG_WAKE_LOCK;
+  header.sessionId = sessionId;
+  header.messageId = messageId;
+  header.sourceId = 0;
+  header.finalDestId = deviceId;
+  header.nextHopId = deviceId;
+  header.fragmentIndex = 0;
+  header.fragmentTotal = 1;
+  header.hopCount = 0;
+  header.ttl = rtrv1::DEFAULT_TTL;
+
+  rtrv1::PageBody body{};
+  body.commandType = static_cast<uint8_t>(commandType);
+  body.priority = rtrv1::TRAFFIC_CLASS_P1;
+  body.estimatedFragments = estimatedFragments;
+  body.sessionTimeoutSec = rtrv1::SESSION_CACHE_TTL_SEC;
+  body.wakeLockSec = rtrv1::SESSION_WAKE_LOCK_MS / 1000UL;
+  body.routeId = 0;
+
+  uint8_t payload[sizeof(rtrv1::Header) + sizeof(rtrv1::PageBody)]{};
+  const size_t payloadLen = rtrv1::encodeFrame(header, body, payload, sizeof(payload));
+  if (payloadLen == 0) {
+    if (reason) *reason = "page_encode_failed";
+    return false;
+  }
+
+  publishFenceTransportState(deviceId, "paging");
+  LOGI(
+      "RTR_PAGE_PLAN deviceId=%lu commandId=%s sessionId=%llu messageId=%lu commandType=%u estimatedFragments=%u",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)sessionId,
+      (unsigned long)messageId,
+      (unsigned)commandType,
+      (unsigned)estimatedFragments);
+  if (!sendLoRaBinaryFrame(deviceId, MsgType::RTR_CONTROL, scopeId, payload, payloadLen, reason)) {
+    activeSimpleCommand.lastReasonCode = rtrv1::REASON_PAGE_REJECTED;
+    return false;
+  }
+  appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      "rtr_page_sent",
+      nullptr,
+      nullptr);
+  publishFenceTransportState(deviceId, "awaiting_page_ack");
+  LOGI(
+      "RTR_PAGE_TX_OK deviceId=%lu commandId=%s sessionId=%llu messageId=%lu",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)sessionId,
+      (unsigned long)messageId);
+
+  rtrv1::PageAckBody ack{};
+  if (!waitForRtrPageAck(deviceId, sessionId, messageId, rtrv1::PAGE_ACK_TIMEOUT_MS, &ack)) {
+    if (reason) *reason = rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_TIMEOUT);
+    activeSimpleCommand.lastReasonCode = rtrv1::REASON_PAGE_TIMEOUT;
+    publishFenceTransportState(
+        deviceId,
+        "failed",
+        rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_TIMEOUT),
+        rtrv1::REASON_PAGE_TIMEOUT,
+        true,
+        false);
+    return false;
+  }
+  if (!ack.accepted || !ack.sessionModeActive) {
+    if (reason) *reason = rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_REJECTED);
+    activeSimpleCommand.lastReasonCode = rtrv1::REASON_PAGE_REJECTED;
+    publishFenceTransportState(
+        deviceId,
+        "failed",
+        rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_REJECTED),
+        rtrv1::REASON_PAGE_REJECTED,
+        true,
+        false);
+    return false;
+  }
+  appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      "rtr_page_ack",
+      nullptr,
+      nullptr);
+  LOGI(
+      "RTR_PAGE_ACK_RX deviceId=%lu commandId=%s sessionId=%llu messageId=%lu suggestedRxWindowMs=%u wakeLockSec=%lu",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)sessionId,
+      (unsigned long)messageId,
+      (unsigned)ack.suggestedRxWindowMs,
+      (unsigned long)ack.wakeLockUntilSec);
+  publishFenceTransportState(deviceId, "page_acked");
+  return true;
+}
+
 static bool decodeRpv2ResponseFrame(
     const LoRaFrame& rx,
     uint64_t radioCommandId,
@@ -3161,6 +3317,17 @@ static bool sendFenceCommandRpv2Session(
           reason)) {
     activeSimpleCommand.lastReasonCode =
         reason ? rpv2ReasonCodeFromLabel(*reason) : rpv2::REASON_NONE;
+    return false;
+  }
+  if (!sendRtrPageForCommand(
+          deviceId,
+          scopeId,
+          MsgType::SET_FENCE,
+          static_cast<uint16_t>(plan.totalChunks + 2),
+          radioCommandId,
+          sessionNonce,
+          commandId,
+          reason)) {
     return false;
   }
 

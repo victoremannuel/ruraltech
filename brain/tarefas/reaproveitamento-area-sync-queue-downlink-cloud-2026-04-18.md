@@ -79,13 +79,23 @@ Estado de partida consolidado nesta rodada:
   - `transportState` e `reasonCode` persistidos no resultado
   - logs estruturados extras na matriz e na coleira
   - testes nativos de codec, CRC e planner
-- [ ] Regravar firmwares usados na bancada se a instrumentacao `[AREA_SYNC]` ainda nao estiver embarcada nas placas
 - [x] Consolidar resultado binario da fase:
-  - `Queue/downlink cloud (SET_FENCE): FALHOU`
+  - `Queue/downlink cloud (SET_FENCE): FALHOU` (fase 1 - legado JSON)
+  - `Protocolo RPv2 binário: IMPLEMENTADO` (fase 2 - validação local aprovada)
+  - `Validação de bancada: PENDENTE` (próxima rodada)
+- [x] Implementar Fase 0 + Fase 1 do plano cirúrgico de transporte LoRa confiável:
+  - contratos shared `RTRv1` para `PAGE/PAGE_ACK`, constantes, reason codes, CRC e `sessionId`
+  - testes host `rtrv1_codec_test`, `rtrv1_page_test` e `rtrv1_crc_test`
+  - matriz enviando `RTR_PAGE` antes da sessão `RPv2` de `SET_FENCE`
+  - coleira respondendo `RTR_PAGE_ACK` e entrando em `session mode`
+  - bloqueio de `deep sleep` com `wake lock` durante a sessão
+  - logs obrigatórios de `RTR_DISCOVERY_WINDOW_*`, `RTR_PAGE_*` e `RTR_SESSION_MODE_*`
 
 ## Status
 
-Em andamento.
+**Atualizado: 2026-04-19**
+
+Rodada de implementação RPv2 concluída e primeira entrega de `RTRv1 paging + wake lock` aplicada localmente. Validação host aprovada, aguardando validação de bancada.
 
 Base de reaproveitamento confirmada nesta rodada:
 - a task `auditoria-area-sync-e2e.md` ja serve como fundacao da trilha `queue/downlink cloud`
@@ -191,23 +201,72 @@ Base de reaproveitamento confirmada nesta rodada:
   - matriz: `Global variables use 72916 bytes (22%)`
   - coleira: `Sketch uses 1156369 bytes (58%)`
   - coleira: `Global variables use 68464 bytes (20%)`
+- nova rodada aplicada nesta sessao:
+  - criado o contrato shared `RTRv1` em `firmware/shared/` com foco inicial em `PAGE/PAGE_ACK`
+  - adicionados os testes host `rtrv1_codec_test`, `rtrv1_page_test` e `rtrv1_crc_test`
+  - a matriz agora envia `RTR_PAGE` antes de iniciar `sendFenceCommandRpv2Session()`
+  - a matriz agora aguarda `RTR_PAGE_ACK` e registra `RTR_PAGE_PLAN`, `RTR_PAGE_TX_OK` e `RTR_PAGE_ACK_RX`
+  - a coleira agora aceita `MsgType::RTR_CONTROL`, valida `RTR_PAGE`, responde `RTR_PAGE_ACK` e entra em `session mode`
+  - a coleira passou a segurar `wake lock` e a evitar `deep sleep` enquanto a sessão estiver ativa
+  - a coleira passou a registrar `RTR_DISCOVERY_WINDOW_OPEN`, `RTR_DISCOVERY_WINDOW_CLOSE`, `RTR_PAGE_RX`, `RTR_PAGE_ACK_TX`, `RTR_SESSION_MODE_ENTER`, `RTR_SESSION_WAKE_LOCK_HOLD` e `RTR_SESSION_MODE_EXIT`
+  - o `gateway` comum foi ajustado para também reconhecer/relayar `RTR_CONTROL` no caminho best-effort atual
+- validacao local desta rodada:
+  - testes nativos `rtrv1_codec_test`, `rtrv1_page_test` e `rtrv1_crc_test`: ok
+  - `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs coleira`: ok
+  - `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz`: ok
+  - coleira: `Sketch uses 1158485 bytes (58%)`
+  - coleira: `Global variables use 68496 bytes (20%)`
+  - matriz: `Sketch uses 1358231 bytes (69%)`
+  - matriz: `Global variables use 72916 bytes (22%)`
+
+Historico adicional desta rodada:
+- 2026-04-19: recebido plano cirúrgico externo para transporte LoRa confiável orientado a sessão
+- 2026-04-19: recorte executado deliberadamente em `Fase 0 + Fase 1`, preservando o `RPv2` já implantado para `SET_FENCE`
+- 2026-04-19: `RTRv1` foi introduzido como camada de controle interna sem reescrever o envelope `LoRaFrame`
+- 2026-04-19: o fluxo atual ficou `RTR_PAGE -> RTR_PAGE_ACK -> RPV2 BEGIN/POINTS/COMMIT`, preparando a migração incremental para a sessão confiável completa do plano
 
 ## Next step
 
-1. Regravar a matriz com a instrumentacao nova desta rodada
-2. Deploy da `matrix-cloud` com o shape minimo desta rodada
-3. Repetir a homologacao E2E `SET_FENCE`
-4. Classificar o novo run usando os novos eventos:
-   - `QUEUE_BODY_SANITIZED` -> havia bytes indevidos antes do JSON
-   - `QUEUE_DESERIALIZE_ERROR` -> erro real de parse/memoria
-   - `FENCE_POINTS_RESOLVED` -> origem real dos pontos no payload normalizado
-   - `QUEUE_COMMAND_LOADED pointCount>0` -> saida efetiva de `missing_points`
-   - `FENCE_CHUNK_PLAN fit=0/1` -> decisao real do planner com payload serializado
-   - `FENCE_CHUNK_SIZE_EVAL` -> chunking real por bytes
-   - `ACK/NACK/APPLY_STATUS` binarios do `RPv2` -> validacao do novo transporte
-   - `RPV2_*_SIZE_EVAL` -> prova da medicao usando o pipeline exato do frame seguro
-   - `transportState` e `reasonCode` persistidos no backend -> prova de status real sem falso `applied`
-5. Se ainda travar, corrigir apenas o ponto funcional revelado pelos novos logs
+### Validação da fase RTRv1 paging + wake lock (próxima rodada de bancada)
+
+1. Regravar matriz e coleira com a rodada `RTRv1 + RPv2`
+2. Validar em bancada o handshake:
+   - `RTR_PAGE_PLAN`
+   - `RTR_PAGE_TX_OK`
+   - `RTR_PAGE_RX`
+   - `RTR_PAGE_ACK_TX`
+   - `RTR_PAGE_ACK_RX`
+   - `RTR_SESSION_MODE_ENTER`
+3. Confirmar que a coleira permanece acordada por wake lock e não entra em `deep sleep` antes do término ou timeout da sessão
+4. Repetir a homologação E2E `SET_FENCE` já existente com o novo paging à frente da sessão `RPv2`
+
+### Validação da fase RPv2 (continuação após paging)
+
+1. Regravar matriz e coleira com instrumentação RPv2
+2. Deploy da `matrix-cloud` ( já com shape mínimo)
+3. Repetir homologação E2E `SET_FENCE`
+4. Procurar na serial os eventos RPv2:
+   - `RPV2_BEGIN_SIZE_EVAL` → medição do frame BEGIN
+   - `RPV2_PLAN_CHUNK_FIT` → decisão do planner (fit=1 = cabe)
+   - `RPV2_BEGIN_TX_OK` / `RPV2_BEGIN_RX` → ida e volta do BEGIN
+   - `RPV2_ACK_SENT` / `RPV2_RX_ACK` → ACK da coleira
+   - `RPV2_POINTS_TX_OK` / `RPV2_POINTS_RX` → chunks de pontos
+   - `RPV2_COMMIT_TX_OK` / `RPV2_COMMIT_RX` → commit final
+   - `RPV2_APPLY_STATUS_SENT` / `RPV2_RX_APPLY_STATUS` → status de aplicação
+   - `RPV2_CRC_OK` / `RPV2_CRC_FAIL` → validação CRC na coleira
+5. Verificar no backend:
+   - `transport=radio_fence_v2`
+   - `transportState` e `reasonCode` persistidos
+   - `applied=true` somente após `APPLY_STATUS` positivo
+
+### Critérios de sucesso da fase RPv2
+
+- [ ] Serial da matriz mostra sessão completa (BEGIN → POINTS → COMMIT)
+- [ ] Serial da coleira mostra recepção e aplicação (RX → CRC OK → APPLY)
+- [ ] Backend mostra `transport=radio_fence_v2` e `status=applied`
+- [ ] Nenhum falso positivo (sem `applied` precoce)
+- [ ] CRC validado corretamente em ambos os lados
+- [ ] Logs de `PAGE/PAGE_ACK` comprovam wake-up antes do `BEGIN`
 
 ## Related
 

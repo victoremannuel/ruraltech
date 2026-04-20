@@ -40,6 +40,9 @@
 #include "StateMachine.h"
 #include "../firmware/shared/command_contract.h"
 #include "../firmware/shared/AreaSyncLogger.h"
+#include "../firmware/shared/radio_transport_v1_codec.h"
+#include "../firmware/shared/radio_transport_v1_constants.h"
+#include "../firmware/shared/radio_transport_v1_reason_codes.h"
 #include "../firmware/shared/radio_proto_v2_codec.h"
 #include "../firmware/shared/radio_proto_v2_crc.h"
 #include "../firmware/shared/radio_proto_v2_id.h"
@@ -160,6 +163,10 @@ static void waitMaintenanceWindow();
 static void configureStatusServerRoutes();
 static void ensureStatusServerRunning();
 static void stopStatusServer();
+static void clearRtrSessionMode(const char* reason);
+static bool isRtrSessionModeActive();
+static void refreshRtrSessionActivity(const char* reason);
+static void logRtrDropReason(const char* reason, const LoRaFrame& frame);
 
 struct PolygonAuditContext {
   uint64_t scopeId = 0;
@@ -213,6 +220,14 @@ struct Rpv2FenceSessionState {
 Rpv2ReplayEntry rpv2ReplayEntries_[rpv2::REPLAY_WINDOW_SESSIONS]{};
 uint8_t rpv2ReplayNextIdx_ = 0;
 
+struct RtrSessionModeState {
+  bool active = false;
+  uint64_t sessionId = 0;
+  uint32_t wakeLockUntilMs = 0;
+  uint32_t lastActivityAtMs = 0;
+  MsgType commandType = MsgType::SET_FENCE;
+} rtrSessionMode_;
+
 static void randomNonce(uint8_t* nonce12) {
   for (int i = 0; i < 12; ++i) nonce12[i] = (uint8_t)esp_random();
 }
@@ -226,6 +241,52 @@ static String scopeIdToHex(uint64_t scopeId) {
 static uint64_t parseScopeIdHex(const char* raw) {
   if (!raw || !raw[0]) return 0;
   return strtoull(raw, nullptr, 16);
+}
+
+static void clearRtrSessionMode(const char* reason) {
+  if (!rtrSessionMode_.active) return;
+  LOGI(
+      "RTR_SESSION_MODE_EXIT sessionId=%llu reason=%s",
+      (unsigned long long)rtrSessionMode_.sessionId,
+      reason ? reason : "unknown");
+  rtrSessionMode_ = RtrSessionModeState{};
+}
+
+static bool isRtrSessionModeActive() {
+  if (!rtrSessionMode_.active) return false;
+  const uint32_t nowMs = millis();
+  if ((int32_t)(nowMs - rtrSessionMode_.wakeLockUntilMs) >= 0) {
+    clearRtrSessionMode("wake_lock_expired");
+    return false;
+  }
+  if (rtrSessionMode_.lastActivityAtMs != 0 &&
+      (uint32_t)(nowMs - rtrSessionMode_.lastActivityAtMs) >=
+          rtrv1::IDLE_SESSION_TIMEOUT_MS) {
+    clearRtrSessionMode("idle_timeout");
+    return false;
+  }
+  return true;
+}
+
+static void refreshRtrSessionActivity(const char* reason) {
+  if (!rtrSessionMode_.active) return;
+  rtrSessionMode_.lastActivityAtMs = millis();
+  rtrSessionMode_.wakeLockUntilMs =
+      rtrSessionMode_.lastActivityAtMs + rtrv1::SESSION_WAKE_LOCK_MS;
+  LOGI(
+      "RTR_SESSION_ACTIVITY sessionId=%llu reason=%s wakeLockUntilMs=%lu",
+      (unsigned long long)rtrSessionMode_.sessionId,
+      reason ? reason : "data",
+      (unsigned long)rtrSessionMode_.wakeLockUntilMs);
+}
+
+static void logRtrDropReason(const char* reason, const LoRaFrame& frame) {
+  LOGW(
+      "RTR_DROP_REASON reason=%s type=%u deviceId=%lu scope=%016llX",
+      reason ? reason : "unknown",
+      (unsigned)frame.msgType,
+      (unsigned long)frame.deviceId,
+      (unsigned long long)frame.scopeId);
 }
 
 static const char* pickFirstText(
@@ -1369,6 +1430,7 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
         rpv2::REASON_NONE,
         crc,
         rpv2FenceSession_.fence.count);
+    clearRtrSessionMode("apply_status_ok");
     rememberRpv2Replay(header.radioCommandId, header.sessionNonce);
     resetRpv2FenceSession();
     return true;
@@ -1379,6 +1441,7 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
         "RPV2_ABORT_RX radioCommandId=%llu sessionNonce=%lu",
         (unsigned long long)header.radioCommandId,
         (unsigned long)header.sessionNonce);
+    clearRtrSessionMode("abort_rx");
     rememberRpv2Replay(header.radioCommandId, header.sessionNonce);
     resetRpv2FenceSession();
     return true;
@@ -2426,9 +2489,118 @@ static void sendCommandFeedback(
   }
 }
 
+static bool sendRtrControlReply(
+    const LoRaFrame& cmd,
+    const rtrv1::Header& header,
+    const void* body,
+    size_t bodyLen) {
+  if (!body || bodyLen == 0 || bodyLen > sizeof(LoRaFrame{}.payload)) return false;
+  LoRaFrame reply;
+  reply.deviceId = cfg::DEVICE_ID;
+  reply.scopeId = cmd.scopeId;
+  reply.msgType = MsgType::RTR_CONTROL;
+  reply.seq = nextLoRaSeq();
+  reply.timestamp = millis() / 1000;
+  randomNonce(reply.nonce);
+  reply.payloadLen = static_cast<uint8_t>(bodyLen);
+  memcpy(reply.payload, body, bodyLen);
+  return lora.sendFrame(reply);
+}
+
+static bool handleRtrControlDownlink(const LoRaFrame& frame) {
+  if (frame.msgType != MsgType::RTR_CONTROL) return false;
+
+  rtrv1::Header header{};
+  rtrv1::PageBody page{};
+  if (!rtrv1::decodePage(frame.payload, frame.payloadLen, &header, &page)) {
+    logRtrDropReason(rtrv1::reasonCodeLabel(rtrv1::REASON_INVALID_HEADER), frame);
+    return true;
+  }
+
+  if (header.finalDestId != cfg::DEVICE_ID && header.finalDestId != 0) {
+    logRtrDropReason(rtrv1::reasonCodeLabel(rtrv1::REASON_DROP_TARGET_MISMATCH), frame);
+    return true;
+  }
+  if (!bindingReady_) {
+    logRtrDropReason(rtrv1::reasonCodeLabel(rtrv1::REASON_BINDING_MISSING), frame);
+    return true;
+  }
+  if (frame.scopeId == 0 || frame.scopeId != bindingScopeIdValue()) {
+    logRtrDropReason(rtrv1::reasonCodeLabel(rtrv1::REASON_SCOPE_MISMATCH), frame);
+    return true;
+  }
+
+  LOGI(
+      "RTR_PAGE_RX sessionId=%llu messageId=%lu commandType=%u estimatedFragments=%u wakeLockSec=%lu",
+      (unsigned long long)header.sessionId,
+      (unsigned long)header.messageId,
+      (unsigned)page.commandType,
+      (unsigned)page.estimatedFragments,
+      (unsigned long)page.wakeLockSec);
+
+  rtrSessionMode_.active = true;
+  rtrSessionMode_.sessionId = header.sessionId;
+  rtrSessionMode_.commandType = static_cast<MsgType>(page.commandType);
+  rtrSessionMode_.lastActivityAtMs = millis();
+  rtrSessionMode_.wakeLockUntilMs =
+      rtrSessionMode_.lastActivityAtMs +
+      (page.wakeLockSec > 0 ? page.wakeLockSec * 1000UL : rtrv1::SESSION_WAKE_LOCK_MS);
+  LOGI(
+      "RTR_SESSION_MODE_ENTER sessionId=%llu wakeLockUntilMs=%lu commandType=%u",
+      (unsigned long long)rtrSessionMode_.sessionId,
+      (unsigned long)rtrSessionMode_.wakeLockUntilMs,
+      (unsigned)rtrSessionMode_.commandType);
+
+  rtrv1::Header ackHeader{};
+  ackHeader.version = rtrv1::PROTOCOL_VERSION;
+  ackHeader.trafficClass = rtrv1::TRAFFIC_CLASS_P0;
+  ackHeader.innerMsgType = rtrv1::RTR_PAGE_ACK;
+  ackHeader.flags = rtrv1::FLAG_FINAL | rtrv1::FLAG_WAKE_LOCK;
+  ackHeader.sessionId = header.sessionId;
+  ackHeader.messageId = header.messageId;
+  ackHeader.sourceId = cfg::DEVICE_ID;
+  ackHeader.finalDestId = header.sourceId;
+  ackHeader.nextHopId = header.sourceId;
+  ackHeader.fragmentIndex = 0;
+  ackHeader.fragmentTotal = 1;
+  ackHeader.hopCount = 0;
+  ackHeader.ttl = rtrv1::DEFAULT_TTL;
+
+  rtrv1::PageAckBody ack{};
+  ack.accepted = 1;
+  ack.sessionModeActive = 1;
+  ack.suggestedRxWindowMs = rtrv1::DISCOVERY_RX_WINDOW_MS;
+  ack.wakeLockUntilSec =
+      static_cast<uint32_t>((rtrSessionMode_.wakeLockUntilMs - rtrSessionMode_.lastActivityAtMs) / 1000UL);
+
+  uint8_t payload[sizeof(rtrv1::Header) + sizeof(rtrv1::PageAckBody)]{};
+  const size_t payloadLen =
+      rtrv1::encodeFrame(ackHeader, ack, payload, sizeof(payload));
+  if (payloadLen == 0 || !sendRtrControlReply(frame, ackHeader, payload, payloadLen)) {
+    LOGW(
+        "RTR_PAGE_ACK_TX_FAIL sessionId=%llu messageId=%lu",
+        (unsigned long long)header.sessionId,
+        (unsigned long)header.messageId);
+    return true;
+  }
+  LOGI(
+      "RTR_PAGE_ACK_TX sessionId=%llu messageId=%lu suggestedRxWindowMs=%u",
+      (unsigned long long)header.sessionId,
+      (unsigned long)header.messageId,
+      (unsigned)ack.suggestedRxWindowMs);
+  return true;
+}
+
 static void applyDownlink(const LoRaFrame& frame) {
   const bool targetMatch = (frame.deviceId == cfg::DEVICE_ID) || (frame.deviceId == 0);
   if (!targetMatch) return;
+  if (frame.msgType == MsgType::RTR_CONTROL) {
+    handleRtrControlDownlink(frame);
+    return;
+  }
+  if (isRtrSessionModeActive()) {
+    refreshRtrSessionActivity("downlink_frame");
+  }
   const bool rpv2Fence = isRpv2FencePayload(frame);
 
   char commandId[cfg::EVENT_COMMAND_ID_MAX_LEN]{};
@@ -3092,7 +3264,9 @@ void loop() {
     }
   }
 
-  if (bindingReady_) {
+  const bool rtrSessionActive = isRtrSessionModeActive();
+
+  if (bindingReady_ && !rtrSessionActive) {
     logLoopCheckpoint("before_uplink_build");
     LoRaFrame uplink;
     uplink.deviceId = cfg::DEVICE_ID;
@@ -3113,19 +3287,33 @@ void loop() {
     lastLoRaTxOk_ = false;
   }
   logLoopCheckpoint("before_send_daily_health");
-  sendDailyHealthReport(t, stateMachine.intervalMs());
+  if (!rtrSessionActive) {
+    sendDailyHealthReport(t, stateMachine.intervalMs());
+  }
   logLoopCheckpoint("after_send_daily_health");
 
   LoRaFrame down;
-  const uint32_t rxWindowMs = otaSessionLikelyActive
-                                  ? cfg::OTA_UPLOAD_RX_WINDOW_MS
-                                  : cfg::RX_WINDOW_MS;
+  uint32_t rxWindowMs = otaSessionLikelyActive
+                            ? cfg::OTA_UPLOAD_RX_WINDOW_MS
+                            : cfg::RX_WINDOW_MS;
+  if (cfg::RTR_FORCE_DISCOVERY_RX_OPEN && rxWindowMs < rtrv1::DISCOVERY_RX_WINDOW_MS) {
+    rxWindowMs = rtrv1::DISCOVERY_RX_WINDOW_MS;
+  }
   bool handledDownlink = false;
   logLoopCheckpoint("before_lora_receive");
+  LOGI(
+      "RTR_DISCOVERY_WINDOW_OPEN windowMs=%lu sessionActive=%d bench=%d",
+      (unsigned long)rxWindowMs,
+      rtrSessionActive ? 1 : 0,
+      cfg::RTR_BENCH_MODE ? 1 : 0);
   if (lora.receiveFrame(down, rxWindowMs)) {
     applyDownlink(down);
     handledDownlink = true;
   }
+  LOGI(
+      "RTR_DISCOVERY_WINDOW_CLOSE handled=%d sessionActive=%d",
+      handledDownlink ? 1 : 0,
+      isRtrSessionModeActive() ? 1 : 0);
 
   if (handledDownlink && cfg::LORA_POST_COMMAND_EVENT_HOLDOFF_MS > 0) {
     delay(cfg::LORA_POST_COMMAND_EVENT_HOLDOFF_MS);
@@ -3134,7 +3322,7 @@ void loop() {
   EventRecord pending;
   uint8_t eventBudget = otaSessionLikelyActive ? cfg::OTA_UPLOAD_EVENT_BURST : 0xFF;
   logLoopCheckpoint("before_pending_events");
-  if (!cfg::DEBUG_DISABLE_PENDING_EVENT_DRAIN) {
+  if (!cfg::DEBUG_DISABLE_PENDING_EVENT_DRAIN && !isRtrSessionModeActive()) {
     while (!handledDownlink && bindingReady_ && storage.popEvent(pending)) {
       LoRaFrame ev;
       ev.deviceId = cfg::DEVICE_ID;
@@ -3217,6 +3405,21 @@ void loop() {
   // Com Wi-Fi/OTA ativo, permanece online continuamente para manutenção remota.
   if (wifiOtaEnabled) {
     delay(20);
+    return;
+  }
+
+  if (cfg::RTR_BENCH_MODE || cfg::RTR_DISABLE_DEEP_SLEEP_FOR_BENCH) {
+    LOGW("RTR_BENCH_MODE ativo; deep sleep desabilitado");
+    delay(50);
+    return;
+  }
+
+  if (isRtrSessionModeActive()) {
+    LOGI(
+        "RTR_SESSION_WAKE_LOCK_HOLD sessionId=%llu remainingMs=%lu",
+        (unsigned long long)rtrSessionMode_.sessionId,
+        (unsigned long)(rtrSessionMode_.wakeLockUntilMs - millis()));
+    delay(50);
     return;
   }
 

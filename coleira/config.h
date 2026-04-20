@@ -93,6 +93,9 @@ constexpr uint32_t LORA_POST_BEGIN_SETTLE_MS = 350;
 constexpr uint32_t LORA_COMMAND_FEEDBACK_DELAY_MS = 180;
 constexpr uint32_t LORA_POST_COMMAND_EVENT_HOLDOFF_MS = 300;
 constexpr uint32_t DAILY_HEALTH_FALLBACK_MS = 86400000UL;
+constexpr bool RTR_BENCH_MODE = false;
+constexpr bool RTR_DISABLE_DEEP_SLEEP_FOR_BENCH = false;
+constexpr bool RTR_FORCE_DISCOVERY_RX_OPEN = false;
 
 // Segurança animal
 constexpr uint8_t MAX_PULSES_PER_10_MIN = 3;
