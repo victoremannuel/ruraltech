@@ -2051,6 +2051,15 @@ static bool anyActiveSimpleTargetFailed() {
   return false;
 }
 
+static const char* firstActiveSimpleTargetFailureReason() {
+  for (uint8_t i = 0; i < activeSimpleCommand.targetCount; ++i) {
+    const ActiveSimpleCommandTargetState& target = activeSimpleCommand.targets[i];
+    if (!target.terminal || target.ok) continue;
+    if (target.reason[0]) return target.reason;
+  }
+  return nullptr;
+}
+
 static bool publishSimpleCommandResult(const char* status, const char* reason) {
   if (!cfg::FEATURE_CLOUD) return false;
   if (!activeSimpleCommand.active || !activeSimpleCommand.commandId[0]) return false;
@@ -3117,8 +3126,10 @@ static void finalizeFenceCommandIfAllTargetsTerminal() {
   if (!activeSimpleCommand.active) return;
   if (strcmp(activeSimpleCommand.command, "SET_FENCE") != 0) return;
   if (!allActiveSimpleTargetsTerminal()) return;
-  const char* finalStatus = anyActiveSimpleTargetFailed() ? "failed" : "applied";
-  publishSimpleCommandResult(finalStatus, nullptr);
+  const bool anyFailed = anyActiveSimpleTargetFailed();
+  const char* finalStatus = anyFailed ? "failed" : "applied";
+  const char* finalReason = anyFailed ? firstActiveSimpleTargetFailureReason() : nullptr;
+  publishSimpleCommandResult(finalStatus, finalReason);
   clearActiveSimpleCommand();
 }
 

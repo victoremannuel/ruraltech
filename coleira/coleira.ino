@@ -41,6 +41,7 @@
 #include "../firmware/shared/command_contract.h"
 #include "../firmware/shared/AreaSyncLogger.h"
 #include "../firmware/shared/radio_transport_v1_codec.h"
+#include "../firmware/shared/radio_transport_v1_collar_policy.h"
 #include "../firmware/shared/radio_transport_v1_constants.h"
 #include "../firmware/shared/radio_transport_v1_reason_codes.h"
 #include "../firmware/shared/radio_proto_v2_codec.h"

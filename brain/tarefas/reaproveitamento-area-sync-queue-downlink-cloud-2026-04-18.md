@@ -246,6 +246,25 @@ Base de reaproveitamento confirmada nesta rodada:
   - coleira: `Global variables use 68496 bytes (20%)`
   - gateway comum: `Sketch uses 1916207 bytes (97%)`
   - gateway comum: `Global variables use 75332 bytes (22%)`
+- nova rodada aplicada em 2026-04-20:
+  - a matriz ganhou fast-path explícito no uplink aceito com precedência de `RTR_PAGE` sobre o publish cloud
+  - novos logs na matriz: `RTR_WAKE_FAST_PATH_START`, `RTR_WAKE_FAST_PATH_SKIP`, `RTR_WAKE_TO_PAGE_LATENCY`, `RTR_WAKE_UPLINK_DEFERRED_CLOUD_TX` e `RTR_WAKE_CLOUD_TX_RESUMED`
+  - a matriz passou a registrar o evento terminal `rtr_page_timeout_final` e a preservar `reason=page_timeout_final` no fechamento agregado do `SET_FENCE`
+  - a coleira ganhou janela de descoberta estendida para bancada e segunda janela RX antes do deep sleep
+  - a coleira passou a registrar `RTR_PAGE_ACK_PREPARE`, `RTR_PAGE_TO_ACK_LATENCY`, `RTR_DISCOVERY_WINDOW_SECONDARY_OPEN` e `RTR_DISCOVERY_WINDOW_SECONDARY_CLOSE`
+  - o `LoRaManager` da coleira passou a registrar `RTR_RAW_DOWNLINK_RX`, `RTR_RAW_DOWNLINK_DROP` e `RTR_RAW_DOWNLINK_ACCEPT`
+  - foram adicionados testes host para prioridade do fast-path, métrica de deadline, política de segunda janela, raw drop reasons e consistência de status terminal
+- validacao local desta rodada em 2026-04-20:
+  - testes host `rtrv1_fast_path_priority_test`, `rtrv1_page_deadline_metrics_test`, `rtrv1_raw_drop_reason_test`, `rtrv1_secondary_window_policy_test` e `rtrv1_terminal_failure_status_test`: ok
+  - `arduino-cli compile --config-file .tmp-arduino-cli.yaml --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz`: ok
+  - `arduino-cli compile --config-file .tmp-arduino-cli.yaml --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs coleira`: ok
+  - `arduino-cli compile --config-file .tmp-arduino-cli.yaml --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway`: ok
+  - matriz: `Sketch uses 1405207 bytes (71%)`
+  - matriz: `Global variables use 85924 bytes (26%)`
+  - coleira: `Sketch uses 1169621 bytes (59%)`
+  - coleira: `Global variables use 68632 bytes (20%)`
+  - gateway comum: `Sketch uses 1936275 bytes (98%)`
+  - gateway comum: `Global variables use 75476 bytes (23%)`
 
 Historico adicional desta rodada:
 - 2026-04-19: recebido plano cirúrgico externo para transporte LoRa confiável orientado a sessão
@@ -257,6 +276,9 @@ Historico adicional desta rodada:
 - 2026-04-19: `SET_FENCE` vindo da fila cloud deixou de chamar o page bloqueante diretamente e passou a criar sessão pendente por alvo
 - 2026-04-19: `PAGE_ACK` passou a ser correlacionado por `deviceId + sessionId + messageId` no loop principal
 - 2026-04-19: a próxima evidência necessária saiu do escopo local e depende de bancada com logs reais do ciclo `wake hint -> page -> page ack -> rpv2`
+- 2026-04-20: a rodada cirúrgica de rendezvous priorizou `RTR_PAGE` no mesmo ciclo do uplink aceito, sem reescrever o `RPv2` nem o envelope `LoRaFrame`
+- 2026-04-20: a coleira ganhou observabilidade de RX bruto e tolerância extra via janela secundária antes do deep sleep
+- 2026-04-20: o fechamento agregado do `SET_FENCE` passou a preservar o motivo terminal de falha em vez de publicar `failed` sem `reason`
 
 ## Next step
 
