@@ -144,6 +144,25 @@ Nova rodada aplicada em 2026-04-21 (fast-path `RTR_PAGE_ACK`):
   - `g++ ... firmware/tests/rtrv1_terminal_failure_status_test.cpp`: ok
   - `g++ ... firmware/tests/rtrv1_wake_scheduler_test.cpp`: ok
 
+Nova rodada aplicada em 2026-04-21 (`RPV2` pós-`RTR_PAGE_ACK`, WDT + wake lock):
+- `waitForRpv2Response()` na matriz deixou de fazer busy-loop puro:
+  - agora alimenta `feedWatchdogIfEnabled()` a cada iteração
+  - usa `delay(1)` quando não há frame e após encaminhar frame não correlacionado
+  - registra `RPV2_WAIT_HEARTBEAT` com elapsed controlado por estágio
+- `executeFenceCommandRpv2Plan()` agora registra transições explícitas `RPV2_STAGE_TRANSITION` entre `begin`, `points`, `commit` e `apply_status`, além de alimentar o watchdog entre etapas
+- `processPendingWakeSessions()` agora registra `RPV2_SESSION_BEGIN_DISPATCH`, `RPV2_SESSION_END_APPLIED` e `RPV2_SESSION_END_FAILED`
+- a coleira ganhou retenção explícita de sessão `RPV2` independente da janela `RTR_PAGE` original:
+  - novo helper `holdRpv2Session(...)`
+  - `RPV2_BEGIN`, `RPV2_POINTS` e `RPV2_COMMIT` agora rearmam/estendem o hold com logs `RPV2_SESSION_HOLD`
+  - rearm inicial agora emite `RPV2_SESSION_REARM`
+- o laço final da coleira agora segura o dispositivo acordado enquanto `rpv2FenceSession_.active` estiver ativo, com log `RPV2_SESSION_WAKE_LOCK_HOLD`, evitando deep sleep prematuro entre `BEGIN/POINTS/COMMIT/APPLY_STATUS`
+- validação desta rodada:
+  - `g++ ... firmware/tests/rtrv1_page_ack_correlation_test.cpp`: ok
+  - `g++ ... firmware/tests/rtrv1_fast_path_priority_test.cpp`: ok
+  - `g++ ... firmware/tests/rtrv1_terminal_failure_status_test.cpp`: ok
+  - `g++ ... firmware/tests/rtrv1_wake_scheduler_test.cpp`: ok
+  - builds Arduino continuam sem confirmação conclusiva neste host por histórico de hang do `arduino-cli compile`
+
 Base de reaproveitamento confirmada nesta rodada:
 - a task `auditoria-area-sync-e2e.md` ja serve como fundacao da trilha `queue/downlink cloud`
 - os logs estruturados `[AREA_SYNC]` principais ja estao no firmware da matriz e da coleira

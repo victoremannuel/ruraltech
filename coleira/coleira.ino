@@ -44,6 +44,7 @@
 #include "../firmware/shared/radio_transport_v1_collar_policy.h"
 #include "../firmware/shared/radio_transport_v1_constants.h"
 #include "../firmware/shared/radio_transport_v1_reason_codes.h"
+#include "../firmware/shared/radio_transport_v1_session_id.h"
 #include "../firmware/shared/radio_proto_v2_codec.h"
 #include "../firmware/shared/radio_proto_v2_crc.h"
 #include "../firmware/shared/radio_proto_v2_id.h"
@@ -167,6 +168,10 @@ static void stopStatusServer();
 static void clearRtrSessionMode(const char* reason);
 static bool isRtrSessionModeActive();
 static void refreshRtrSessionActivity(const char* reason);
+static void holdRpv2Session(
+    uint64_t radioCommandId,
+    uint32_t sessionNonce,
+    const char* reason);
 static void logRtrDropReason(const char* reason, const LoRaFrame& frame);
 
 struct PolygonAuditContext {
@@ -279,6 +284,33 @@ static void refreshRtrSessionActivity(const char* reason) {
       (unsigned long long)rtrSessionMode_.sessionId,
       reason ? reason : "data",
       (unsigned long)rtrSessionMode_.wakeLockUntilMs);
+}
+
+static void holdRpv2Session(
+    uint64_t radioCommandId,
+    uint32_t sessionNonce,
+    const char* reason) {
+  const uint32_t nowMs = millis();
+  const uint64_t sessionId =
+      rtrv1::makeSessionId(radioCommandId, cfg::DEVICE_ID, sessionNonce);
+  const bool wasActive = rtrSessionMode_.active;
+  rtrSessionMode_.active = true;
+  rtrSessionMode_.sessionId = sessionId;
+  rtrSessionMode_.commandType = MsgType::SET_FENCE;
+  rtrSessionMode_.lastActivityAtMs = nowMs;
+  rtrSessionMode_.wakeLockUntilMs = nowMs + rtrv1::SESSION_WAKE_LOCK_MS;
+  LOGI(
+      "RPV2_SESSION_HOLD reason=%s sessionId=%llu wakeLockUntilMs=%lu",
+      reason ? reason : "rpv2",
+      (unsigned long long)rtrSessionMode_.sessionId,
+      (unsigned long)rtrSessionMode_.wakeLockUntilMs);
+  if (!wasActive) {
+    LOGI(
+        "RPV2_SESSION_REARM radioCommandId=%llu sessionNonce=%lu sessionId=%llu",
+        (unsigned long long)radioCommandId,
+        (unsigned long)sessionNonce,
+        (unsigned long long)rtrSessionMode_.sessionId);
+  }
 }
 
 static void logRtrDropReason(const char* reason, const LoRaFrame& frame) {
@@ -1311,6 +1343,7 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
     rpv2FenceSession_.totalChunks = body.totalChunks;
     rpv2FenceSession_.expectedFragment = 1;
     rpv2FenceSession_.nextPointIndex = 0;
+    holdRpv2Session(header.radioCommandId, header.sessionNonce, "begin_rx");
     sendRpv2Ack(frame, header, rpv2::FENCE_BEGIN, 0, 1, 0, 0);
     return true;
   }
@@ -1357,6 +1390,7 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
     }
     rpv2FenceSession_.nextPointIndex += prefix.pointCount;
     rpv2FenceSession_.expectedFragment++;
+    holdRpv2Session(header.radioCommandId, header.sessionNonce, "points_rx");
     LOGI(
         "RPV2_STAGE_PROGRESS radioCommandId=%llu sessionNonce=%lu nextPointIndex=%u totalPoints=%u expectedFragment=%u",
         (unsigned long long)header.radioCommandId,
@@ -1421,6 +1455,7 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
         (unsigned long)header.sessionNonce,
         (unsigned long)crc,
         (unsigned)rpv2FenceSession_.fence.count);
+    holdRpv2Session(header.radioCommandId, header.sessionNonce, "commit_rx");
     if (!persistFence(rpv2FenceSession_.fence)) {
       sendRpv2Nack(frame, header, rpv2::FENCE_COMMIT, 0, rpv2::REASON_STAGE_STORAGE_ERROR, rpv2FenceSession_.expectedFragment, 0);
       return true;
@@ -3449,6 +3484,19 @@ void loop() {
 
   if (cfg::RTR_BENCH_MODE || cfg::RTR_DISABLE_DEEP_SLEEP_FOR_BENCH) {
     LOGW("RTR_BENCH_MODE ativo; deep sleep desabilitado");
+    delay(50);
+    return;
+  }
+
+  if (rpv2FenceSession_.active) {
+    LOGI(
+        "RPV2_SESSION_WAKE_LOCK_HOLD radioCommandId=%llu sessionNonce=%lu stageComplete=%d remainingMs=%lu",
+        (unsigned long long)rpv2FenceSession_.radioCommandId,
+        (unsigned long)rpv2FenceSession_.sessionNonce,
+        rpv2FenceSession_.stageComplete ? 1 : 0,
+        isRtrSessionModeActive()
+            ? (unsigned long)(rtrSessionMode_.wakeLockUntilMs - millis())
+            : 0UL);
     delay(50);
     return;
   }

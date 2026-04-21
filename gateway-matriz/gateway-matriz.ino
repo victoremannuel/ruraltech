@@ -448,6 +448,11 @@ static bool prepareFenceWakeSession(
 static void finalizeFenceCommandIfAllTargetsTerminal();
 static void failPendingWakeSession(PendingWakeSession& session, uint16_t reasonCode, const char* reasonLabel);
 static void processPendingWakeSessions();
+static void logRpv2StageTransition(
+    uint32_t deviceId,
+    const char* commandId,
+    const char* fromStage,
+    const char* toStage);
 
 enum class QueueLoadResult : uint8_t {
   kLoaded = 0,
@@ -3074,6 +3079,19 @@ static void publishFenceTransportState(
   publishSimpleCommandResult(transportState, reason);
 }
 
+static void logRpv2StageTransition(
+    uint32_t deviceId,
+    const char* commandId,
+    const char* fromStage,
+    const char* toStage) {
+  LOGI(
+      "RPV2_STAGE_TRANSITION deviceId=%lu commandId=%s from=%s to=%s",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      fromStage ? fromStage : "-",
+      toStage ? toStage : "-");
+}
+
 static const char* pendingWakeStateLabel(rtrwake::State state) {
   return rtrwake::stateLabel(state);
 }
@@ -3738,20 +3756,37 @@ static bool waitForRpv2Response(
     uint64_t radioCommandId,
     uint32_t sessionNonce,
     uint32_t timeoutMs,
-    Rpv2AwaitedResponse* out) {
+    Rpv2AwaitedResponse* out,
+    const char* stage = nullptr,
+    const char* commandId = nullptr) {
   const uint32_t startedAt = millis();
+  uint32_t lastHeartbeatAt = startedAt;
   while ((uint32_t)(millis() - startedAt) < timeoutMs) {
+    feedWatchdogIfEnabled();
+    const uint32_t nowMs = millis();
+    if ((uint32_t)(nowMs - lastHeartbeatAt) >= 250UL) {
+      LOGI(
+          "RPV2_WAIT_HEARTBEAT deviceId=%lu commandId=%s stage=%s elapsedMs=%lu timeoutMs=%lu",
+          (unsigned long)deviceId,
+          commandId && commandId[0] ? commandId : "-",
+          stage ? stage : "-",
+          (unsigned long)(nowMs - startedAt),
+          (unsigned long)timeoutMs);
+      lastHeartbeatAt = nowMs;
+    }
     LoRaFrame rx;
     if (!lora.receive(rx)) {
-      delay(10);
+      delay(1);
       continue;
     }
     if (rx.deviceId != deviceId) {
       enqueueAcceptedUplink(rx);
+      delay(1);
       continue;
     }
     if (decodeRpv2ResponseFrame(rx, radioCommandId, sessionNonce, out)) return true;
     enqueueAcceptedUplink(rx);
+    delay(1);
   }
   return false;
 }
@@ -3986,6 +4021,7 @@ static bool executeFenceCommandRpv2Plan(
       (unsigned)beginMetrics.cipherPayloadLen,
       (unsigned)beginMetrics.wireLenFinal);
   publishFenceTransportState(deviceId, "awaiting_begin_ack");
+  logRpv2StageTransition(deviceId, commandId, "page_acked", "begin_tx");
   LOGI(
       "RPV2_WAIT_ACK_BEGIN deviceId=%lu commandId=%s radioCommandId=%llu retryCount=%u",
       (unsigned long)deviceId,
@@ -4019,9 +4055,17 @@ static bool executeFenceCommandRpv2Plan(
       commandId && commandId[0] ? commandId : "-",
       (unsigned long long)radioCommandId,
       (unsigned)activeSimpleCommand.retryCount);
+  feedWatchdogIfEnabled();
 
   Rpv2AwaitedResponse response;
-  if (!waitForRpv2Response(deviceId, radioCommandId, sessionNonce, rpv2::BEGIN_ACK_TIMEOUT_MS, &response)) {
+  if (!waitForRpv2Response(
+          deviceId,
+          radioCommandId,
+          sessionNonce,
+          rpv2::BEGIN_ACK_TIMEOUT_MS,
+          &response,
+          "begin_ack",
+          commandId)) {
     if (reason) *reason = "begin_timeout";
     activeSimpleCommand.lastReasonCode = rpv2::REASON_BEGIN_TIMEOUT;
     publishFenceTransportState(deviceId, "failed", "begin_timeout", rpv2::REASON_BEGIN_TIMEOUT, true, false);
@@ -4047,6 +4091,7 @@ static bool executeFenceCommandRpv2Plan(
       "rpv2_begin_ack",
       nullptr,
       nullptr);
+  feedWatchdogIfEnabled();
   LOGI(
       "RPV2_RX_ACK deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u acceptedPoints=%u",
       (unsigned long)deviceId,
@@ -4060,6 +4105,7 @@ static bool executeFenceCommandRpv2Plan(
     header.msgType = rpv2::FENCE_POINTS;
     header.fragmentIndex = item.fragmentIndex;
     header.fragmentTotal = plan.totalChunks;
+    logRpv2StageTransition(deviceId, commandId, "begin_acked", "points_tx");
     rpv2::FencePointsPrefix prefix{};
     prefix.startPointIndex = item.startPointIndex;
     prefix.pointCount = item.pointCount;
@@ -4106,7 +4152,15 @@ static bool executeFenceCommandRpv2Plan(
         (unsigned long long)radioCommandId,
         (unsigned)item.fragmentIndex,
         (unsigned)item.pointCount);
-    if (!waitForRpv2Response(deviceId, radioCommandId, sessionNonce, rpv2::POINTS_ACK_TIMEOUT_MS, &response)) {
+    feedWatchdogIfEnabled();
+    if (!waitForRpv2Response(
+            deviceId,
+            radioCommandId,
+            sessionNonce,
+            rpv2::POINTS_ACK_TIMEOUT_MS,
+            &response,
+            "points_ack",
+            commandId)) {
       if (reason) *reason = "points_timeout";
       activeSimpleCommand.lastReasonCode = rpv2::REASON_POINTS_TIMEOUT;
       publishFenceTransportState(deviceId, "failed", "points_timeout", rpv2::REASON_POINTS_TIMEOUT, true, false);
@@ -4132,6 +4186,7 @@ static bool executeFenceCommandRpv2Plan(
         "rpv2_points_ack",
         nullptr,
         nullptr);
+    feedWatchdogIfEnabled();
     LOGI(
         "RPV2_RX_ACK deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u acceptedPoints=%u",
         (unsigned long)deviceId,
@@ -4140,6 +4195,7 @@ static bool executeFenceCommandRpv2Plan(
         (unsigned)response.fragmentIndex,
         (unsigned)response.acceptedPoints);
     delay(rpv2::INTER_FRAME_GAP_MS);
+    feedWatchdogIfEnabled();
   }
 
   rpv2::FenceCommitBody commit{};
@@ -4176,6 +4232,7 @@ static bool executeFenceCommandRpv2Plan(
       (unsigned)commitMetrics.cipherPayloadLen,
       (unsigned)commitMetrics.wireLenFinal);
   publishFenceTransportState(deviceId, "awaiting_commit_ack");
+  logRpv2StageTransition(deviceId, commandId, "points_acked", "commit_tx");
   LOGI(
       "RPV2_WAIT_ACK_COMMIT deviceId=%lu commandId=%s radioCommandId=%llu retryCount=%u",
       (unsigned long)deviceId,
@@ -4208,7 +4265,15 @@ static bool executeFenceCommandRpv2Plan(
       (unsigned long)deviceId,
       commandId && commandId[0] ? commandId : "-",
       (unsigned long long)radioCommandId);
-  if (!waitForRpv2Response(deviceId, radioCommandId, sessionNonce, rpv2::COMMIT_ACK_TIMEOUT_MS, &response)) {
+  feedWatchdogIfEnabled();
+  if (!waitForRpv2Response(
+          deviceId,
+          radioCommandId,
+          sessionNonce,
+          rpv2::COMMIT_ACK_TIMEOUT_MS,
+          &response,
+          "commit_ack",
+          commandId)) {
     if (reason) *reason = "commit_timeout";
     activeSimpleCommand.lastReasonCode = rpv2::REASON_COMMIT_TIMEOUT;
     publishFenceTransportState(deviceId, "failed", "commit_timeout", rpv2::REASON_COMMIT_TIMEOUT, true, false);
@@ -4234,14 +4299,23 @@ static bool executeFenceCommandRpv2Plan(
       "rpv2_commit_ack",
       nullptr,
       nullptr);
+  feedWatchdogIfEnabled();
   publishFenceTransportState(deviceId, "awaiting_apply_status");
+  logRpv2StageTransition(deviceId, commandId, "commit_acked", "apply_status_wait");
   LOGI(
       "RPV2_WAIT_APPLY_STATUS deviceId=%lu commandId=%s radioCommandId=%llu retryCount=%u",
       (unsigned long)deviceId,
       commandId && commandId[0] ? commandId : "-",
       (unsigned long long)radioCommandId,
       (unsigned)activeSimpleCommand.retryCount);
-  if (!waitForRpv2Response(deviceId, radioCommandId, sessionNonce, rpv2::APPLY_STATUS_TIMEOUT_MS, &response)) {
+  if (!waitForRpv2Response(
+          deviceId,
+          radioCommandId,
+          sessionNonce,
+          rpv2::APPLY_STATUS_TIMEOUT_MS,
+          &response,
+          "apply_status",
+          commandId)) {
     if (reason) *reason = "apply_timeout";
     activeSimpleCommand.lastReasonCode = rpv2::REASON_APPLY_FAILED;
     publishFenceTransportState(deviceId, "failed", "apply_timeout", rpv2::REASON_APPLY_FAILED, true, false);
@@ -4274,6 +4348,8 @@ static bool executeFenceCommandRpv2Plan(
       "rpv2_apply_status_ok",
       nullptr,
       nullptr);
+  feedWatchdogIfEnabled();
+  logRpv2StageTransition(deviceId, commandId, "apply_status_ok", "session_applied");
   publishFenceTransportState(deviceId, "applied", nullptr, rpv2::REASON_NONE, true, true);
   return true;
 }
@@ -4553,6 +4629,11 @@ static void processPendingWakeSessions() {
         transitionPendingWakeState(
             session, rtrwake::State::SESSION_IN_PROGRESS, "rpv2_start");
         LOGI(
+            "RPV2_SESSION_BEGIN_DISPATCH deviceId=%lu commandId=%s radioCommandId=%llu",
+            (unsigned long)session.core.deviceId,
+            session.commandId[0] ? session.commandId : "-",
+            (unsigned long long)session.radioCommandId);
+        LOGI(
             "RTR_TO_RPV2_START deviceId=%lu commandId=%s campaignCount=%u",
             (unsigned long)session.core.deviceId,
             session.commandId[0] ? session.commandId : "-",
@@ -4567,9 +4648,20 @@ static void processPendingWakeSessions() {
                 session.commandId,
                 session.plan,
                 &sessionReason)) {
+          LOGI(
+              "RPV2_SESSION_END_APPLIED deviceId=%lu commandId=%s radioCommandId=%llu",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              (unsigned long long)session.radioCommandId);
           transitionPendingWakeState(
               session, rtrwake::State::COMPLETED, "rpv2_applied");
         } else {
+          LOGW(
+              "RPV2_SESSION_END_FAILED deviceId=%lu commandId=%s radioCommandId=%llu reason=%s",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              (unsigned long long)session.radioCommandId,
+              sessionReason ? sessionReason : "rpv2_failed");
           LOGW(
               "RTR_TO_RPV2_ABORT deviceId=%lu commandId=%s reason=%s",
               (unsigned long)session.core.deviceId,
