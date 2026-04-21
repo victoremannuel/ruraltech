@@ -3719,6 +3719,10 @@ static bool buildFenceRpv2Plan(
     plan->points[i].lonE7 = coordinateToE7(lon);
   }
   plan->fenceCrc32 = rpv2::crc32Fence(plan->points, totalPoints);
+  uint16_t minChunkPoints = 0;
+  uint16_t maxChunkPoints = 0;
+  uint16_t minSecureWireSize = 0;
+  uint16_t maxSecureWireSize = 0;
 
   uint16_t start = 0;
   while (start < totalPoints) {
@@ -3797,6 +3801,21 @@ static bool buildFenceRpv2Plan(
       }
     }
     if (best == 0) {
+      LOGW(
+          "RPV2_PLAN_FINAL deviceId=%lu commandId=%s radioCommandId=%llu totalPoints=%u totalChunks=%u minChunkPoints=%u maxChunkPoints=%u minWireLen=%u maxWireLen=%u planReady=0 failStartPoint=%u reason=%s",
+          (unsigned long)deviceId,
+          commandId && commandId[0] ? commandId : "-",
+          (unsigned long long)radioCommandId,
+          (unsigned)totalPoints,
+          (unsigned)plan->totalChunks,
+          (unsigned)minChunkPoints,
+          (unsigned)maxChunkPoints,
+          (unsigned)minSecureWireSize,
+          (unsigned)maxSecureWireSize,
+          (unsigned)start,
+          strcmp(lastRejectReason, "secure_envelope_too_large") == 0
+              ? "secure_envelope_too_large"
+              : "no_point_fits_in_frame");
       if (reason) {
         *reason = strcmp(lastRejectReason, "secure_envelope_too_large") == 0
                       ? "secure_envelope_too_large"
@@ -3821,9 +3840,32 @@ static bool buildFenceRpv2Plan(
         (unsigned)item.plainFrameSize,
         (unsigned)item.secureWireSize);
     plan->totalChunks++;
+    if (minChunkPoints == 0 || item.pointCount < minChunkPoints) {
+      minChunkPoints = item.pointCount;
+    }
+    if (item.pointCount > maxChunkPoints) {
+      maxChunkPoints = item.pointCount;
+    }
+    if (minSecureWireSize == 0 || item.secureWireSize < minSecureWireSize) {
+      minSecureWireSize = item.secureWireSize;
+    }
+    if (item.secureWireSize > maxSecureWireSize) {
+      maxSecureWireSize = item.secureWireSize;
+    }
     start += best;
   }
 
+  LOGI(
+      "RPV2_PLAN_FINAL deviceId=%lu commandId=%s radioCommandId=%llu totalPoints=%u totalChunks=%u minChunkPoints=%u maxChunkPoints=%u minWireLen=%u maxWireLen=%u planReady=1",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)plan->totalPoints,
+      (unsigned)plan->totalChunks,
+      (unsigned)minChunkPoints,
+      (unsigned)maxChunkPoints,
+      (unsigned)minSecureWireSize,
+      (unsigned)maxSecureWireSize);
   return true;
 }
 
@@ -4188,6 +4230,12 @@ static bool sendFenceCommandRpv2Session(
           commandId,
           &plan,
           reason)) {
+    LOGW(
+        "RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu reason=%s",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        reason && *reason ? *reason : "plan_failed");
     activeSimpleCommand.lastReasonCode =
         reason ? rpv2ReasonCodeFromLabel(*reason) : rpv2::REASON_NONE;
     return false;
@@ -4243,6 +4291,12 @@ static bool prepareFenceWakeSession(
           commandId,
           &plan,
           reason)) {
+    LOGW(
+        "RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu reason=%s",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        reason && *reason ? *reason : "plan_failed");
     activeSimpleCommand.lastReasonCode =
         reason ? rpv2ReasonCodeFromLabel(*reason) : rpv2::REASON_NONE;
     return false;
@@ -4359,13 +4413,31 @@ static void processPendingWakeSessions() {
         break;
 
       case rtrwake::State::PAGING_AWAITING_ACK:
+        if (rtrwake::awaitingAckWithoutPageSent(session.core)) {
+          LOGW(
+              "RTR_PAGE_TIMEOUT_STATE_INVALID deviceId=%lu commandId=%s campaignCount=%u pageSent=%d lastPageSentAtMs=%lu ackDeadlineAtMs=%lu",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              (unsigned)session.core.campaignCount,
+              session.core.pageSent ? 1 : 0,
+              (unsigned long)session.core.lastPageSentAtMs,
+              (unsigned long)session.core.pageAckDeadlineAtMs);
+          failPendingWakeSession(
+              session,
+              rtrv1::REASON_PAGE_SEND_FAILED,
+              "page_ack_state_without_page_tx");
+          break;
+        }
         if (rtrwake::pageAckTimedOut(session.core, nowMs)) {
           if (rtrwake::canRetryAfterTimeout(session.core)) {
             LOGW(
-                "RTR_PAGE_TIMEOUT_RETRY deviceId=%lu commandId=%s campaignCount=%u",
+                "RTR_PAGE_TIMEOUT_RETRY deviceId=%lu commandId=%s campaignCount=%u pageSent=%d lastPageSentAtMs=%lu ackDeadlineAtMs=%lu",
                 (unsigned long)session.core.deviceId,
                 session.commandId[0] ? session.commandId : "-",
-                (unsigned)session.core.campaignCount);
+                (unsigned)session.core.campaignCount,
+                session.core.pageSent ? 1 : 0,
+                (unsigned long)session.core.lastPageSentAtMs,
+                (unsigned long)session.core.pageAckDeadlineAtMs);
             transitionPendingWakeState(
                 session, rtrwake::State::PAGING_WAITING_UPLINK, "page_timeout_retry");
             rtrwake::scheduleRetryWaitingUplink(&session.core, nowMs);
@@ -4382,10 +4454,13 @@ static void processPendingWakeSessions() {
                 false);
           } else {
             LOGW(
-                "RTR_PAGE_TIMEOUT_FINAL deviceId=%lu commandId=%s campaignCount=%u",
+                "RTR_PAGE_TIMEOUT_FINAL deviceId=%lu commandId=%s campaignCount=%u pageSent=%d lastPageSentAtMs=%lu ackDeadlineAtMs=%lu",
                 (unsigned long)session.core.deviceId,
                 session.commandId[0] ? session.commandId : "-",
-                (unsigned)session.core.campaignCount);
+                (unsigned)session.core.campaignCount,
+                session.core.pageSent ? 1 : 0,
+                (unsigned long)session.core.lastPageSentAtMs,
+                (unsigned long)session.core.pageAckDeadlineAtMs);
             appendPropertyCommandEvent(
                 activeSimpleCommand.propertyId,
                 activeSimpleCommand.commandId,
@@ -4807,6 +4882,19 @@ static const char* deserializationErrorName(DeserializationError error) {
   }
 }
 
+static bool queueBodyLooksSemanticallyEmpty(const String& body) {
+  String normalized;
+  normalized.reserve(body.length());
+  for (size_t i = 0; i < body.length(); ++i) {
+    const char ch = body[i];
+    if (ch == ' ' || ch == '\r' || ch == '\n' || ch == '\t') continue;
+    if (ch >= '0' && ch <= '9') continue;
+    normalized += static_cast<char>(tolower(static_cast<unsigned char>(ch)));
+    if (normalized.length() > 12) break;
+  }
+  return normalized == "null";
+}
+
 static bool sanitizeQueueResponseBody(String& body, size_t& trimmedPrefixBytes, char& firstJsonChar) {
   trimmedPrefixBytes = 0;
   firstJsonChar = '\0';
@@ -5078,13 +5166,15 @@ static QueueLoadResult loadNextQueuedCommand(String& commandIdOut, DynamicJsonDo
     return QueueLoadResult::kContentError;
   }
   body.trim();
-  if (body.isEmpty() || body == "null") {
+  if (body.isEmpty() || body == "null" || queueBodyLooksSemanticallyEmpty(body)) {
     const String bodyPrefix = queueBodyPrefix(body);
-    AS_MATRIX_QUEUE_FETCH_HTTP_OK_UNEXPECTED_SHAPE(
+    AS_MATRIX_INFO(
+        "QUEUE_FETCH_HTTP_OK_EMPTY_BODY",
+        "runtimeId=%s queueKeyLen=%d httpStatus=%d bodyLen=%d emptyKind=%s bodyPrefix=%s",
         runtimeId.c_str(),
-        strlen(cfg::RTDB_QUEUE_KEY),
+        (int)strlen(cfg::RTDB_QUEUE_KEY),
         trace.httpStatus,
-        body.length(),
+        (int)body.length(),
         body.isEmpty() ? "empty" : "null",
         bodyPrefix.c_str());
     return QueueLoadResult::kEmpty;
@@ -5094,6 +5184,17 @@ static QueueLoadResult loadNextQueuedCommand(String& commandIdOut, DynamicJsonDo
   char firstJsonChar = '\0';
   if (!sanitizeQueueResponseBody(body, trimmedPrefixBytes, firstJsonChar)) {
     const String bodyPrefix = queueBodyPrefix(body);
+    if (queueBodyLooksSemanticallyEmpty(body)) {
+      AS_MATRIX_INFO(
+          "QUEUE_FETCH_HTTP_OK_EMPTY_BODY",
+          "runtimeId=%s queueKeyLen=%d httpStatus=%d bodyLen=%d emptyKind=sanitized_null bodyPrefix=%s",
+          runtimeId.c_str(),
+          (int)strlen(cfg::RTDB_QUEUE_KEY),
+          trace.httpStatus,
+          (int)body.length(),
+          bodyPrefix.c_str());
+      return QueueLoadResult::kEmpty;
+    }
     AS_MATRIX_QUEUE_FETCH_HTTP_OK_UNEXPECTED_SHAPE(
         runtimeId.c_str(),
         strlen(cfg::RTDB_QUEUE_KEY),
@@ -5198,12 +5299,13 @@ static QueueLoadResult loadNextQueuedCommand(String& commandIdOut, DynamicJsonDo
     } else {
     itemCount = (int)queueObject.size();
     if (itemCount == 0) {
-      AS_MATRIX_QUEUE_FETCH_HTTP_OK_UNEXPECTED_SHAPE(
+      AS_MATRIX_INFO(
+          "QUEUE_FETCH_HTTP_OK_EMPTY_OBJECT",
+          "runtimeId=%s queueKeyLen=%d httpStatus=%d bodyLen=%d bodyPrefix=%s",
           runtimeId.c_str(),
-          strlen(cfg::RTDB_QUEUE_KEY),
+          (int)strlen(cfg::RTDB_QUEUE_KEY),
           trace.httpStatus,
-          body.length(),
-          "empty_object",
+          (int)body.length(),
           bodyPrefix.c_str());
       return QueueLoadResult::kEmpty;
     }

@@ -88,6 +88,9 @@ int main() {
     if (wireLen <= 128) bestFit = count;
   }
   assert(bestFit >= 1);
+  assert(bestFit < 6);
+  const uint8_t plannedChunks = static_cast<uint8_t>((6 + bestFit - 1) / bestFit);
+  assert(plannedChunks >= 2);
 
   header.msgType = rpv2::FENCE_COMMIT;
   rpv2::FenceCommitBody commit{};

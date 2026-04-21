@@ -106,7 +106,7 @@ export function normalizeBusinessRef(
 }
 
 export const COMMAND_TTL_MS: Record<string, number> = {
-  SET_FENCE: 15 * 60 * 1000,
+  SET_FENCE: 30 * 60 * 1000,
   SET_HERDING_PLAN: 20 * 60 * 1000,
   SET_PARAMS: 10 * 60 * 1000,
   PING: 6 * 60 * 1000,

@@ -101,9 +101,29 @@ Estado de partida consolidado nesta rodada:
 
 ## Status
 
-**Atualizado: 2026-04-19**
+**Atualizado: 2026-04-21**
 
 Rodada de implementação RPv2 concluída, `RTRv1 paging + wake lock` aplicada e correção do wake orchestration assíncrono da matriz concluída localmente. Validação host e builds aprovados; validação física de bancada segue pendente.
+
+Nova rodada aplicada em 2026-04-21:
+- `loadNextQueuedCommand()` agora trata corpo semanticamente vazio como vazio real, inclusive ruído equivalente a `null`, sem cair em `QUEUE_FETCH_HTTP_OK_UNEXPECTED_SHAPE`
+- `loadNextQueuedCommand()` agora trata `empty_object` como fila vazia limpa, reduzindo ruído operacional de bancada
+- `buildFenceRpv2Plan()` agora emite resumo terminal inequívoco `RPV2_PLAN_FINAL` com `planReady=1/0`, total de chunks e faixa de tamanhos finais
+- falha terminal do planner agora registra `RPV2_PLAN_FAILED_TERMINAL` antes de abortar o fluxo, reforçando o fail-fast antes de wake/page
+- `RtrWakeOrchestrator` agora exige `pageSent` real para considerar timeout de ACK e expõe helper para detectar estado inválido
+- `processPendingWakeSessions()` agora falha explicitamente quando a sessão entra em `PAGING_AWAITING_ACK` sem envio real de page, em vez de mascarar isso como timeout legítimo
+- logs de `RTR_PAGE_TIMEOUT_RETRY` e `RTR_PAGE_TIMEOUT_FINAL` agora carregam contexto de `pageSent`, `lastPageSentAtMs` e `ackDeadlineAtMs`
+- TTL default de `SET_FENCE` no backend foi ampliado de 15 para 30 minutos para reduzir expiração prematura em bancada
+- testes host reforçados:
+  - `rtrv1_wake_scheduler_test.cpp` cobre a invariável de não haver timeout sem page real
+  - `rpv2_fence_planner_test.cpp` agora prova que 6 pontos exigem chunking em mais de uma parte no envelope atual
+  - `supabase/functions/_shared/supabase.test.ts` criado para validar o TTL de `SET_FENCE` e o fallback de comando desconhecido
+- validação desta rodada:
+  - `g++ ... firmware/tests/rpv2_fence_planner_test.cpp`: ok
+  - `g++ ... firmware/tests/rtrv1_wake_scheduler_test.cpp`: ok
+  - `g++ ... firmware/tests/rtrv1_terminal_failure_status_test.cpp`: ok
+  - `deno test supabase/functions/_shared/supabase.test.ts`: não executado neste host (`deno: command not found`)
+  - `arduino-cli compile` para `gateway-matriz`, `coleira` e `gateway`: inconclusivo neste host; os processos entram no padrão histórico de hang sem saída final
 
 Base de reaproveitamento confirmada nesta rodada:
 - a task `auditoria-area-sync-e2e.md` ja serve como fundacao da trilha `queue/downlink cloud`

@@ -9,6 +9,11 @@ int main() {
   session.maxCampaigns = 2;
   session.state = rtrwake::State::PAGING_WAITING_UPLINK;
 
+  session.state = rtrwake::State::PAGING_AWAITING_ACK;
+  assert(!rtrwake::pageAckTimedOut(session, 1000));
+  assert(rtrwake::awaitingAckWithoutPageSent(session));
+
+  session.state = rtrwake::State::PAGING_WAITING_UPLINK;
   assert(rtrwake::noteUplinkHint(&session, 1234, 1000));
   assert(session.state == rtrwake::State::PAGING_READY_TO_SEND);
   assert(session.lastUplinkAtMs == 1000);
@@ -18,6 +23,7 @@ int main() {
   session.state = rtrwake::State::PAGING_AWAITING_ACK;
   assert(session.campaignCount == 1);
   assert(session.pageAckDeadlineAtMs == 2600);
+  assert(!rtrwake::awaitingAckWithoutPageSent(session));
   assert(rtrwake::pageAckTimedOut(session, 2600));
   assert(rtrwake::canRetryAfterTimeout(session));
 
