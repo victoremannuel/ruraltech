@@ -2607,6 +2607,35 @@ static bool isRelayCandidate(const LoRaFrame& frame) {
          frame.msgType == MsgType::PING;
 }
 
+static bool shouldRelayAcceptedUplink(const LoRaFrame& frame, const char** reason = nullptr) {
+  if (!cfg::GATEWAY_RELAY_ENABLED) {
+    if (reason) *reason = "relay_disabled";
+    return false;
+  }
+  if (!isRelayCandidate(frame)) {
+    if (reason) *reason = "not_relay_candidate";
+    return false;
+  }
+  if (!scopeMatchesBinding(frame.scopeId)) {
+    if (reason) *reason = "scope_mismatch";
+    return false;
+  }
+
+  // A matriz nao deve refletir uplinks aceitos de volta no mesmo dominio LoRa.
+  // Em bancada isso produz eco para a propria coleira e ruído como unsupported_type=1.
+  if (frame.msgType == MsgType::TELEMETRY ||
+      frame.msgType == MsgType::EVENT ||
+      frame.msgType == MsgType::ACK ||
+      frame.msgType == MsgType::NACK ||
+      frame.msgType == MsgType::RTR_CONTROL) {
+    if (reason) *reason = "accepted_uplink_echo_guard";
+    return false;
+  }
+
+  if (reason) *reason = "ok";
+  return true;
+}
+
 static const char* uplinkTypeLabel(MsgType t) {
   if (t == MsgType::TELEMETRY) return "telemetry";
   if (t == MsgType::EVENT) return "event";
@@ -2906,7 +2935,17 @@ static void processAcceptedUplink(const LoRaFrame& rx) {
     }
   }
   if (!suppressRelay) {
-    relayFrameToPeerGateways(rx);
+    const char* relayReason = nullptr;
+    if (shouldRelayAcceptedUplink(rx, &relayReason)) {
+      relayFrameToPeerGateways(rx);
+    } else if (cfg::GATEWAY_RELAY_ENABLED) {
+      LOGI(
+          "RELAY_SUPPRESSED_UPLINK_ECHO deviceId=%lu msgType=%u seq=%lu reason=%s",
+          (unsigned long)rx.deviceId,
+          (unsigned)rx.msgType,
+          (unsigned long)rx.seq,
+          relayReason ? relayReason : "unknown");
+    }
   }
 
   StaticJsonDocument<576> packet;
@@ -6250,10 +6289,12 @@ static void printBootChecklist(
     bool rtcOk,
     bool sdOk,
     bool loraOk,
-    bool cloudConfigured) {
+    bool cloudConfigured,
+    bool queueConfigured) {
   Serial.println("==== HW CHECKLIST | GATEWAY MATRIX ====");
   Serial.printf("[MODE ] %-24s : %u\n", "DIAG_STAGE", (unsigned)cfg::DIAG_STAGE);
   Serial.printf("[MODE ] %-24s : %s\n", "DIAG_PROFILE", cfg::DIAG_PROFILE_NAME);
+  Serial.printf("[MODE ] %-24s : %s\n", "MATRIX_RUNTIME_ID", matrixCloudId().c_str());
   Serial.printf("[MODE ] %-24s : %u\n", "PROTO_VERSION", (unsigned)cfg::LORA_PROTO_VERSION);
   Serial.printf("[MODE ] %-24s : %u\n", "KEY_ID", (unsigned)cfg::LORA_KEY_ID);
   Serial.printf("[MODE ] %-24s : %u\n", "RADIO_PROFILE", (unsigned)cfg::LORA_RADIO_PROFILE_ID);
@@ -6306,6 +6347,10 @@ static void printBootChecklist(
       "CLOUD_BACKHAUL_CFG",
       cloudConfigured,
       "Telemetria cloud sem credenciais validas; revisar manual_settings.local.h.");
+  checklistLine(
+      "QUEUE_POLLING_CFG",
+      queueConfigured,
+      "Polling da fila cloud indisponivel; revisar RT_CFG_RTDB_QUEUE_KEY e placeholders cloud.");
   Serial.println("=======================================");
 }
 
@@ -6373,6 +6418,7 @@ void setup() {
   const bool loraOk = lora.begin();
   if (!loraOk) LOGE("LoRa indisponivel");
   const bool cloudConfigured = cloudTelemetryConfigured();
+  const bool queueConfigured = queuePollingConfigured();
   setWatchdogEnabled(wifiOtaEnabled);
   printBootChecklist(
       displayOk,
@@ -6381,11 +6427,19 @@ void setup() {
       rtcOk,
       sdOk,
       loraOk,
-      cloudConfigured);
+      cloudConfigured,
+      queueConfigured);
 
   LOGI("Matrix diag_stage=%u profile=%s", (unsigned)cfg::DIAG_STAGE, cfg::DIAG_PROFILE_NAME);
   LOGW("Matrix anti_replay_test_mode=%d", cfg::DISABLE_LORA_REPLAY_FOR_TESTS ? 1 : 0);
   LOGI("Matrix lora_only_bench_mode=%d", cfg::DIAG_STAGE == 1 ? 1 : 0);
+  LOGI(
+      "Matrix cloud_preflight runtimeId=%s cloudConfigured=%d queuePollingConfigured=%d backhaulFeature=%d cloudFeature=%d",
+      matrixCloudId().c_str(),
+      cloudConfigured ? 1 : 0,
+      queueConfigured ? 1 : 0,
+      cfg::FEATURE_BACKHAUL ? 1 : 0,
+      cfg::FEATURE_CLOUD ? 1 : 0);
   LOGI(
       "Matrix boot fw=%s diag_stage=%u proto_version=%u key_id=%u radio_profile=%u bindingReady=%d profile_name=%s",
       cfg::FW_VERSION,

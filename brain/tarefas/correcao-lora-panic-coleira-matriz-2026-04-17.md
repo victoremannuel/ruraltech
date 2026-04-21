@@ -235,6 +235,11 @@ Historico:
 - 2026-04-18: plano de cloud/backhaul sem relay aplicado localmente com promocao da matriz para `DIAG_STAGE=4`, mantendo relay desligado e anti-replay estrito
 - 2026-04-18: credenciais locais de backhaul/cloud foram preservadas como configuradas no override da matriz; a homologacao funcional segue pendente de bancada real
 - 2026-04-18: compilacao local da matriz em `DIAG_STAGE=4` passou, deixando a rodada pronta para validacao fisica de `diag-cloud-no-sd`
+- 2026-04-21: aplicada blindagem cirurgica no caminho de uplink aceito da matriz para impedir eco LoRa em bancada quando o relay estiver habilitado
+- 2026-04-21: `processAcceptedUplink()` da matriz passou a consultar `shouldRelayAcceptedUplink()` antes de chamar `relayFrameToPeerGateways()`
+- 2026-04-21: uplinks aceitos de `TELEMETRY`, `EVENT`, `ACK`, `NACK` e `RTR_CONTROL` agora ficam bloqueados para relay com `reason=accepted_uplink_echo_guard`
+- 2026-04-21: novo log de observabilidade adicionado na matriz: `RELAY_SUPPRESSED_UPLINK_ECHO`
+- 2026-04-21: a correção foi guiada pela evidência já consolidada de `reflexo indevido do uplink para a propria coleira` e `unsupported_type=1`; o prompt externo citado pelo operador não foi encontrado no caminho informado durante esta rodada
 
 Pendencias desta task:
 - validar a matriz em `DIAG_STAGE=4` com relay desligado:

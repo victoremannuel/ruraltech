@@ -258,6 +258,27 @@ Base de reaproveitamento confirmada nesta rodada:
   - testes host `rtrv1_fast_path_priority_test`, `rtrv1_page_deadline_metrics_test`, `rtrv1_raw_drop_reason_test`, `rtrv1_secondary_window_policy_test` e `rtrv1_terminal_failure_status_test`: ok
   - `arduino-cli compile --config-file .tmp-arduino-cli.yaml --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz`: ok
   - `arduino-cli compile --config-file .tmp-arduino-cli.yaml --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs coleira`: ok
+- nova rodada aplicada em 2026-04-21:
+  - o checklist externo `checklist_cirurgico_pre_teste_matriz_cloud_downlink_ia_codigo.md` foi implementado como verificacao automatizada em `tools/audit/check_matrix_cloud_pretest.py`
+  - o script novo monta a tabela exigida pelo plano, separa matriz vs coleira e devolve conclusao binaria `ambiente pronto` vs `nao pronto`
+  - a matriz ganhou sinais explicitos de preflight no boot:
+    - `MATRIX_RUNTIME_ID`
+    - `QUEUE_POLLING_CFG`
+    - log resumido `Matrix cloud_preflight runtimeId=... cloudConfigured=... queuePollingConfigured=...`
+  - o endpoint `/status` da matriz passou a expor:
+    - `matrixRuntimeId`
+    - `configuredMatrixId`
+    - `cloudConfigured`
+    - `queuePollingConfigured`
+  - validacao local do novo checklist:
+    - `python3 tools/audit/check_matrix_cloud_pretest.py`: ok
+    - `python3 tools/audit/check_matrix_cloud_pretest.py --json`: ok
+    - `python3 -m py_compile tools/audit/check_matrix_cloud_pretest.py`: ok
+  - resultado objetivo desta verificacao local:
+    - coleira: pronta
+    - matriz: nao pronta para cloud/downlink neste workspace
+    - bloqueadores: `DIAG_STAGE` efetivo em `0` e ausencia de `gateway-matriz/manual_settings.local.h`
+    - menor passo pendente fora do repositorio versionado: criar/preencher `manual_settings.local.h` com `DIAG_STAGE=4` e credenciais reais
   - `arduino-cli compile --config-file .tmp-arduino-cli.yaml --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway`: ok
   - matriz: `Sketch uses 1405207 bytes (71%)`
   - matriz: `Global variables use 85924 bytes (26%)`
@@ -265,6 +286,22 @@ Base de reaproveitamento confirmada nesta rodada:
   - coleira: `Global variables use 68632 bytes (20%)`
   - gateway comum: `Sketch uses 1936275 bytes (98%)`
   - gateway comum: `Global variables use 75476 bytes (23%)`
+- verificacao adicional em 2026-04-21:
+  - o plano externo `/Users/victoremannuel/Downloads/plano_cirurgico_impl_fastpath_page_rxstatus_codex.md` foi comparado novamente com o estado atual do repositorio
+  - os itens centrais do plano seguem presentes no codigo atual:
+    - fast-path de `RTR_PAGE` no ciclo do uplink aceito
+    - defer/resume de `CLOUD_TX`
+    - metricas `RTR_WAKE_TO_PAGE_LATENCY`
+    - janela estendida e janela secundaria na coleira
+    - logs `RTR_RAW_DOWNLINK_RX`, `RTR_RAW_DOWNLINK_DROP` e `RTR_RAW_DOWNLINK_ACCEPT`
+    - fechamento terminal `failed` com `reason=page_timeout_final`
+  - revalidacao host executada com `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat`:
+    - `rtrv1_fast_path_priority_test`: ok
+    - `rtrv1_terminal_failure_status_test`: ok
+    - `rtrv1_page_deadline_metrics_test`: ok
+    - `rtrv1_secondary_window_policy_test`: ok
+    - `rtrv1_raw_drop_reason_test`: ok
+  - conclusao desta verificacao: nenhuma lacuna material restante do plano foi encontrada no codigo local; nao foi necessario novo patch de implementacao nesta rodada
 
 Historico adicional desta rodada:
 - 2026-04-19: recebido plano cirúrgico externo para transporte LoRa confiável orientado a sessão
@@ -279,6 +316,9 @@ Historico adicional desta rodada:
 - 2026-04-20: a rodada cirúrgica de rendezvous priorizou `RTR_PAGE` no mesmo ciclo do uplink aceito, sem reescrever o `RPv2` nem o envelope `LoRaFrame`
 - 2026-04-20: a coleira ganhou observabilidade de RX bruto e tolerância extra via janela secundária antes do deep sleep
 - 2026-04-20: o fechamento agregado do `SET_FENCE` passou a preservar o motivo terminal de falha em vez de publicar `failed` sem `reason`
+- 2026-04-21: o checklist cirurgico pre-teste foi automatizado em script para evitar nova bancada invalida com matriz em perfil errado
+- 2026-04-21: a observabilidade da matriz foi reforcada no boot e em `/status` para distinguir `cloudConfigured` de `queuePollingConfigured`
+- 2026-04-21: verificado novamente contra o plano externo `plano_cirurgico_impl_fastpath_page_rxstatus_codex.md`; o repositorio atual permaneceu consistente com a implementacao descrita e os testes host-chave passaram sem novas mudancas
 
 ## Next step
 

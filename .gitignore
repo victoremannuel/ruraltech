@@ -55,3 +55,5 @@ ruraltech10-firebase-adminsdk-fbsvc-66b85a4f95.json
 /scripts/migration/.env
 /scripts/migration/package-lock.json
 *.env
+
+/gateway-matriz/manual_settings.local.h

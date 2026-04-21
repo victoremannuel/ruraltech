@@ -123,9 +123,23 @@ void ApiServer::begin() {
       doc["featureBackhaul"] = cfg::FEATURE_BACKHAUL;
       doc["featureCloud"] = cfg::FEATURE_CLOUD;
       doc["featureSd"] = cfg::FEATURE_SD;
+      doc["matrixRuntimeId"] = gatewayNodeId();
+      if (cfg::RTDB_MATRIX_ID[0] != '\0') {
+        doc["configuredMatrixId"] = cfg::RTDB_MATRIX_ID;
+      }
+      doc["cloudConfigured"] =
+        cfg::FEATURE_CLOUD &&
+        cfg::BACKHAUL_WIFI_SSID[0] != '\0' &&
+        strncmp(cfg::BACKHAUL_WIFI_SSID, "SET_", 4) != 0 &&
+        cfg::SUPABASE_EDGE_HOST[0] != '\0' &&
+        strncmp(cfg::SUPABASE_EDGE_HOST, "SET_", 4) != 0 &&
+        cfg::RTDB_WRITER_KEY[0] != '\0' &&
+        strncmp(cfg::RTDB_WRITER_KEY, "SET_", 4) != 0;
       doc["queueConfigured"] = cfg::FEATURE_CLOUD &&
         cfg::RTDB_QUEUE_KEY[0] != '\0' &&
         strncmp(cfg::RTDB_QUEUE_KEY, "SET_", 4) != 0;
+      doc["queuePollingConfigured"] = doc["cloudConfigured"].as<bool>() &&
+        doc["queueConfigured"].as<bool>();
       doc["lastQueuePollAtMs"] = lastQueuePollAtUnixMs;
       doc["queueStreamConnected"] = queueStreamConnected;
       doc["queueStreamLastEventAtMs"] = queueStreamLastEventAtUnixMs;
