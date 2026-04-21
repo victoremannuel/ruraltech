@@ -49,6 +49,17 @@ static String compactIdentifier(const String& raw) {
   return out;
 }
 
+static String statusMatrixRuntimeId() {
+  if (cfg::RTDB_MATRIX_ID[0] != '\0' &&
+      strncmp(cfg::RTDB_MATRIX_ID, "SET_", 4) != 0) {
+    return String(cfg::RTDB_MATRIX_ID);
+  }
+  if (bindingMatrixGatewayId[0]) {
+    return String(bindingMatrixGatewayId);
+  }
+  return compactIdentifier(WiFi.softAPmacAddress());
+}
+
 static void copyToBuffer(char* dst, size_t dstSize, const char* src) {
   if (dstSize == 0) return;
   if (!src) {
@@ -123,7 +134,7 @@ void ApiServer::begin() {
       doc["featureBackhaul"] = cfg::FEATURE_BACKHAUL;
       doc["featureCloud"] = cfg::FEATURE_CLOUD;
       doc["featureSd"] = cfg::FEATURE_SD;
-      doc["matrixRuntimeId"] = gatewayNodeId();
+      doc["matrixRuntimeId"] = statusMatrixRuntimeId();
       if (cfg::RTDB_MATRIX_ID[0] != '\0') {
         doc["configuredMatrixId"] = cfg::RTDB_MATRIX_ID;
       }
