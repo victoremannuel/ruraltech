@@ -46,9 +46,7 @@ ruraltech10-firebase-adminsdk-fbsvc-66b85a4f95.json
 /gateway-matriz/build/
 /diag-esp32-sensors/build/
 .DS_Store
-/gateway-matriz/manual_settings.local.h
 /app/android/key.properties
-graphify-out
 .build_*/
 /.vscode/*
 /temp/*
@@ -57,4 +55,4 @@ graphify-out
 /scripts/migration/.env
 /scripts/migration/package-lock.json
 .env
-.gitignore
+
