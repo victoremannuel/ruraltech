@@ -35,6 +35,7 @@
 #include "Logger.h"
 #include "BlePresence.h"
 #include "LoRaGateway.h"
+#include "MatrixLoRaTxAudit.h"
 #include "RtrWakeOrchestrator.h"
 #include "SdLogger.h"
 #include "ApiServer.h"
@@ -338,7 +339,8 @@ static void printBootChecklist(
     bool rtcOk,
     bool sdOk,
     bool loraOk,
-    bool cloudConfigured);
+    bool cloudConfigured,
+    bool queueConfigured);
 static void copyStringToBuffer(char* dst, size_t dstSize, const char* src);
 static void loadBindingConfig();
 static bool persistBindingConfig(
@@ -353,7 +355,11 @@ static bool sendLoRaJsonFrame(
     uint32_t deviceId,
     MsgType msgType,
     const JsonVariantConst payload,
-    const char** reason = nullptr);
+    const char** reason = nullptr,
+    MatrixLoRaTxReason txReason = MatrixLoRaTxReason::CommandDispatch,
+    const char* callerTag = "sendLoRaJsonFrame",
+    const LoRaFrame* sourceUplinkOrNull = nullptr,
+    const char* commandId = nullptr);
 static bool sendFenceCommandChunked(
     uint32_t deviceId,
     const JsonVariantConst payload,
@@ -2214,7 +2220,15 @@ static bool resendActiveSimpleCommand(
           strcmp(activeSimpleCommand.command, "SET_PARAMS") == 0
               ? MsgType::SET_PARAMS
               : MsgType::PING;
-      ok = sendLoRaJsonFrame(deviceId, msgType, payloadDoc.as<JsonVariantConst>(), &sendReason);
+      ok = sendLoRaJsonFrame(
+          deviceId,
+          msgType,
+          payloadDoc.as<JsonVariantConst>(),
+          &sendReason,
+          MatrixLoRaTxReason::CommandDispatch,
+          "resendActiveSimpleCommand",
+          triggerRx,
+          activeSimpleCommand.commandId);
     }
     if (ok) {
       copyStringToBuffer(target.status, sizeof(target.status), "dispatching");
@@ -2607,33 +2621,42 @@ static bool isRelayCandidate(const LoRaFrame& frame) {
          frame.msgType == MsgType::PING;
 }
 
-static bool shouldRelayAcceptedUplink(const LoRaFrame& frame, const char** reason = nullptr) {
-  if (!cfg::GATEWAY_RELAY_ENABLED) {
-    if (reason) *reason = "relay_disabled";
+static bool sendMatrixLoRaFrame(
+    LoRaFrame& frame,
+    MatrixLoRaTxReason txReason,
+    const LoRaFrame* sourceUplinkOrNull,
+    const char* callerTag,
+    const char* commandId = nullptr) {
+  const bool allowed = shouldAllowMatrixLoRaTx(txReason, sourceUplinkOrNull);
+  LOGI(
+      "LORA_TX_INTENT reason=%s caller=%s deviceId=%lu msgType=%u seq=%lu sourceMsgType=%u sourceSeq=%lu allowed=%d",
+      matrixLoRaTxReasonLabel(txReason),
+      callerTag ? callerTag : "-",
+      (unsigned long)frame.deviceId,
+      (unsigned)frame.msgType,
+      (unsigned long)frame.seq,
+      sourceUplinkOrNull ? (unsigned)sourceUplinkOrNull->msgType : 0U,
+      sourceUplinkOrNull ? (unsigned long)sourceUplinkOrNull->seq : 0UL,
+      allowed ? 1 : 0);
+  if (!allowed) {
+    LOGW(
+        "LORA_TX_BLOCKED_UPLINK_ECHO deviceId=%lu msgType=%u seq=%lu sourceMsgType=%u sourceSeq=%lu reason=uplink_echo_blocked",
+        (unsigned long)frame.deviceId,
+        (unsigned)frame.msgType,
+        (unsigned long)frame.seq,
+        sourceUplinkOrNull ? (unsigned)sourceUplinkOrNull->msgType : 0U,
+        sourceUplinkOrNull ? (unsigned long)sourceUplinkOrNull->seq : 0UL);
     return false;
   }
-  if (!isRelayCandidate(frame)) {
-    if (reason) *reason = "not_relay_candidate";
-    return false;
+  if (isCommandLikeMatrixLoRaTxReason(txReason)) {
+    LOGI(
+        "LORA_TX_COMMAND_DISPATCH commandId=%s reason=%s msgType=%u deviceId=%lu",
+        commandId && commandId[0] ? commandId : "-",
+        matrixLoRaTxReasonLabel(txReason),
+        (unsigned)frame.msgType,
+        (unsigned long)frame.deviceId);
   }
-  if (!scopeMatchesBinding(frame.scopeId)) {
-    if (reason) *reason = "scope_mismatch";
-    return false;
-  }
-
-  // A matriz nao deve refletir uplinks aceitos de volta no mesmo dominio LoRa.
-  // Em bancada isso produz eco para a propria coleira e ruído como unsupported_type=1.
-  if (frame.msgType == MsgType::TELEMETRY ||
-      frame.msgType == MsgType::EVENT ||
-      frame.msgType == MsgType::ACK ||
-      frame.msgType == MsgType::NACK ||
-      frame.msgType == MsgType::RTR_CONTROL) {
-    if (reason) *reason = "accepted_uplink_echo_guard";
-    return false;
-  }
-
-  if (reason) *reason = "ok";
-  return true;
+  return lora.send(frame);
 }
 
 static const char* uplinkTypeLabel(MsgType t) {
@@ -2876,6 +2899,12 @@ static bool processPrioritySimpleCommandFeedbackWindow() {
 }
 
 static void processAcceptedUplink(const LoRaFrame& rx) {
+  LOGI(
+      "LORA_UPLINK_ACCEPTED deviceId=%lu msgType=%u seq=%lu scopeId=%016llX",
+      (unsigned long)rx.deviceId,
+      (unsigned)rx.msgType,
+      (unsigned long)rx.seq,
+      (unsigned long long)rx.scopeId);
   updateDevicePresenceFromAcceptedUplink(rx);
   notePendingWakeHintFromUplink(rx);
   if (handlePendingWakePageAck(rx)) {
@@ -2935,17 +2964,7 @@ static void processAcceptedUplink(const LoRaFrame& rx) {
     }
   }
   if (!suppressRelay) {
-    const char* relayReason = nullptr;
-    if (shouldRelayAcceptedUplink(rx, &relayReason)) {
-      relayFrameToPeerGateways(rx);
-    } else if (cfg::GATEWAY_RELAY_ENABLED) {
-      LOGI(
-          "RELAY_SUPPRESSED_UPLINK_ECHO deviceId=%lu msgType=%u seq=%lu reason=%s",
-          (unsigned long)rx.deviceId,
-          (unsigned)rx.msgType,
-          (unsigned long)rx.seq,
-          relayReason ? relayReason : "unknown");
-    }
+    relayFrameToPeerGateways(rx);
   }
 
   StaticJsonDocument<576> packet;
@@ -3245,7 +3264,11 @@ static bool sendLoRaBinaryFrame(
     uint64_t scopeId,
     const uint8_t* payload,
     size_t payloadLen,
-    const char** reason) {
+    const char** reason,
+    MatrixLoRaTxReason txReason = MatrixLoRaTxReason::Unknown,
+    const char* callerTag = "sendLoRaBinaryFrame",
+    const LoRaFrame* sourceUplinkOrNull = nullptr,
+    const char* commandId = nullptr) {
   if (!payload || payloadLen == 0 || payloadLen > cfg::LORA_MAX_PAYLOAD_BYTES) {
     if (reason) *reason = "payload_too_large";
     return false;
@@ -3269,7 +3292,12 @@ static bool sendLoRaBinaryFrame(
     if (reason) *reason = "secure_envelope_too_large";
     return false;
   }
-  const bool ok = lora.send(tx);
+  const bool ok = sendMatrixLoRaFrame(
+      tx,
+      txReason,
+      sourceUplinkOrNull,
+      callerTag,
+      commandId);
   if (!ok && reason && !*reason) *reason = "lora_send_failed";
   return ok;
 }
@@ -3321,7 +3349,11 @@ static bool trySendRtrPage(
           session.scopeId,
           payload,
           payloadLen,
-          reason)) {
+          reason,
+          MatrixLoRaTxReason::RtrPage,
+          "trySendRtrPage",
+          nullptr,
+          session.commandId)) {
     setPendingWakeReason(
         session,
         rtrv1::REASON_PAGE_SEND_FAILED,
@@ -3514,7 +3546,17 @@ static bool sendRtrPageForCommand(
       (unsigned long)messageId,
       (unsigned)commandType,
       (unsigned)estimatedFragments);
-  if (!sendLoRaBinaryFrame(deviceId, MsgType::RTR_CONTROL, scopeId, payload, payloadLen, reason)) {
+  if (!sendLoRaBinaryFrame(
+          deviceId,
+          MsgType::RTR_CONTROL,
+          scopeId,
+          payload,
+          payloadLen,
+          reason,
+          MatrixLoRaTxReason::RtrPage,
+          "sendPagedFenceCommand",
+          nullptr,
+          commandId)) {
     activeSimpleCommand.lastReasonCode = rtrv1::REASON_PAGE_REJECTED;
     return false;
   }
@@ -3840,7 +3882,17 @@ static bool executeFenceCommandRpv2Plan(
       commandId && commandId[0] ? commandId : "-",
       (unsigned long long)radioCommandId,
       (unsigned)activeSimpleCommand.retryCount);
-  if (beginLen == 0 || !sendLoRaBinaryFrame(deviceId, MsgType::SET_FENCE, scopeId, framePayload, beginLen, reason)) {
+  if (beginLen == 0 || !sendLoRaBinaryFrame(
+          deviceId,
+          MsgType::SET_FENCE,
+          scopeId,
+          framePayload,
+          beginLen,
+          reason,
+          MatrixLoRaTxReason::Rpv2Begin,
+          "sendFenceCommandRpv2Session.begin",
+          nullptr,
+          commandId)) {
     activeSimpleCommand.lastReasonCode =
         reason ? rpv2ReasonCodeFromLabel(*reason) : rpv2::REASON_NONE;
     return false;
@@ -3916,7 +3968,17 @@ static bool executeFenceCommandRpv2Plan(
         (unsigned long long)radioCommandId,
         (unsigned)item.fragmentIndex,
         (unsigned)activeSimpleCommand.retryCount);
-    if (pointsLen == 0 || !sendLoRaBinaryFrame(deviceId, MsgType::SET_FENCE, scopeId, framePayload, pointsLen, reason)) {
+    if (pointsLen == 0 || !sendLoRaBinaryFrame(
+            deviceId,
+            MsgType::SET_FENCE,
+            scopeId,
+            framePayload,
+            pointsLen,
+            reason,
+            MatrixLoRaTxReason::Rpv2Points,
+            "sendFenceCommandRpv2Session.points",
+            nullptr,
+            commandId)) {
       activeSimpleCommand.lastReasonCode =
           reason ? rpv2ReasonCodeFromLabel(*reason) : rpv2::REASON_NONE;
       return false;
@@ -4010,7 +4072,17 @@ static bool executeFenceCommandRpv2Plan(
       commandId && commandId[0] ? commandId : "-",
       (unsigned long long)radioCommandId,
       (unsigned)activeSimpleCommand.retryCount);
-  if (commitLen == 0 || !sendLoRaBinaryFrame(deviceId, MsgType::SET_FENCE, scopeId, framePayload, commitLen, reason)) {
+  if (commitLen == 0 || !sendLoRaBinaryFrame(
+          deviceId,
+          MsgType::SET_FENCE,
+          scopeId,
+          framePayload,
+          commitLen,
+          reason,
+          MatrixLoRaTxReason::Rpv2Commit,
+          "sendFenceCommandRpv2Session.commit",
+          nullptr,
+          commandId)) {
     activeSimpleCommand.lastReasonCode =
         reason ? rpv2ReasonCodeFromLabel(*reason) : rpv2::REASON_NONE;
     return false;
@@ -4387,7 +4459,15 @@ static void processPendingWakeSessions() {
   }
 }
 
-static bool sendLoRaJsonFrame(uint32_t deviceId, MsgType msgType, const JsonVariantConst payload, const char** reason) {
+static bool sendLoRaJsonFrame(
+    uint32_t deviceId,
+    MsgType msgType,
+    const JsonVariantConst payload,
+    const char** reason,
+    MatrixLoRaTxReason txReason,
+    const char* callerTag,
+    const LoRaFrame* sourceUplinkOrNull,
+    const char* commandId) {
   const size_t bytes = measureJson(payload);
   if (bytes > cfg::LORA_MAX_PAYLOAD_BYTES) {
     if (reason) *reason = "payload_too_large";
@@ -4408,7 +4488,12 @@ static bool sendLoRaJsonFrame(uint32_t deviceId, MsgType msgType, const JsonVari
     return false;
   }
 
-  const bool ok = lora.send(tx);
+  const bool ok = sendMatrixLoRaFrame(
+      tx,
+      txReason,
+      sourceUplinkOrNull,
+      callerTag,
+      commandId);
   const bool chunked = payload["chunked"].is<bool>() && payload["chunked"].as<bool>();
   const int part = payload["part"] | 0;
   const int total = payload["total"] | 1;
@@ -4577,7 +4662,15 @@ static bool sendFenceCommandChunked(uint32_t deviceId, const JsonVariantConst pa
         cipherBytes,
         cfg::LORA_MAX_PAYLOAD_BYTES);
 
-    if (!sendLoRaJsonFrame(deviceId, MsgType::SET_FENCE, chunkDoc.as<JsonVariantConst>(), reason)) return false;
+    if (!sendLoRaJsonFrame(
+            deviceId,
+            MsgType::SET_FENCE,
+            chunkDoc.as<JsonVariantConst>(),
+            reason,
+            MatrixLoRaTxReason::CommandDispatch,
+            "sendFenceCommandChunked",
+            nullptr,
+            activeSimpleCommand.commandId)) return false;
   }
   return true;
 }
@@ -4639,7 +4732,15 @@ static bool sendHerdingPlanChunked(uint32_t deviceId, const JsonVariantConst pay
         dstPair.add(srcPair[1].as<double>());
       }
 
-      if (!sendLoRaJsonFrame(deviceId, MsgType::SET_HERDING_PLAN, chunkDoc.as<JsonVariantConst>(), reason)) return false;
+      if (!sendLoRaJsonFrame(
+              deviceId,
+              MsgType::SET_HERDING_PLAN,
+              chunkDoc.as<JsonVariantConst>(),
+              reason,
+              MatrixLoRaTxReason::CommandDispatch,
+              "sendHerdingPlanChunked",
+              nullptr,
+              herdOp.loraCommandId)) return false;
     }
   }
 
@@ -5390,7 +5491,15 @@ static bool dispatchQueuedSimpleCommand(
       } else if (strcmp(command, "SET_PARAMS") == 0 || strcmp(command, "PING") == 0) {
         const MsgType msgType =
             strcmp(command, "SET_PARAMS") == 0 ? MsgType::SET_PARAMS : MsgType::PING;
-        ok = sendLoRaJsonFrame(deviceId, msgType, payloadDoc.as<JsonVariantConst>(), reason);
+        ok = sendLoRaJsonFrame(
+            deviceId,
+            msgType,
+            payloadDoc.as<JsonVariantConst>(),
+            reason,
+            MatrixLoRaTxReason::CommandDispatch,
+            "startQueuedSimpleCommandDevice",
+            nullptr,
+            commandId.c_str());
       }
       if (!ok) {
         clearActiveSimpleCommand();
@@ -5418,7 +5527,15 @@ static bool dispatchQueuedSimpleCommand(
     }
     const MsgType msgType =
         strcmp(command, "SET_PARAMS") == 0 ? MsgType::SET_PARAMS : MsgType::PING;
-    if (!sendLoRaJsonFrame(0, msgType, payloadDoc.as<JsonVariantConst>(), reason)) {
+    if (!sendLoRaJsonFrame(
+            0,
+            msgType,
+            payloadDoc.as<JsonVariantConst>(),
+            reason,
+            MatrixLoRaTxReason::CommandDispatch,
+            "startQueuedSimpleCommandGateway",
+            nullptr,
+            commandId.c_str())) {
       clearActiveSimpleCommand();
       return false;
     }
@@ -5479,6 +5596,13 @@ static void processNextQueuedCommand() {
   queueDispatchRequested = false;
   queuePollAtMs = nowMsTick;
   lastQueuePollAtUnixMs = unixNowMs(unixNowSec());
+  AS_MATRIX_INFO(
+      "QUEUE_POLL_START",
+      "runtimeId=%s forceDispatch=%d bindingReady=%d backhaulOpen=%d",
+      matrixCloudId().c_str(),
+      forceDispatch ? 1 : 0,
+      bindingReady ? 1 : 0,
+      backhaulOpen ? 1 : 0);
 
   String commandId;
   DynamicJsonDocument commandDoc(24576);
@@ -6238,8 +6362,17 @@ static void relayFrameToPeerGateways(const LoRaFrame& rx) {
 
   LoRaFrame relay = rx;
   for (int i = 0; i < 12; ++i) relay.nonce[i] = (uint8_t)esp_random();
-  if (!lora.send(relay)) {
-    LOGW("Falha relay device=%lu seq=%lu", relay.deviceId, relay.seq);
+  if (!sendMatrixLoRaFrame(
+          relay,
+          MatrixLoRaTxReason::RelayForwardValidated,
+          &rx,
+          "relayFrameToPeerGateways")) {
+    LOGI(
+        "RELAY_SUPPRESSED_UPLINK_ECHO deviceId=%lu msgType=%u seq=%lu reason=accepted_uplink_echo_guard",
+        (unsigned long)rx.deviceId,
+        (unsigned)rx.msgType,
+        (unsigned long)rx.seq);
+    return;
   }
 }
 
@@ -6652,7 +6785,15 @@ void loop() {
           } else if (command == "SET_HERDING_PLAN") {
             ok = sendHerdingPlanChunked(deviceId, payload, &failReason);
           } else {
-            ok = sendLoRaJsonFrame(deviceId, msgType, payload, &failReason);
+            ok = sendLoRaJsonFrame(
+                deviceId,
+                msgType,
+                payload,
+                &failReason,
+                MatrixLoRaTxReason::CommandDispatch,
+                "apiSendCommand",
+                nullptr,
+                nullptr);
           }
         }
 

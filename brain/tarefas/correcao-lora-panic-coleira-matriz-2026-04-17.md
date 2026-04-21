@@ -240,6 +240,18 @@ Historico:
 - 2026-04-21: uplinks aceitos de `TELEMETRY`, `EVENT`, `ACK`, `NACK` e `RTR_CONTROL` agora ficam bloqueados para relay com `reason=accepted_uplink_echo_guard`
 - 2026-04-21: novo log de observabilidade adicionado na matriz: `RELAY_SUPPRESSED_UPLINK_ECHO`
 - 2026-04-21: a correção foi guiada pela evidência já consolidada de `reflexo indevido do uplink para a propria coleira` e `unsupported_type=1`; o prompt externo citado pelo operador não foi encontrado no caminho informado durante esta rodada
+- 2026-04-21: rodada seguinte endureceu o guardrail para todo TX LoRa da matriz, em vez de depender apenas do call site de relay dentro de `processAcceptedUplink()`
+- 2026-04-21: criado `gateway-matriz/MatrixLoRaTxAudit.h` com enum explícito de razão de TX e regra pura `shouldAllowMatrixLoRaTx()`
+- 2026-04-21: `sendLoRaJsonFrame()`, `sendLoRaBinaryFrame()` e `relayFrameToPeerGateways()` passaram a usar `sendMatrixLoRaFrame()` com auditoria central
+- 2026-04-21: novos logs adicionados na matriz:
+  - `LORA_UPLINK_ACCEPTED`
+  - `LORA_TX_INTENT`
+  - `LORA_TX_BLOCKED_UPLINK_ECHO`
+  - `LORA_TX_COMMAND_DISPATCH`
+  - `QUEUE_POLL_START`
+- 2026-04-21: o call site real compatível com o eco residual continuou sendo o relay bruto que reaproveita `LoRaFrame relay = rx`, identificado pelo mesmo `seq` do uplink aparecer no `LoRa TX ok`
+- 2026-04-21: testes host mínimos adicionados e aprovados para bloquear eco de uplink `TELEMETRY` e `EVENT`
+- 2026-04-21: tentativa de `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz` voltou a ficar pendurada sem saída conclusiva neste host
 
 Pendencias desta task:
 - validar a matriz em `DIAG_STAGE=4` com relay desligado:
