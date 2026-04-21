@@ -429,6 +429,7 @@ static void updateDevicePresenceFromAcceptedUplink(const LoRaFrame& rx);
 static rtrwake::Presence* findDevicePresence(uint32_t deviceId);
 static void notePendingWakeHintFromUplink(const LoRaFrame& rx);
 static bool handlePendingWakePageAck(const LoRaFrame& rx);
+static bool tryHandlePendingWakePageAckFastPath(const LoRaFrame& rx);
 static bool trySendRtrPage(PendingWakeSession& session, const char** reason = nullptr);
 static bool executeFenceCommandRpv2Plan(
     uint32_t deviceId,
@@ -3414,6 +3415,57 @@ static bool decodeRtrPageAckFrame(
   return true;
 }
 
+static bool tryHandlePendingWakePageAckFastPath(const LoRaFrame& rx) {
+  if (rx.msgType != MsgType::RTR_CONTROL) return false;
+  rtrv1::Header header{};
+  rtrv1::PageAckBody ack{};
+  if (!rtrv1::decodePageAck(rx.payload, rx.payloadLen, &header, &ack)) return false;
+  const int idx = findPendingWakeSessionByPageCorrelation(
+      rx.deviceId, header.sessionId, header.messageId);
+  if (idx < 0) return false;
+  PendingWakeSession& session = pendingWakeSessions[idx];
+  if (!rtrwake::canConsumePageAckFastPath(session.core)) {
+    const uint32_t nowMs = millis();
+    const bool lateAck = rtrwake::isLatePageAck(session.core, nowMs);
+    if (lateAck) {
+      LOGW(
+          "RTR_PAGE_ACK_FAST_PATH_LATE deviceId=%lu commandId=%s sessionId=%llu messageId=%lu state=%s ackDeadlineAtMs=%lu nowMs=%lu accepted=%u sessionModeActive=%u",
+          (unsigned long)rx.deviceId,
+          session.commandId[0] ? session.commandId : "-",
+          (unsigned long long)header.sessionId,
+          (unsigned long)header.messageId,
+          pendingWakeStateLabel(session.core.state),
+          (unsigned long)session.core.pageAckDeadlineAtMs,
+          (unsigned long)nowMs,
+          (unsigned)ack.accepted,
+          (unsigned)ack.sessionModeActive);
+    } else {
+      LOGW(
+          "RTR_PAGE_ACK_FAST_PATH_SKIP deviceId=%lu commandId=%s sessionId=%llu messageId=%lu state=%s pageSent=%d ackDeadlineAtMs=%lu accepted=%u sessionModeActive=%u",
+          (unsigned long)rx.deviceId,
+          session.commandId[0] ? session.commandId : "-",
+          (unsigned long long)header.sessionId,
+          (unsigned long)header.messageId,
+          pendingWakeStateLabel(session.core.state),
+          session.core.pageSent ? 1 : 0,
+          (unsigned long)session.core.pageAckDeadlineAtMs,
+          (unsigned)ack.accepted,
+          (unsigned)ack.sessionModeActive);
+    }
+    return false;
+  }
+  LOGI(
+      "RTR_PAGE_ACK_FAST_PATH_MATCH deviceId=%lu commandId=%s sessionId=%llu messageId=%lu state=%s accepted=%u sessionModeActive=%u",
+      (unsigned long)rx.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)header.sessionId,
+      (unsigned long)header.messageId,
+      pendingWakeStateLabel(session.core.state),
+      (unsigned)ack.accepted,
+      (unsigned)ack.sessionModeActive);
+  return handlePendingWakePageAck(rx);
+}
+
 static bool handlePendingWakePageAck(const LoRaFrame& rx) {
   if (rx.msgType != MsgType::RTR_CONTROL) return false;
   rtrv1::Header header{};
@@ -3433,11 +3485,27 @@ static bool handlePendingWakePageAck(const LoRaFrame& rx) {
   }
   PendingWakeSession& session = pendingWakeSessions[idx];
   if (session.core.state != rtrwake::State::PAGING_AWAITING_ACK) {
-    LOGW(
-        "RTR_PAGE_ACK_INVALID deviceId=%lu commandId=%s state=%s",
-        (unsigned long)rx.deviceId,
-        session.commandId[0] ? session.commandId : "-",
-        pendingWakeStateLabel(session.core.state));
+    const uint32_t nowMs = millis();
+    const bool lateAck = rtrwake::isLatePageAck(session.core, nowMs);
+    if (lateAck) {
+      LOGW(
+          "RTR_PAGE_ACK_LATE deviceId=%lu commandId=%s state=%s sessionId=%llu messageId=%lu ackDeadlineAtMs=%lu nowMs=%lu",
+          (unsigned long)rx.deviceId,
+          session.commandId[0] ? session.commandId : "-",
+          pendingWakeStateLabel(session.core.state),
+          (unsigned long long)header.sessionId,
+          (unsigned long)header.messageId,
+          (unsigned long)session.core.pageAckDeadlineAtMs,
+          (unsigned long)nowMs);
+    } else {
+      LOGW(
+          "RTR_PAGE_ACK_INVALID deviceId=%lu commandId=%s state=%s sessionId=%llu messageId=%lu",
+          (unsigned long)rx.deviceId,
+          session.commandId[0] ? session.commandId : "-",
+          pendingWakeStateLabel(session.core.state),
+          (unsigned long long)header.sessionId,
+          (unsigned long)header.messageId);
+    }
     return false;
   }
   if (!ack.accepted || !ack.sessionModeActive) {
@@ -6771,9 +6839,13 @@ void loop() {
           }
         }
       }
+      if (tryHandlePendingWakePageAckFastPath(rx)) {
+        feedWatchdogIfEnabled();
+      } else {
       enqueueAcceptedUplink(rx);
       if (activeSimpleCommand.active) {
         scheduleActiveSimpleCommandRetryForRx(rx);
+      }
       }
     }
   }

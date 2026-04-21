@@ -15,8 +15,10 @@ int main() {
   assert(rtrwake::shouldDeferCloudTx(core, 77));
 
   rtrwake::markPageAttempt(&core, 5120, rtrv1::PAGE_ACK_TIMEOUT_MS);
+  core.state = rtrwake::State::PAGING_AWAITING_ACK;
   assert(core.campaignCount == 1);
   assert(core.lastPageSentAtMs == 5120);
+  assert(rtrwake::canConsumePageAckFastPath(core));
 
   return 0;
 }

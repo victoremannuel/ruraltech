@@ -160,6 +160,26 @@ static inline bool awaitingAckWithoutPageSent(const SessionCore& session) {
       (!session.pageSent || session.lastPageSentAtMs == 0 || session.pageAckDeadlineAtMs == 0);
 }
 
+static inline bool canConsumePageAckFastPath(const SessionCore& session) {
+  return session.active &&
+      session.state == State::PAGING_AWAITING_ACK &&
+      session.pageSent &&
+      session.lastPageSentAtMs != 0;
+}
+
+static inline bool isLatePageAck(
+    const SessionCore& session,
+    uint32_t nowMs) {
+  return pageAckMatches(
+             session,
+             session.deviceId,
+             session.pageSessionId,
+             session.pageMessageId) &&
+      session.active &&
+      session.pageAckDeadlineAtMs != 0 &&
+      (int32_t)(nowMs - session.pageAckDeadlineAtMs) > 0;
+}
+
 static inline bool canRetryAfterTimeout(const SessionCore& session) {
   return session.campaignCount < session.maxCampaigns;
 }

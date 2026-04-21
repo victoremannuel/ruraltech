@@ -123,7 +123,26 @@ Nova rodada aplicada em 2026-04-21:
   - `g++ ... firmware/tests/rtrv1_wake_scheduler_test.cpp`: ok
   - `g++ ... firmware/tests/rtrv1_terminal_failure_status_test.cpp`: ok
   - `deno test supabase/functions/_shared/supabase.test.ts`: não executado neste host (`deno: command not found`)
-  - `arduino-cli compile` para `gateway-matriz`, `coleira` e `gateway`: inconclusivo neste host; os processos entram no padrão histórico de hang sem saída final
+- `arduino-cli compile` para `gateway-matriz`, `coleira` e `gateway`: inconclusivo neste host; os processos entram no padrão histórico de hang sem saída final
+
+Nova rodada aplicada em 2026-04-21 (fast-path `RTR_PAGE_ACK`):
+- o `loop()` principal da matriz agora tenta consumir `RTR_PAGE_ACK` antes de `enqueueAcceptedUplink(rx)` e antes de qualquer retry/holdoff do caminho normal
+- foi criado o helper `tryHandlePendingWakePageAckFastPath()` em `gateway-matriz.ino` para decodificar `RTR_PAGE_ACK`, correlacionar por `deviceId + sessionId + messageId` e consumir o ACK no mesmo ciclo de `lora.receive(rx)`
+- `RTR_PAGE_ACK` consumido no fast-path deixa de entrar na `acceptedUplinkQueue`, removendo dependência de drenagem posterior, `acceptedUplinkQuietMs` e janela de backhaul para essa etapa de controle
+- o orquestrador ganhou helpers explícitos para `canConsumePageAckFastPath()` e `isLatePageAck()`, reforçando a separação entre ACK consumível e ACK tardio
+- os logs agora distinguem:
+  - `RTR_PAGE_ACK_FAST_PATH_MATCH` para match imediato
+  - `RTR_PAGE_ACK_FAST_PATH_SKIP` quando há correlação mas a sessão não está consumível naquele estado
+  - `RTR_PAGE_ACK_FAST_PATH_LATE` e `RTR_PAGE_ACK_LATE` para ACK tardio após deadline
+- testes host reforçados:
+  - `rtrv1_page_ack_correlation_test.cpp`
+  - `rtrv1_fast_path_priority_test.cpp`
+  - `rtrv1_terminal_failure_status_test.cpp`
+- validação desta rodada:
+  - `g++ ... firmware/tests/rtrv1_page_ack_correlation_test.cpp`: ok
+  - `g++ ... firmware/tests/rtrv1_fast_path_priority_test.cpp`: ok
+  - `g++ ... firmware/tests/rtrv1_terminal_failure_status_test.cpp`: ok
+  - `g++ ... firmware/tests/rtrv1_wake_scheduler_test.cpp`: ok
 
 Base de reaproveitamento confirmada nesta rodada:
 - a task `auditoria-area-sync-e2e.md` ja serve como fundacao da trilha `queue/downlink cloud`
