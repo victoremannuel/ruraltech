@@ -38,6 +38,7 @@
 #include "MatrixLoRaTxAudit.h"
 #include "RtrWakeOrchestrator.h"
 #include "SdLogger.h"
+#include "../firmware/shared/build_info.h"
 #include "ApiServer.h"
 #include "QueueStreamSupport.h"
 #include "../firmware/shared/command_contract.h"
@@ -6844,6 +6845,20 @@ void setup() {
       (unsigned)cfg::LORA_RADIO_PROFILE_ID,
       bindingReady ? 1 : 0,
       cfg::DIAG_PROFILE_NAME);
+  {
+    const buildinfo::BuildInfo build = buildinfo::current();
+    LOGI(
+        "FW_PROVENANCE role=matrix gitSha=%s gitShort=%s dirty=%s buildUtc=%s buildSource=%s firmwareVersion=%s profile=%s diagStage=%u runtimeId=%s",
+        build.gitSha,
+        build.gitShortSha,
+        buildinfo::dirtyString(build.dirty),
+        build.buildUtc,
+        build.buildSource,
+        cfg::FW_VERSION,
+        cfg::DIAG_PROFILE_NAME,
+        (unsigned)cfg::DIAG_STAGE,
+        matrixCloudId().c_str());
+  }
   LOGI("Gateway matriz pronto fw=%s", cfg::FW_VERSION);
 }
 

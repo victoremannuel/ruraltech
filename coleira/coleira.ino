@@ -40,6 +40,7 @@
 #include "StateMachine.h"
 #include "../firmware/shared/command_contract.h"
 #include "../firmware/shared/AreaSyncLogger.h"
+#include "../firmware/shared/build_info.h"
 #include "../firmware/shared/radio_transport_v1_codec.h"
 #include "../firmware/shared/radio_transport_v1_collar_policy.h"
 #include "../firmware/shared/radio_transport_v1_constants.h"
@@ -796,10 +797,18 @@ static String collarApSsid() {
 static void configureStatusServerRoutes() {
   if (statusServerRoutesConfigured_) return;
   statusServer.on("/status", HTTP_GET, []() {
-    StaticJsonDocument<768> doc;
+    StaticJsonDocument<1024> doc;
+    const buildinfo::BuildInfo build = buildinfo::current();
     doc["ok"] = true;
     doc["service"] = "collar";
     doc["fw"] = cfg::FW_VERSION;
+    doc["firmwareVersion"] = cfg::FW_VERSION;
+    doc["firmwareRole"] = "collar";
+    doc["gitSha"] = build.gitSha;
+    doc["gitShortSha"] = build.gitShortSha;
+    doc["buildUtc"] = build.buildUtc;
+    doc["buildDirty"] = build.dirty;
+    doc["buildSource"] = build.buildSource;
     doc["deviceId"] = (uint32_t)cfg::DEVICE_ID;
     doc["device_id"] = String((uint32_t)cfg::DEVICE_ID);
     const String apSsid = WiFi.softAPSSID();
@@ -3171,6 +3180,20 @@ void setup() {
       (unsigned)cfg::LORA_RADIO_PROFILE_ID,
       bindingReady_ ? 1 : 0,
       wifiOtaEnabled ? 1 : 0);
+  {
+    const buildinfo::BuildInfo build = buildinfo::current();
+    LOGI(
+        "FW_PROVENANCE role=collar gitSha=%s gitShort=%s dirty=%s buildUtc=%s buildSource=%s firmwareVersion=%s radioProfile=%u deviceId=%lu bindingReady=%d",
+        build.gitSha,
+        build.gitShortSha,
+        buildinfo::dirtyString(build.dirty),
+        build.buildUtc,
+        build.buildSource,
+        cfg::FW_VERSION,
+        (unsigned)cfg::LORA_RADIO_PROFILE_ID,
+        (unsigned long)cfg::DEVICE_ID,
+        bindingReady_ ? 1 : 0);
+  }
   LOGI("Coleira inicializada: id=%lu fw=%s", cfg::DEVICE_ID, cfg::FW_VERSION);
   // Garante que o primeiro ciclo de telemetria só roda após o intervalo normal,
   // mesmo após SW_CPU_RESET (panic), onde a DRAM não é zerada e lastCycle poderia

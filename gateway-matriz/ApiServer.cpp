@@ -2,6 +2,7 @@
 #include "ApiServer.h"
 #include "config.h"
 #include "LoRaGateway.h"
+#include "../firmware/shared/build_info.h"
 #include <ctype.h>
 #include <math.h>
 #include <stdlib.h>
@@ -107,10 +108,18 @@ void ApiServer::begin() {
   g_server = this;
   if (cfg::FEATURE_HTTP) {
     http_.on("/status", HTTP_GET, [this]() {
-      StaticJsonDocument<1536> doc;
+      StaticJsonDocument<2048> doc;
+      const buildinfo::BuildInfo build = buildinfo::current();
       doc["ok"] = true;
       doc["service"] = "gateway_matrix";
       doc["fw"] = cfg::FW_VERSION;
+      doc["firmwareVersion"] = cfg::FW_VERSION;
+      doc["firmwareRole"] = "matrix";
+      doc["gitSha"] = build.gitSha;
+      doc["gitShortSha"] = build.gitShortSha;
+      doc["buildUtc"] = build.buildUtc;
+      doc["buildDirty"] = build.dirty;
+      doc["buildSource"] = build.buildSource;
       doc["diagStage"] = cfg::DIAG_STAGE;
       doc["diagProfile"] = cfg::DIAG_PROFILE_NAME;
       doc["protoVersion"] = cfg::LORA_PROTO_VERSION;

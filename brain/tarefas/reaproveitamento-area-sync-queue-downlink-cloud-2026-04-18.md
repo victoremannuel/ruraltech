@@ -163,6 +163,28 @@ Nova rodada aplicada em 2026-04-21 (`RPV2` pós-`RTR_PAGE_ACK`, WDT + wake lock)
   - `g++ ... firmware/tests/rtrv1_wake_scheduler_test.cpp`: ok
   - builds Arduino continuam sem confirmação conclusiva neste host por histórico de hang do `arduino-cli compile`
 
+Nova rodada aplicada em 2026-04-21 (proveniência de firmware / SHA de bancada):
+- criado `firmware/shared/build_info.h` com fallback seguro para metadata de build (`gitSha`, `gitShortSha`, `buildUtc`, `dirty`, `buildSource`)
+- criado gerador local `tools/audit/generate_build_info.py`, que escreve `firmware/shared/generated_build_info.h` a partir do git atual
+- matriz e coleira agora logam `FW_PROVENANCE` no boot com papel do firmware, SHA, short SHA, dirty flag, build UTC e contexto de perfil/dispositivo
+- `/status` da matriz e da coleira agora expõem:
+  - `firmwareRole`
+  - `firmwareVersion`
+  - `gitSha`
+  - `gitShortSha`
+  - `buildUtc`
+  - `buildDirty`
+  - `buildSource`
+- criado checklist local `tools/audit/check_firmware_provenance.py` para invalidar a bancada quando o SHA esperado nao bater com o header gerado e com os campos obrigatorios do runtime
+- `generated_build_info.h` foi adicionado ao `.gitignore` para manter a proveniência local sem poluir o versionamento
+- validação desta rodada:
+  - `python3 tools/audit/generate_build_info.py`: ok
+  - `python3 -m py_compile tools/audit/generate_build_info.py tools/audit/check_firmware_provenance.py tools/audit/check_matrix_cloud_pretest.py`: ok
+  - `python3 tools/audit/check_firmware_provenance.py`: ok
+  - SHA gerado nesta workspace: `891dd586bcc53a54143968d4b182f6f91bed48d0`
+  - short SHA gerado nesta workspace: `891dd586`
+  - dirty gerado nesta workspace: `1`
+
 Base de reaproveitamento confirmada nesta rodada:
 - a task `auditoria-area-sync-e2e.md` ja serve como fundacao da trilha `queue/downlink cloud`
 - os logs estruturados `[AREA_SYNC]` principais ja estao no firmware da matriz e da coleira
