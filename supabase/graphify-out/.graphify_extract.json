@@ -1,0 +1,1390 @@
+{
+  "nodes": [
+    {
+      "id": "index",
+      "label": "index.ts",
+      "file_type": "code",
+      "source_file": "functions/poll-notifications/index.ts",
+      "source_location": "L1"
+    },
+    {
+      "id": "index",
+      "label": "index.ts",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L1"
+    },
+    {
+      "id": "index_parsejsonbody",
+      "label": "parseJsonBody()",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L11"
+    },
+    {
+      "id": "index_pickruntimeid",
+      "label": "pickRuntimeId()",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L19"
+    },
+    {
+      "id": "index_validatewriterkey",
+      "label": "validateWriterKey()",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L33"
+    },
+    {
+      "id": "index_normalizepath",
+      "label": "normalizePath()",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L71"
+    },
+    {
+      "id": "index_daykeyfromms",
+      "label": "dayKeyFromMs()",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L75"
+    },
+    {
+      "id": "index_updatecollartelemetry",
+      "label": "updateCollarTelemetry()",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L79"
+    },
+    {
+      "id": "index_updatecollarhealth",
+      "label": "updateCollarHealth()",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L101"
+    },
+    {
+      "id": "index_updateherdingoperationfromcommand",
+      "label": "updateHerdingOperationFromCommand()",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L126"
+    },
+    {
+      "id": "index_handlematrixbindings",
+      "label": "handleMatrixBindings()",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L175"
+    },
+    {
+      "id": "index_handlematrixqueuekeys",
+      "label": "handleMatrixQueueKeys()",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L210"
+    },
+    {
+      "id": "index_handlematrixcommandqueues",
+      "label": "handleMatrixCommandQueues()",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L243"
+    },
+    {
+      "id": "index_handlematrixcommandresults",
+      "label": "handleMatrixCommandResults()",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L303"
+    },
+    {
+      "id": "index_handlepropertytelemetrylatest",
+      "label": "handlePropertyTelemetryLatest()",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L340"
+    },
+    {
+      "id": "index_handlepropertytelemetryhistory",
+      "label": "handlePropertyTelemetryHistory()",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L380"
+    },
+    {
+      "id": "index_handlepropertyhealthlatest",
+      "label": "handlePropertyHealthLatest()",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L427"
+    },
+    {
+      "id": "index_handlepropertyhealthhistory",
+      "label": "handlePropertyHealthHistory()",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L468"
+    },
+    {
+      "id": "index_handlepropertyevents",
+      "label": "handlePropertyEvents()",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L515"
+    },
+    {
+      "id": "index_handlepropertycommands",
+      "label": "handlePropertyCommands()",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L584"
+    },
+    {
+      "id": "index_handlepropertycommandevents",
+      "label": "handlePropertyCommandEvents()",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L641"
+    },
+    {
+      "id": "index_handleroute",
+      "label": "handleRoute()",
+      "file_type": "code",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L687"
+    },
+    {
+      "id": "index",
+      "label": "index.ts",
+      "file_type": "code",
+      "source_file": "functions/send-push/index.ts",
+      "source_location": "L1"
+    },
+    {
+      "id": "index_sendapns",
+      "label": "sendApns()",
+      "file_type": "code",
+      "source_file": "functions/send-push/index.ts",
+      "source_location": "L114"
+    },
+    {
+      "id": "index_generateapnsjwt",
+      "label": "generateApnsJwt()",
+      "file_type": "code",
+      "source_file": "functions/send-push/index.ts",
+      "source_location": "L149"
+    },
+    {
+      "id": "index_base64urlencode",
+      "label": "base64UrlEncode()",
+      "file_type": "code",
+      "source_file": "functions/send-push/index.ts",
+      "source_location": "L186"
+    },
+    {
+      "id": "index",
+      "label": "index.ts",
+      "file_type": "code",
+      "source_file": "functions/admin-repair-cloud-state/index.ts",
+      "source_location": "L1"
+    },
+    {
+      "id": "index_collectpropertyuserids",
+      "label": "collectPropertyUserIds()",
+      "file_type": "code",
+      "source_file": "functions/admin-repair-cloud-state/index.ts",
+      "source_location": "L15"
+    },
+    {
+      "id": "supabase",
+      "label": "supabase.ts",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L1"
+    },
+    {
+      "id": "supabase_corsheaders",
+      "label": "corsHeaders()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L5"
+    },
+    {
+      "id": "supabase_jsonresponse",
+      "label": "jsonResponse()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L15"
+    },
+    {
+      "id": "supabase_normalizetext",
+      "label": "normalizeText()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L25"
+    },
+    {
+      "id": "supabase_normalizerole",
+      "label": "normalizeRole()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L30"
+    },
+    {
+      "id": "supabase_normalizeid",
+      "label": "normalizeId()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L35"
+    },
+    {
+      "id": "supabase_normalizeidlist",
+      "label": "normalizeIdList()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L56"
+    },
+    {
+      "id": "supabase_normalizedeviceidlist",
+      "label": "normalizeDeviceIdList()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L61"
+    },
+    {
+      "id": "supabase_normalizescopeid",
+      "label": "normalizeScopeId()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L65"
+    },
+    {
+      "id": "supabase_sanitizecloudkey",
+      "label": "sanitizeCloudKey()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L69"
+    },
+    {
+      "id": "supabase_computepropertyscopeid",
+      "label": "computePropertyScopeId()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L73"
+    },
+    {
+      "id": "supabase_extractqueuekey",
+      "label": "extractQueueKey()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L88"
+    },
+    {
+      "id": "supabase_normalizebusinessref",
+      "label": "normalizeBusinessRef()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L97"
+    },
+    {
+      "id": "supabase_commandexpiryms",
+      "label": "commandExpiryMs()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L117"
+    },
+    {
+      "id": "supabase_matrixruntimeidfromgatewaydata",
+      "label": "matrixRuntimeIdFromGatewayData()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L121"
+    },
+    {
+      "id": "supabase_resolveentityscopeid",
+      "label": "resolveEntityScopeId()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L143"
+    },
+    {
+      "id": "supabase_entitymatchesproperty",
+      "label": "entityMatchesProperty()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L157"
+    },
+    {
+      "id": "supabase_istargetready",
+      "label": "isTargetReady()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L173"
+    },
+    {
+      "id": "supabase_createadminclient",
+      "label": "createAdminClient()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L193"
+    },
+    {
+      "id": "supabase_getjsonbody",
+      "label": "getJsonBody()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L207"
+    },
+    {
+      "id": "supabase_getauthcontext",
+      "label": "getAuthContext()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L226"
+    },
+    {
+      "id": "supabase_getpropertybyid",
+      "label": "getPropertyById()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L261"
+    },
+    {
+      "id": "supabase_getgatewaybyid",
+      "label": "getGatewayById()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L274"
+    },
+    {
+      "id": "supabase_getcollarbyid",
+      "label": "getCollarById()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L287"
+    },
+    {
+      "id": "supabase_listgateways",
+      "label": "listGateways()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L300"
+    },
+    {
+      "id": "supabase_userhaspropertyaccess",
+      "label": "userHasPropertyAccess()",
+      "file_type": "code",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L308"
+    },
+    {
+      "id": "index",
+      "label": "index.ts",
+      "file_type": "code",
+      "source_file": "functions/queue-lora-command/index.ts",
+      "source_location": "L1"
+    },
+    {
+      "id": "index_eventidfor",
+      "label": "eventIdFor()",
+      "file_type": "code",
+      "source_file": "functions/queue-lora-command/index.ts",
+      "source_location": "L28"
+    },
+    {
+      "id": "index_derivepolygonkind",
+      "label": "derivePolygonKind()",
+      "file_type": "code",
+      "source_file": "functions/queue-lora-command/index.ts",
+      "source_location": "L32"
+    },
+    {
+      "id": "index_builddispatchpayload",
+      "label": "buildDispatchPayload()",
+      "file_type": "code",
+      "source_file": "functions/queue-lora-command/index.ts",
+      "source_location": "L49"
+    },
+    {
+      "id": "index_resolvematrixgateway",
+      "label": "resolveMatrixGateway()",
+      "file_type": "code",
+      "source_file": "functions/queue-lora-command/index.ts",
+      "source_location": "L95"
+    },
+    {
+      "id": "index_validatetargets",
+      "label": "validateTargets()",
+      "file_type": "code",
+      "source_file": "functions/queue-lora-command/index.ts",
+      "source_location": "L118"
+    },
+    {
+      "id": "index_upsertcommandrecords",
+      "label": "upsertCommandRecords()",
+      "file_type": "code",
+      "source_file": "functions/queue-lora-command/index.ts",
+      "source_location": "L176"
+    }
+  ],
+  "edges": [
+    {
+      "source": "index",
+      "target": "supabase_ts",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/poll-notifications/index.ts",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "supabase_ts",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_parsejsonbody",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L11",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_pickruntimeid",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L19",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_validatewriterkey",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L33",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_normalizepath",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L71",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_daykeyfromms",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L75",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_updatecollartelemetry",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L79",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_updatecollarhealth",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L101",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_updateherdingoperationfromcommand",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L126",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_handlematrixbindings",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L175",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_handlematrixqueuekeys",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L210",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_handlematrixcommandqueues",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L243",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_handlematrixcommandresults",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L303",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_handlepropertytelemetrylatest",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L340",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_handlepropertytelemetryhistory",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L380",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_handlepropertyhealthlatest",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L427",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_handlepropertyhealthhistory",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L468",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_handlepropertyevents",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L515",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_handlepropertycommands",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L584",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_handlepropertycommandevents",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L641",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_handleroute",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L687",
+      "weight": 1.0
+    },
+    {
+      "source": "index_validatewriterkey",
+      "target": "index_pickruntimeid",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L39",
+      "weight": 1.0
+    },
+    {
+      "source": "index_handlepropertytelemetrylatest",
+      "target": "index_updatecollartelemetry",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L376",
+      "weight": 1.0
+    },
+    {
+      "source": "index_handlepropertyhealthlatest",
+      "target": "index_updatecollarhealth",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L464",
+      "weight": 1.0
+    },
+    {
+      "source": "index_handlepropertycommands",
+      "target": "index_updateherdingoperationfromcommand",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L637",
+      "weight": 1.0
+    },
+    {
+      "source": "index_handlepropertycommandevents",
+      "target": "index_daykeyfromms",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L673",
+      "weight": 1.0
+    },
+    {
+      "source": "index_handleroute",
+      "target": "index_handlematrixbindings",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L694",
+      "weight": 1.0
+    },
+    {
+      "source": "index_handleroute",
+      "target": "index_handlematrixqueuekeys",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L696",
+      "weight": 1.0
+    },
+    {
+      "source": "index_handleroute",
+      "target": "index_handlematrixcommandqueues",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L698",
+      "weight": 1.0
+    },
+    {
+      "source": "index_handleroute",
+      "target": "index_handlematrixcommandresults",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L700",
+      "weight": 1.0
+    },
+    {
+      "source": "index_handleroute",
+      "target": "index_handlepropertytelemetrylatest",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L702",
+      "weight": 1.0
+    },
+    {
+      "source": "index_handleroute",
+      "target": "index_handlepropertytelemetryhistory",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L704",
+      "weight": 1.0
+    },
+    {
+      "source": "index_handleroute",
+      "target": "index_handlepropertyhealthlatest",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L706",
+      "weight": 1.0
+    },
+    {
+      "source": "index_handleroute",
+      "target": "index_handlepropertyhealthhistory",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L708",
+      "weight": 1.0
+    },
+    {
+      "source": "index_handleroute",
+      "target": "index_handlepropertyevents",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L710",
+      "weight": 1.0
+    },
+    {
+      "source": "index_handleroute",
+      "target": "index_handlepropertycommands",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L712",
+      "weight": 1.0
+    },
+    {
+      "source": "index_handleroute",
+      "target": "index_handlepropertycommandevents",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/matrix-cloud/index.ts",
+      "source_location": "L714",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "supabase_ts",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/send-push/index.ts",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_sendapns",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/send-push/index.ts",
+      "source_location": "L114",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_generateapnsjwt",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/send-push/index.ts",
+      "source_location": "L149",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_base64urlencode",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/send-push/index.ts",
+      "source_location": "L186",
+      "weight": 1.0
+    },
+    {
+      "source": "index_sendapns",
+      "target": "index_generateapnsjwt",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/send-push/index.ts",
+      "source_location": "L119",
+      "weight": 1.0
+    },
+    {
+      "source": "index_generateapnsjwt",
+      "target": "index_base64urlencode",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/send-push/index.ts",
+      "source_location": "L159",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "supabase_ts",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/admin-repair-cloud-state/index.ts",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_collectpropertyuserids",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/admin-repair-cloud-state/index.ts",
+      "source_location": "L15",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_js_2_50_2",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_corsheaders",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_jsonresponse",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L15",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_normalizetext",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L25",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_normalizerole",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L30",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_normalizeid",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L35",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_normalizeidlist",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L56",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_normalizedeviceidlist",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L61",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_normalizescopeid",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L65",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_sanitizecloudkey",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L69",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_computepropertyscopeid",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L73",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_extractqueuekey",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L88",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_normalizebusinessref",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L97",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_commandexpiryms",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L117",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_matrixruntimeidfromgatewaydata",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L121",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_resolveentityscopeid",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L143",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_entitymatchesproperty",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L157",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_istargetready",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L173",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_createadminclient",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L193",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_getjsonbody",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L207",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_getauthcontext",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L226",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_getpropertybyid",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L261",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_getgatewaybyid",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L274",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_getcollarbyid",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L287",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_listgateways",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L300",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase",
+      "target": "supabase_userhaspropertyaccess",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L308",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_jsonresponse",
+      "target": "supabase_corsheaders",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L21",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_normalizerole",
+      "target": "supabase_normalizetext",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L31",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_normalizedeviceidlist",
+      "target": "supabase_normalizeidlist",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L62",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_normalizescopeid",
+      "target": "supabase_normalizetext",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L66",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_sanitizecloudkey",
+      "target": "supabase_normalizetext",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L70",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_computepropertyscopeid",
+      "target": "supabase_normalizeid",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L74",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_extractqueuekey",
+      "target": "supabase_normalizetext",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L92",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_normalizebusinessref",
+      "target": "supabase_normalizetext",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L102",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_normalizebusinessref",
+      "target": "supabase_normalizeid",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L103",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_matrixruntimeidfromgatewaydata",
+      "target": "supabase_normalizeid",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L130",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_matrixruntimeidfromgatewaydata",
+      "target": "supabase_sanitizecloudkey",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L140",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_resolveentityscopeid",
+      "target": "supabase_normalizescopeid",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L149",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_entitymatchesproperty",
+      "target": "supabase_normalizeid",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L162",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_entitymatchesproperty",
+      "target": "supabase_resolveentityscopeid",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L170",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_istargetready",
+      "target": "supabase_resolveentityscopeid",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L190",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_createadminclient",
+      "target": "supabase_normalizetext",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L194",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_getauthcontext",
+      "target": "supabase_normalizeid",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L248",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_getauthcontext",
+      "target": "supabase_normalizerole",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L249",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_getauthcontext",
+      "target": "supabase_normalizetext",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L250",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_getpropertybyid",
+      "target": "supabase_normalizeid",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L268",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_getgatewaybyid",
+      "target": "supabase_normalizeid",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L281",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_getcollarbyid",
+      "target": "supabase_normalizeid",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L294",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_userhaspropertyaccess",
+      "target": "supabase_normalizerole",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L313",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_userhaspropertyaccess",
+      "target": "supabase_normalizeid",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L315",
+      "weight": 1.0
+    },
+    {
+      "source": "supabase_userhaspropertyaccess",
+      "target": "supabase_normalizeidlist",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/_shared/supabase.ts",
+      "source_location": "L326",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "supabase_ts",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/queue-lora-command/index.ts",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_eventidfor",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/queue-lora-command/index.ts",
+      "source_location": "L28",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_derivepolygonkind",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/queue-lora-command/index.ts",
+      "source_location": "L32",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_builddispatchpayload",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/queue-lora-command/index.ts",
+      "source_location": "L49",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_resolvematrixgateway",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/queue-lora-command/index.ts",
+      "source_location": "L95",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_validatetargets",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/queue-lora-command/index.ts",
+      "source_location": "L118",
+      "weight": 1.0
+    },
+    {
+      "source": "index",
+      "target": "index_upsertcommandrecords",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/queue-lora-command/index.ts",
+      "source_location": "L176",
+      "weight": 1.0
+    },
+    {
+      "source": "index_builddispatchpayload",
+      "target": "index_derivepolygonkind",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/queue-lora-command/index.ts",
+      "source_location": "L74",
+      "weight": 1.0
+    },
+    {
+      "source": "index_upsertcommandrecords",
+      "target": "index_eventidfor",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "functions/queue-lora-command/index.ts",
+      "source_location": "L240",
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

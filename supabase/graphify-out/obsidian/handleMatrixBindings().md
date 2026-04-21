@@ -1,0 +1,18 @@
+---
+source_file: "functions/matrix-cloud/index.ts"
+type: "code"
+community: "Community 2"
+location: "L175"
+tags:
+  - graphify/code
+  - graphify/EXTRACTED
+  - community/Community_2
+---
+
+# handleMatrixBindings()
+
+## Connections
+- [[handleRoute()]] - `calls` [EXTRACTED]
+- [[index.ts]] - `contains` [EXTRACTED]
+
+#graphify/code #graphify/EXTRACTED #community/Community_2

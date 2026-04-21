@@ -1,0 +1,194 @@
+{
+  "nodes": [
+    {
+      "id": "doc_inbox",
+      "label": "Inbox",
+      "file_type": "document",
+      "source_file": "inbox.md"
+    },
+    {
+      "id": "doc_Rewrite as tweet",
+      "label": "Rewrite As Tweet",
+      "file_type": "document",
+      "source_file": "copilot/copilot-custom-prompts/Rewrite as tweet.md"
+    },
+    {
+      "id": "doc_Clip Web Page",
+      "label": "Clip Web Page",
+      "file_type": "document",
+      "source_file": "copilot/copilot-custom-prompts/Clip Web Page.md"
+    },
+    {
+      "id": "doc_Fix grammar and spelling",
+      "label": "Fix Grammar And Spelling",
+      "file_type": "document",
+      "source_file": "copilot/copilot-custom-prompts/Fix grammar and spelling.md"
+    },
+    {
+      "id": "doc_Make longer",
+      "label": "Make Longer",
+      "file_type": "document",
+      "source_file": "copilot/copilot-custom-prompts/Make longer.md"
+    },
+    {
+      "id": "doc_Explain like I am 5",
+      "label": "Explain Like I Am 5",
+      "file_type": "document",
+      "source_file": "copilot/copilot-custom-prompts/Explain like I am 5.md"
+    },
+    {
+      "id": "doc_Translate to Chinese",
+      "label": "Translate To Chinese",
+      "file_type": "document",
+      "source_file": "copilot/copilot-custom-prompts/Translate to Chinese.md"
+    },
+    {
+      "id": "doc_Clip YouTube Transcript",
+      "label": "Clip Youtube Transcript",
+      "file_type": "document",
+      "source_file": "copilot/copilot-custom-prompts/Clip YouTube Transcript.md"
+    },
+    {
+      "id": "doc_Make shorter",
+      "label": "Make Shorter",
+      "file_type": "document",
+      "source_file": "copilot/copilot-custom-prompts/Make shorter.md"
+    },
+    {
+      "id": "doc_Rewrite as tweet thread",
+      "label": "Rewrite As Tweet Thread",
+      "file_type": "document",
+      "source_file": "copilot/copilot-custom-prompts/Rewrite as tweet thread.md"
+    },
+    {
+      "id": "doc_Simplify",
+      "label": "Simplify",
+      "file_type": "document",
+      "source_file": "copilot/copilot-custom-prompts/Simplify.md"
+    },
+    {
+      "id": "doc_Emojify",
+      "label": "Emojify",
+      "file_type": "document",
+      "source_file": "copilot/copilot-custom-prompts/Emojify.md"
+    },
+    {
+      "id": "doc_Generate table of contents",
+      "label": "Generate Table Of Contents",
+      "file_type": "document",
+      "source_file": "copilot/copilot-custom-prompts/Generate table of contents.md"
+    },
+    {
+      "id": "doc_Summarize",
+      "label": "Summarize",
+      "file_type": "document",
+      "source_file": "copilot/copilot-custom-prompts/Summarize.md"
+    },
+    {
+      "id": "doc_Remove URLs",
+      "label": "Remove Urls",
+      "file_type": "document",
+      "source_file": "copilot/copilot-custom-prompts/Remove URLs.md"
+    },
+    {
+      "id": "doc_Generate glossary",
+      "label": "Generate Glossary",
+      "file_type": "document",
+      "source_file": "copilot/copilot-custom-prompts/Generate glossary.md"
+    },
+    {
+      "id": "doc_migracao-supabase",
+      "label": "Migracao Supabase",
+      "file_type": "document",
+      "source_file": "decisoes/migracao-supabase.md"
+    },
+    {
+      "id": "doc_padroes-implementacao",
+      "label": "Padroes Implementacao",
+      "file_type": "document",
+      "source_file": "conhecimento/padroes-implementacao.md"
+    },
+    {
+      "id": "doc_convencoes-codigo",
+      "label": "Convencoes Codigo",
+      "file_type": "document",
+      "source_file": "conhecimento/convencoes-codigo.md"
+    },
+    {
+      "id": "doc_ruraltech",
+      "label": "Ruraltech",
+      "file_type": "document",
+      "source_file": "projetos/ruraltech.md"
+    },
+    {
+      "id": "doc_requisitos",
+      "label": "Requisitos",
+      "file_type": "document",
+      "source_file": "arquitetura/requisitos.md"
+    },
+    {
+      "id": "doc_uiux-telas",
+      "label": "Uiux Telas",
+      "file_type": "document",
+      "source_file": "arquitetura/uiux-telas.md"
+    },
+    {
+      "id": "doc_visao-geral",
+      "label": "Visao Geral",
+      "file_type": "document",
+      "source_file": "arquitetura/visao-geral.md"
+    },
+    {
+      "id": "doc_fluxo-comandos",
+      "label": "Fluxo Comandos",
+      "file_type": "document",
+      "source_file": "arquitetura/fluxo-comandos.md"
+    },
+    {
+      "id": "doc_regras-negocio",
+      "label": "Regras Negocio",
+      "file_type": "document",
+      "source_file": "arquitetura/regras-negocio.md"
+    },
+    {
+      "id": "doc_fluxos-comunicacao-ponta-a-ponta",
+      "label": "Fluxos Comunicacao Ponta A Ponta",
+      "file_type": "document",
+      "source_file": "arquitetura/fluxos-comunicacao-ponta-a-ponta.md"
+    },
+    {
+      "id": "doc_stack-tecnologico",
+      "label": "Stack Tecnologico",
+      "file_type": "document",
+      "source_file": "arquitetura/stack-tecnologico.md"
+    },
+    {
+      "id": "doc_modelagem-dados-supabase",
+      "label": "Modelagem Dados Supabase",
+      "file_type": "document",
+      "source_file": "arquitetura/modelagem-dados-supabase.md"
+    },
+    {
+      "id": "doc_auditoria-total-solucao-2026-04-11",
+      "label": "Auditoria Total Solucao 2026 04 11",
+      "file_type": "document",
+      "source_file": "tarefas/auditoria-total-solucao-2026-04-11.md"
+    },
+    {
+      "id": "doc_auditoria-pos-migracao-supabase",
+      "label": "Auditoria Pos Migracao Supabase",
+      "file_type": "document",
+      "source_file": "tarefas/auditoria-pos-migracao-supabase.md"
+    },
+    {
+      "id": "doc_auditoria-home-mapa-cinza-pos-login-2026-04-11",
+      "label": "Auditoria Home Mapa Cinza Pos Login 2026 04 11",
+      "file_type": "document",
+      "source_file": "tarefas/auditoria-home-mapa-cinza-pos-login-2026-04-11.md"
+    }
+  ],
+  "edges": [],
+  "hyperedges": [],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

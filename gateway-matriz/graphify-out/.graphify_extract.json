@@ -1,0 +1,2307 @@
+{
+  "nodes": [
+    {
+      "id": "sdlogger",
+      "label": "SdLogger.cpp",
+      "file_type": "code",
+      "source_file": "SdLogger.cpp",
+      "source_location": "L1"
+    },
+    {
+      "id": "sdlogger_preparespibusforsd",
+      "label": "prepareSpiBusForSd()",
+      "file_type": "code",
+      "source_file": "SdLogger.cpp",
+      "source_location": "L7"
+    },
+    {
+      "id": "sdlogger_releasechipselect",
+      "label": "releaseChipSelect()",
+      "file_type": "code",
+      "source_file": "SdLogger.cpp",
+      "source_location": "L17"
+    },
+    {
+      "id": "sdlogger_begin",
+      "label": "begin()",
+      "file_type": "code",
+      "source_file": "SdLogger.cpp",
+      "source_location": "L23"
+    },
+    {
+      "id": "sdlogger_hashline",
+      "label": "hashLine()",
+      "file_type": "code",
+      "source_file": "SdLogger.cpp",
+      "source_location": "L32"
+    },
+    {
+      "id": "sdlogger_log",
+      "label": "log()",
+      "file_type": "code",
+      "source_file": "SdLogger.cpp",
+      "source_location": "L48"
+    },
+    {
+      "id": "sdlogger",
+      "label": "SdLogger.h",
+      "file_type": "code",
+      "source_file": "SdLogger.h",
+      "source_location": "L1"
+    },
+    {
+      "id": "sdlogger_sdlogger",
+      "label": "SdLogger()",
+      "file_type": "code",
+      "source_file": "SdLogger.h",
+      "source_location": "L9"
+    },
+    {
+      "id": "loraprotocol",
+      "label": "LoRaProtocol.cpp",
+      "file_type": "code",
+      "source_file": "LoRaProtocol.cpp",
+      "source_location": "L1"
+    },
+    {
+      "id": "loraprotocol_wr32",
+      "label": "wr32()",
+      "file_type": "code",
+      "source_file": "LoRaProtocol.cpp",
+      "source_location": "L7"
+    },
+    {
+      "id": "loraprotocol_rd32",
+      "label": "rd32()",
+      "file_type": "code",
+      "source_file": "LoRaProtocol.cpp",
+      "source_location": "L8"
+    },
+    {
+      "id": "loraprotocol_wr64",
+      "label": "wr64()",
+      "file_type": "code",
+      "source_file": "LoRaProtocol.cpp",
+      "source_location": "L9"
+    },
+    {
+      "id": "loraprotocol_rd64",
+      "label": "rd64()",
+      "file_type": "code",
+      "source_file": "LoRaProtocol.cpp",
+      "source_location": "L12"
+    },
+    {
+      "id": "loraprotocol_encodeplain",
+      "label": "encodePlain()",
+      "file_type": "code",
+      "source_file": "LoRaProtocol.cpp",
+      "source_location": "L18"
+    },
+    {
+      "id": "loraprotocol_decodeplain",
+      "label": "decodePlain()",
+      "file_type": "code",
+      "source_file": "LoRaProtocol.cpp",
+      "source_location": "L34"
+    },
+    {
+      "id": "loragateway",
+      "label": "LoRaGateway.h",
+      "file_type": "code",
+      "source_file": "LoRaGateway.h",
+      "source_location": "L1"
+    },
+    {
+      "id": "loragateway_loragateway",
+      "label": "LoRaGateway()",
+      "file_type": "code",
+      "source_file": "LoRaGateway.h",
+      "source_location": "L12"
+    },
+    {
+      "id": "build_opt",
+      "label": "build_opt.h",
+      "file_type": "code",
+      "source_file": "build_opt.h",
+      "source_location": "L1"
+    },
+    {
+      "id": "config",
+      "label": "config.h",
+      "file_type": "code",
+      "source_file": "config.h",
+      "source_location": "L1"
+    },
+    {
+      "id": "config_cfg",
+      "label": "cfg()",
+      "file_type": "code",
+      "source_file": "config.h",
+      "source_location": "L42"
+    },
+    {
+      "id": "types",
+      "label": "Types.h",
+      "file_type": "code",
+      "source_file": "Types.h",
+      "source_location": "L1"
+    },
+    {
+      "id": "types_msgtype",
+      "label": "MsgType()",
+      "file_type": "code",
+      "source_file": "Types.h",
+      "source_location": "L5"
+    },
+    {
+      "id": "cryptoengine",
+      "label": "CryptoEngine.h",
+      "file_type": "code",
+      "source_file": "CryptoEngine.h",
+      "source_location": "L1"
+    },
+    {
+      "id": "cryptoengine_cryptoengine",
+      "label": "CryptoEngine()",
+      "file_type": "code",
+      "source_file": "CryptoEngine.h",
+      "source_location": "L8"
+    },
+    {
+      "id": "blepresence",
+      "label": "BlePresence.h",
+      "file_type": "code",
+      "source_file": "BlePresence.h",
+      "source_location": "L1"
+    },
+    {
+      "id": "blepresence_blenodekind",
+      "label": "BleNodeKind()",
+      "file_type": "code",
+      "source_file": "BlePresence.h",
+      "source_location": "L9"
+    },
+    {
+      "id": "manual_settings_local_example",
+      "label": "manual_settings.local.example.h",
+      "file_type": "code",
+      "source_file": "manual_settings.local.example.h",
+      "source_location": "L1"
+    },
+    {
+      "id": "manual_settings_local",
+      "label": "manual_settings.local.h",
+      "file_type": "code",
+      "source_file": "manual_settings.local.h",
+      "source_location": "L1"
+    },
+    {
+      "id": "loragateway",
+      "label": "LoRaGateway.cpp",
+      "file_type": "code",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L1"
+    },
+    {
+      "id": "loragateway_preparespibusforlora",
+      "label": "prepareSpiBusForLoRa()",
+      "file_type": "code",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L17"
+    },
+    {
+      "id": "loragateway_loadreplaystate",
+      "label": "loadReplayState()",
+      "file_type": "code",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L25"
+    },
+    {
+      "id": "loragateway_persistreplaystate",
+      "label": "persistReplayState()",
+      "file_type": "code",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L48"
+    },
+    {
+      "id": "loragateway_idxfordevice",
+      "label": "idxForDevice()",
+      "file_type": "code",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L63"
+    },
+    {
+      "id": "loragateway_armcontinuousreceive",
+      "label": "armContinuousReceive()",
+      "file_type": "code",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L73"
+    },
+    {
+      "id": "loragateway_begin",
+      "label": "begin()",
+      "file_type": "code",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L89"
+    },
+    {
+      "id": "loragateway_receive",
+      "label": "receive()",
+      "file_type": "code",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L113"
+    },
+    {
+      "id": "loragateway_send",
+      "label": "send()",
+      "file_type": "code",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L205"
+    },
+    {
+      "id": "blepresence",
+      "label": "BlePresence.cpp",
+      "file_type": "code",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L1"
+    },
+    {
+      "id": "blepresence_writeint32le",
+      "label": "writeInt32LE()",
+      "file_type": "code",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L18"
+    },
+    {
+      "id": "blepresence_begin",
+      "label": "begin()",
+      "file_type": "code",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L26"
+    },
+    {
+      "id": "blepresence_setposition",
+      "label": "setPosition()",
+      "file_type": "code",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L58"
+    },
+    {
+      "id": "blepresence_setflags",
+      "label": "setFlags()",
+      "file_type": "code",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L81"
+    },
+    {
+      "id": "blepresence_setenabled",
+      "label": "setEnabled()",
+      "file_type": "code",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L90"
+    },
+    {
+      "id": "blepresence_loop",
+      "label": "loop()",
+      "file_type": "code",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L103"
+    },
+    {
+      "id": "blepresence_refreshadvertising",
+      "label": "refreshAdvertising()",
+      "file_type": "code",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L110"
+    },
+    {
+      "id": "manual_settings",
+      "label": "manual_settings.h",
+      "file_type": "code",
+      "source_file": "manual_settings.h",
+      "source_location": "L1"
+    },
+    {
+      "id": "manual_settings_cfg_manual",
+      "label": "cfg_manual()",
+      "file_type": "code",
+      "source_file": "manual_settings.h",
+      "source_location": "L56"
+    },
+    {
+      "id": "apiserver",
+      "label": "ApiServer.cpp",
+      "file_type": "code",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L1"
+    },
+    {
+      "id": "apiserver_compactidentifier",
+      "label": "compactIdentifier()",
+      "file_type": "code",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L37"
+    },
+    {
+      "id": "apiserver_copytobuffer",
+      "label": "copyToBuffer()",
+      "file_type": "code",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L50"
+    },
+    {
+      "id": "apiserver_parsedeviceid",
+      "label": "parseDeviceId()",
+      "file_type": "code",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L60"
+    },
+    {
+      "id": "apiserver_parsecoordinate",
+      "label": "parseCoordinate()",
+      "file_type": "code",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L77"
+    },
+    {
+      "id": "apiserver_begin",
+      "label": "begin()",
+      "file_type": "code",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L93"
+    },
+    {
+      "id": "apiserver_appendlogline",
+      "label": "appendLogLine()",
+      "file_type": "code",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L174"
+    },
+    {
+      "id": "apiserver_finddeviceslot",
+      "label": "findDeviceSlot()",
+      "file_type": "code",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L187"
+    },
+    {
+      "id": "apiserver_allocatedeviceslot",
+      "label": "allocateDeviceSlot()",
+      "file_type": "code",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L194"
+    },
+    {
+      "id": "apiserver_updatedevicefrompacket",
+      "label": "updateDeviceFromPacket()",
+      "file_type": "code",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L211"
+    },
+    {
+      "id": "apiserver_handledevicesrequest",
+      "label": "handleDevicesRequest()",
+      "file_type": "code",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L268"
+    },
+    {
+      "id": "apiserver_handlelogsrequest",
+      "label": "handleLogsRequest()",
+      "file_type": "code",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L325"
+    },
+    {
+      "id": "apiserver_onwsevent",
+      "label": "onWsEvent()",
+      "file_type": "code",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L353"
+    },
+    {
+      "id": "apiserver_loop",
+      "label": "loop()",
+      "file_type": "code",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L369"
+    },
+    {
+      "id": "apiserver_broadcasttelemetry",
+      "label": "broadcastTelemetry()",
+      "file_type": "code",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L374"
+    },
+    {
+      "id": "apiserver_haspendingcommand",
+      "label": "hasPendingCommand()",
+      "file_type": "code",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L381"
+    },
+    {
+      "id": "apiserver_popcommand",
+      "label": "popCommand()",
+      "file_type": "code",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L383"
+    },
+    {
+      "id": "apiserver",
+      "label": "ApiServer.h",
+      "file_type": "code",
+      "source_file": "ApiServer.h",
+      "source_location": "L1"
+    },
+    {
+      "id": "apiserver_apiserver",
+      "label": "ApiServer()",
+      "file_type": "code",
+      "source_file": "ApiServer.h",
+      "source_location": "L11"
+    },
+    {
+      "id": "loraprotocol",
+      "label": "LoRaProtocol.h",
+      "file_type": "code",
+      "source_file": "LoRaProtocol.h",
+      "source_location": "L1"
+    },
+    {
+      "id": "loraprotocol_payload",
+      "label": "payload()",
+      "file_type": "code",
+      "source_file": "LoRaProtocol.h",
+      "source_location": "L17"
+    },
+    {
+      "id": "loraprotocol_tag",
+      "label": "tag()",
+      "file_type": "code",
+      "source_file": "LoRaProtocol.h",
+      "source_location": "L18"
+    },
+    {
+      "id": "loraprotocol_loraprotocol",
+      "label": "LoRaProtocol()",
+      "file_type": "code",
+      "source_file": "LoRaProtocol.h",
+      "source_location": "L21"
+    },
+    {
+      "id": "cryptoengine",
+      "label": "CryptoEngine.cpp",
+      "file_type": "code",
+      "source_file": "CryptoEngine.cpp",
+      "source_location": "L1"
+    },
+    {
+      "id": "cryptoengine_calchmac16",
+      "label": "calcHmac16()",
+      "file_type": "code",
+      "source_file": "CryptoEngine.cpp",
+      "source_location": "L11"
+    },
+    {
+      "id": "cryptoengine_encryptandsign",
+      "label": "encryptAndSign()",
+      "file_type": "code",
+      "source_file": "CryptoEngine.cpp",
+      "source_location": "L25"
+    },
+    {
+      "id": "cryptoengine_verifyanddecrypt",
+      "label": "verifyAndDecrypt()",
+      "file_type": "code",
+      "source_file": "CryptoEngine.cpp",
+      "source_location": "L39"
+    },
+    {
+      "id": "logger",
+      "label": "Logger.h",
+      "file_type": "code",
+      "source_file": "Logger.h",
+      "source_location": "L1"
+    },
+    {
+      "id": "queuestreamsupport",
+      "label": "QueueStreamSupport.cpp",
+      "file_type": "code",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L1"
+    },
+    {
+      "id": "queuestreamsupport_queuestreamparser",
+      "label": "QueueStreamParser()",
+      "file_type": "code",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L7"
+    },
+    {
+      "id": "queuestreamsupport_reset",
+      "label": "reset()",
+      "file_type": "code",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L11"
+    },
+    {
+      "id": "queuestreamsupport_push",
+      "label": "push()",
+      "file_type": "code",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L18"
+    },
+    {
+      "id": "queuestreamsupport_iswhitespace",
+      "label": "isWhitespace()",
+      "file_type": "code",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L35"
+    },
+    {
+      "id": "queuestreamsupport_triminplace",
+      "label": "trimInPlace()",
+      "file_type": "code",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L39"
+    },
+    {
+      "id": "queuestreamsupport_startswith",
+      "label": "startsWith()",
+      "file_type": "code",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L55"
+    },
+    {
+      "id": "queuestreamsupport_mergepresence",
+      "label": "mergePresence()",
+      "file_type": "code",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L60"
+    },
+    {
+      "id": "queuestreamsupport_processline",
+      "label": "processLine()",
+      "file_type": "code",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L69"
+    },
+    {
+      "id": "queuestreamsupport_finishevent",
+      "label": "finishEvent()",
+      "file_type": "code",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L92"
+    },
+    {
+      "id": "queuestreamsupport_detectdatapresence",
+      "label": "detectDataPresence()",
+      "file_type": "code",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L111"
+    },
+    {
+      "id": "queuestreamsupport_markconnected",
+      "label": "markConnected()",
+      "file_type": "code",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L154"
+    },
+    {
+      "id": "queuestreamsupport_markevent",
+      "label": "markEvent()",
+      "file_type": "code",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L160"
+    },
+    {
+      "id": "queuestreamsupport_markdisconnect",
+      "label": "markDisconnect()",
+      "file_type": "code",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L165"
+    },
+    {
+      "id": "queuestreamsupport_fallbackpollingactive",
+      "label": "fallbackPollingActive()",
+      "file_type": "code",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L180"
+    },
+    {
+      "id": "command_contract_bridge",
+      "label": "command_contract_bridge.cpp",
+      "file_type": "code",
+      "source_file": "command_contract_bridge.cpp",
+      "source_location": "L1"
+    },
+    {
+      "id": "queuestreamsupport",
+      "label": "QueueStreamSupport.h",
+      "file_type": "code",
+      "source_file": "QueueStreamSupport.h",
+      "source_location": "L1"
+    },
+    {
+      "id": "queuestreamsupport_rtmatrix",
+      "label": "rtmatrix()",
+      "file_type": "code",
+      "source_file": "QueueStreamSupport.h",
+      "source_location": "L6"
+    },
+    {
+      "id": "doc_pinagem",
+      "label": "Pinagem",
+      "file_type": "document",
+      "source_file": "pinagem.md"
+    },
+    {
+      "id": "doc_README",
+      "label": "Readme",
+      "file_type": "document",
+      "source_file": "README.md"
+    },
+    {
+      "id": "doc_funcionamento",
+      "label": "Funcionamento",
+      "file_type": "document",
+      "source_file": "funcionamento.md"
+    }
+  ],
+  "edges": [
+    {
+      "source": "sdlogger",
+      "target": "sdlogger",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "SdLogger.cpp",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "sdlogger",
+      "target": "config",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "SdLogger.cpp",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "sdlogger",
+      "target": "sha256",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "SdLogger.cpp",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "sdlogger",
+      "target": "sdlogger_preparespibusforsd",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "SdLogger.cpp",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "sdlogger",
+      "target": "sdlogger_releasechipselect",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "SdLogger.cpp",
+      "source_location": "L17",
+      "weight": 1.0
+    },
+    {
+      "source": "sdlogger",
+      "target": "sdlogger_begin",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "SdLogger.cpp",
+      "source_location": "L23",
+      "weight": 1.0
+    },
+    {
+      "source": "sdlogger",
+      "target": "sdlogger_hashline",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "SdLogger.cpp",
+      "source_location": "L32",
+      "weight": 1.0
+    },
+    {
+      "source": "sdlogger",
+      "target": "sdlogger_log",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "SdLogger.cpp",
+      "source_location": "L48",
+      "weight": 1.0
+    },
+    {
+      "source": "sdlogger_begin",
+      "target": "sdlogger_preparespibusforsd",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "SdLogger.cpp",
+      "source_location": "L25",
+      "weight": 1.0
+    },
+    {
+      "source": "sdlogger_begin",
+      "target": "sdlogger_releasechipselect",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "SdLogger.cpp",
+      "source_location": "L26",
+      "weight": 1.0
+    },
+    {
+      "source": "sdlogger_log",
+      "target": "sdlogger_preparespibusforsd",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "SdLogger.cpp",
+      "source_location": "L50",
+      "weight": 1.0
+    },
+    {
+      "source": "sdlogger_log",
+      "target": "sdlogger_releasechipselect",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "SdLogger.cpp",
+      "source_location": "L51",
+      "weight": 1.0
+    },
+    {
+      "source": "sdlogger_log",
+      "target": "sdlogger_hashline",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "SdLogger.cpp",
+      "source_location": "L58",
+      "weight": 1.0
+    },
+    {
+      "source": "sdlogger",
+      "target": "sd",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "SdLogger.h",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "sdlogger",
+      "target": "spi",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "SdLogger.h",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "sdlogger",
+      "target": "sdlogger_sdlogger",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "SdLogger.h",
+      "source_location": "L9",
+      "weight": 1.0
+    },
+    {
+      "source": "loraprotocol",
+      "target": "loraprotocol",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaProtocol.cpp",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "loraprotocol",
+      "target": "loraprotocol_wr32",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaProtocol.cpp",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "loraprotocol",
+      "target": "loraprotocol_rd32",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaProtocol.cpp",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "loraprotocol",
+      "target": "loraprotocol_wr64",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaProtocol.cpp",
+      "source_location": "L9",
+      "weight": 1.0
+    },
+    {
+      "source": "loraprotocol",
+      "target": "loraprotocol_rd64",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaProtocol.cpp",
+      "source_location": "L12",
+      "weight": 1.0
+    },
+    {
+      "source": "loraprotocol",
+      "target": "loraprotocol_encodeplain",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaProtocol.cpp",
+      "source_location": "L18",
+      "weight": 1.0
+    },
+    {
+      "source": "loraprotocol",
+      "target": "loraprotocol_decodeplain",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaProtocol.cpp",
+      "source_location": "L34",
+      "weight": 1.0
+    },
+    {
+      "source": "loraprotocol_encodeplain",
+      "target": "loraprotocol_wr32",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaProtocol.cpp",
+      "source_location": "L22",
+      "weight": 1.0
+    },
+    {
+      "source": "loraprotocol_encodeplain",
+      "target": "loraprotocol_wr64",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaProtocol.cpp",
+      "source_location": "L23",
+      "weight": 1.0
+    },
+    {
+      "source": "loraprotocol_decodeplain",
+      "target": "loraprotocol_rd32",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaProtocol.cpp",
+      "source_location": "L37",
+      "weight": 1.0
+    },
+    {
+      "source": "loraprotocol_decodeplain",
+      "target": "loraprotocol_rd64",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaProtocol.cpp",
+      "source_location": "L38",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway",
+      "target": "radiolib",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.h",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway",
+      "target": "preferences",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.h",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway",
+      "target": "config",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.h",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway",
+      "target": "loraprotocol",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.h",
+      "source_location": "L9",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway",
+      "target": "cryptoengine",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.h",
+      "source_location": "L10",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway",
+      "target": "loragateway_loragateway",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.h",
+      "source_location": "L12",
+      "weight": 1.0
+    },
+    {
+      "source": "config",
+      "target": "arduino",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "config.h",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "config",
+      "target": "manual_settings",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "config.h",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "config",
+      "target": "config_cfg",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "config.h",
+      "source_location": "L42",
+      "weight": 1.0
+    },
+    {
+      "source": "types",
+      "target": "arduino",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "Types.h",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "types",
+      "target": "types_msgtype",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "Types.h",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "cryptoengine",
+      "target": "arduino",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "CryptoEngine.h",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "cryptoengine",
+      "target": "cryptoengine_cryptoengine",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "CryptoEngine.h",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "arduino",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.h",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "blepresence_blenodekind",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.h",
+      "source_location": "L9",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway",
+      "target": "loragateway",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway",
+      "target": "logger",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway",
+      "target": "config",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway",
+      "target": "cstring",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway",
+      "target": "spi",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway",
+      "target": "loragateway_preparespibusforlora",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L17",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway",
+      "target": "loragateway_loadreplaystate",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L25",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway",
+      "target": "loragateway_persistreplaystate",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L48",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway",
+      "target": "loragateway_idxfordevice",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L63",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway",
+      "target": "loragateway_armcontinuousreceive",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L73",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway",
+      "target": "loragateway_begin",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L89",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway",
+      "target": "loragateway_receive",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L113",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway",
+      "target": "loragateway_send",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L205",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway_armcontinuousreceive",
+      "target": "loragateway_preparespibusforlora",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L74",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway_begin",
+      "target": "loragateway_preparespibusforlora",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L90",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway_begin",
+      "target": "loragateway_armcontinuousreceive",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L107",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway_begin",
+      "target": "loragateway_loadreplaystate",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L109",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway_receive",
+      "target": "loragateway_armcontinuousreceive",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L115",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway_receive",
+      "target": "loragateway_preparespibusforlora",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L117",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway_receive",
+      "target": "loragateway_idxfordevice",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L186",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway_receive",
+      "target": "loragateway_persistreplaystate",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L201",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway_send",
+      "target": "loragateway_preparespibusforlora",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L206",
+      "weight": 1.0
+    },
+    {
+      "source": "loragateway_send",
+      "target": "loragateway_armcontinuousreceive",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaGateway.cpp",
+      "source_location": "L221",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "blepresence",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "config",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "math",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "bleadvertising",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L11",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "bledevice",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L12",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "bleutils",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L13",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "blepresence_writeint32le",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L18",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "blepresence_begin",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L26",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "blepresence_setposition",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L58",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "blepresence_setflags",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L81",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "blepresence_setenabled",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L90",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "blepresence_loop",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L103",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "blepresence_refreshadvertising",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L110",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "blepresence_begin",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L162",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "blepresence_setposition",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L177",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "blepresence_setflags",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L183",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "blepresence_setenabled",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L188",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "blepresence_loop",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L190",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence",
+      "target": "blepresence_refreshadvertising",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L192",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence_begin",
+      "target": "blepresence_refreshadvertising",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L54",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence_loop",
+      "target": "blepresence_refreshadvertising",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L107",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence_refreshadvertising",
+      "target": "blepresence_writeint32le",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L137",
+      "weight": 1.0
+    },
+    {
+      "source": "blepresence_refreshadvertising",
+      "target": "blepresence_setflags",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "BlePresence.cpp",
+      "source_location": "L143",
+      "weight": 1.0
+    },
+    {
+      "source": "manual_settings",
+      "target": "manual_settings",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "manual_settings.h",
+      "source_location": "L14",
+      "weight": 1.0
+    },
+    {
+      "source": "manual_settings",
+      "target": "manual_settings_cfg_manual",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "manual_settings.h",
+      "source_location": "L56",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "apiserver",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "config",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "loragateway",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "ctype",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "math",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "stdlib",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "string",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "wifi",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L9",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "apiserver_compactidentifier",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L37",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "apiserver_copytobuffer",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L50",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "apiserver_parsedeviceid",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L60",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "apiserver_parsecoordinate",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L77",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "apiserver_begin",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L93",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "apiserver_appendlogline",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L174",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "apiserver_finddeviceslot",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L187",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "apiserver_allocatedeviceslot",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L194",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "apiserver_updatedevicefrompacket",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L211",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "apiserver_handledevicesrequest",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L268",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "apiserver_handlelogsrequest",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L325",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "apiserver_onwsevent",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L353",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "apiserver_loop",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L369",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "apiserver_broadcasttelemetry",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L374",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "apiserver_haspendingcommand",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L381",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "apiserver_popcommand",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L383",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver_begin",
+      "target": "apiserver_compactidentifier",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L106",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver_begin",
+      "target": "apiserver_handledevicesrequest",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L159",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver_begin",
+      "target": "apiserver_handlelogsrequest",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L160",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver_begin",
+      "target": "apiserver_appendlogline",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L162",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver_begin",
+      "target": "apiserver_onwsevent",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L168",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver_updatedevicefrompacket",
+      "target": "apiserver_parsedeviceid",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L216",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver_updatedevicefrompacket",
+      "target": "apiserver_finddeviceslot",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L218",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver_updatedevicefrompacket",
+      "target": "apiserver_allocatedeviceslot",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L219",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver_updatedevicefrompacket",
+      "target": "apiserver_copytobuffer",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L239",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver_updatedevicefrompacket",
+      "target": "apiserver_parsecoordinate",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L251",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver_onwsevent",
+      "target": "apiserver_appendlogline",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L356",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver_broadcasttelemetry",
+      "target": "apiserver_appendlogline",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L375",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver_broadcasttelemetry",
+      "target": "apiserver_updatedevicefrompacket",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L376",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver_popcommand",
+      "target": "apiserver_haspendingcommand",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.cpp",
+      "source_location": "L384",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "webserver",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.h",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "websocketsserver",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.h",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "arduinojson",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.h",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "config",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.h",
+      "source_location": "L9",
+      "weight": 1.0
+    },
+    {
+      "source": "apiserver",
+      "target": "apiserver_apiserver",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "ApiServer.h",
+      "source_location": "L11",
+      "weight": 1.0
+    },
+    {
+      "source": "loraprotocol",
+      "target": "arduino",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaProtocol.h",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "loraprotocol",
+      "target": "types",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaProtocol.h",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "loraprotocol",
+      "target": "loraprotocol_payload",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaProtocol.h",
+      "source_location": "L17",
+      "weight": 1.0
+    },
+    {
+      "source": "loraprotocol",
+      "target": "loraprotocol_tag",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaProtocol.h",
+      "source_location": "L18",
+      "weight": 1.0
+    },
+    {
+      "source": "loraprotocol",
+      "target": "loraprotocol_loraprotocol",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "LoRaProtocol.h",
+      "source_location": "L21",
+      "weight": 1.0
+    },
+    {
+      "source": "cryptoengine",
+      "target": "cryptoengine",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "CryptoEngine.cpp",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "cryptoengine",
+      "target": "config",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "CryptoEngine.cpp",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "cryptoengine",
+      "target": "aes",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "CryptoEngine.cpp",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "cryptoengine",
+      "target": "md",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "CryptoEngine.cpp",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "cryptoengine",
+      "target": "string",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "CryptoEngine.cpp",
+      "source_location": "L9",
+      "weight": 1.0
+    },
+    {
+      "source": "cryptoengine",
+      "target": "cryptoengine_calchmac16",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "CryptoEngine.cpp",
+      "source_location": "L11",
+      "weight": 1.0
+    },
+    {
+      "source": "cryptoengine",
+      "target": "cryptoengine_encryptandsign",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "CryptoEngine.cpp",
+      "source_location": "L25",
+      "weight": 1.0
+    },
+    {
+      "source": "cryptoengine",
+      "target": "cryptoengine_verifyanddecrypt",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "CryptoEngine.cpp",
+      "source_location": "L39",
+      "weight": 1.0
+    },
+    {
+      "source": "cryptoengine_encryptandsign",
+      "target": "cryptoengine_calchmac16",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "CryptoEngine.cpp",
+      "source_location": "L35",
+      "weight": 1.0
+    },
+    {
+      "source": "cryptoengine_verifyanddecrypt",
+      "target": "cryptoengine_calchmac16",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "CryptoEngine.cpp",
+      "source_location": "L41",
+      "weight": 1.0
+    },
+    {
+      "source": "logger",
+      "target": "arduino",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "Logger.h",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "logger",
+      "target": "config",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "Logger.h",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport",
+      "target": "queuestreamsupport",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport",
+      "target": "string",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport",
+      "target": "queuestreamsupport_queuestreamparser",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport",
+      "target": "queuestreamsupport_reset",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L11",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport",
+      "target": "queuestreamsupport_push",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L18",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport",
+      "target": "queuestreamsupport_iswhitespace",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L35",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport",
+      "target": "queuestreamsupport_triminplace",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L39",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport",
+      "target": "queuestreamsupport_startswith",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L55",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport",
+      "target": "queuestreamsupport_mergepresence",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L60",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport",
+      "target": "queuestreamsupport_processline",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L69",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport",
+      "target": "queuestreamsupport_finishevent",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L92",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport",
+      "target": "queuestreamsupport_detectdatapresence",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L111",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport",
+      "target": "queuestreamsupport_reset",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L146",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport",
+      "target": "queuestreamsupport_markconnected",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L154",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport",
+      "target": "queuestreamsupport_markevent",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L160",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport",
+      "target": "queuestreamsupport_markdisconnect",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L165",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport",
+      "target": "queuestreamsupport_fallbackpollingactive",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L180",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport_queuestreamparser",
+      "target": "queuestreamsupport_reset",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport_push",
+      "target": "queuestreamsupport_processline",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L29",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport_triminplace",
+      "target": "queuestreamsupport_iswhitespace",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L42",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport_processline",
+      "target": "queuestreamsupport_triminplace",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L70",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport_processline",
+      "target": "queuestreamsupport_finishevent",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L72",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport_processline",
+      "target": "queuestreamsupport_startswith",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L77",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport_processline",
+      "target": "queuestreamsupport_mergepresence",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L88",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport_processline",
+      "target": "queuestreamsupport_detectdatapresence",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L88",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport_detectdatapresence",
+      "target": "queuestreamsupport_triminplace",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L116",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport_detectdatapresence",
+      "target": "queuestreamsupport_iswhitespace",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.cpp",
+      "source_location": "L125",
+      "weight": 1.0
+    },
+    {
+      "source": "command_contract_bridge",
+      "target": "command_contract",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "command_contract_bridge.cpp",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport",
+      "target": "stddef",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.h",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport",
+      "target": "stdint",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.h",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "queuestreamsupport",
+      "target": "queuestreamsupport_rtmatrix",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "QueueStreamSupport.h",
+      "source_location": "L6",
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [],
+  "input_tokens": 0,
+  "output_tokens": 0
+}
