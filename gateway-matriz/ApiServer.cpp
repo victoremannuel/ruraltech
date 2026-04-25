@@ -208,6 +208,10 @@ void ApiServer::begin() {
       doc["lastPageCampaignCount"] = lastPageDiag.lastPageCampaignCount;
       doc["lastPageSentAtMs"] = lastPageDiag.lastPageSentAtMs;
       doc["lastPageAckDeadlineAtMs"] = lastPageDiag.lastPageAckDeadlineAtMs;
+      doc["lastPageRetryAtMs"] = lastPageDiag.lastPageRetryAtMs;
+      doc["lastWakeToPageLatencyMs"] = lastPageDiag.lastWakeToPageLatencyMs;
+      doc["lastSoftDeadlineMs"] = lastPageDiag.lastSoftDeadlineMs;
+      doc["lastSoftDeadlineMet"] = lastPageDiag.lastSoftDeadlineMet;
       doc["lastPageOutcome"] = lastPageDiag.lastPageOutcome;
       doc["lastWakeHintAtMs"] = lastPageDiag.lastWakeHintAtMs;
       doc["lastWakeHintSeq"] = lastPageDiag.lastWakeHintSeq;

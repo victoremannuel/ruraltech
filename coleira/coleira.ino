@@ -847,6 +847,9 @@ static void configureStatusServerRoutes() {
     doc["lastSecondaryWindowMs"] = rtrWindowDiag_.lastSecondaryWindowMs;
     doc["lastWindowCloseAtMs"] = rtrWindowDiag_.lastWindowCloseAtMs;
     doc["lastWindowHandled"] = rtrWindowDiag_.lastWindowHandled;
+    doc["lastSleepGraceHoldAtMs"] = rtrWindowDiag_.lastSleepGraceHoldAtMs;
+    doc["lastSleepGraceWindowMs"] = rtrWindowDiag_.lastSleepGraceWindowMs;
+    doc["sleepGraceHoldCount"] = rtrWindowDiag_.sleepGraceHoldCount;
     doc["lastDownlinkRawSeenAtMs"] = rtrWindowDiag_.lastDownlinkRawSeenAtMs;
     doc["lastDownlinkRawLen"] = rtrWindowDiag_.lastDownlinkRawLen;
     doc["lastDownlinkRawRssi"] = rtrWindowDiag_.lastDownlinkRawRssi;
@@ -861,6 +864,7 @@ static void configureStatusServerRoutes() {
     doc["rawDownlinkRejectedCount"] = rtrWindowDiag_.rawDownlinkRejectedCount;
     doc["benchHoldAfterUplinkMs"] = cfg::RTR_BENCH_HOLD_AFTER_UPLINK_MS;
     doc["benchSecondaryWindowMs"] = cfg::RTR_BENCH_SECONDARY_WINDOW_MS;
+    doc["sleepGraceWindowMs"] = rtrv1::COLLAR_SLEEP_GRACE_MS;
     if (bindingPropertyId_[0]) doc["propertyId"] = bindingPropertyId_;
     if (bindingPropertyScopeId_[0]) doc["propertyScopeId"] = bindingPropertyScopeId_;
     if (bindingMatrixGatewayId_[0]) doc["matrixGatewayId"] = bindingMatrixGatewayId_;
@@ -3619,6 +3623,42 @@ void loop() {
         (unsigned long)(rtrSessionMode_.wakeLockUntilMs - millis()));
     delay(50);
     return;
+  }
+
+  const uint32_t nowMs = millis();
+  if (rtrv1::shouldHoldSleepForRetryGrace(
+          nowMs,
+          lastUplinkTxAtMs_,
+          handledDownlink,
+          false,
+          rtrv1::COLLAR_SLEEP_GRACE_MS)) {
+    const uint32_t remainingGraceMs =
+        rtrv1::remainingSleepGraceMs(
+            nowMs,
+            lastUplinkTxAtMs_,
+            rtrv1::COLLAR_SLEEP_GRACE_MS);
+    if (remainingGraceMs > 0) {
+      rtrdiag::noteSleepGraceHold(&rtrWindowDiag_, nowMs, remainingGraceMs);
+      LOGI(
+          "RTR_SLEEP_GRACE_HOLD elapsedMs=%lu remainingMs=%lu holdCount=%lu",
+          (unsigned long)(nowMs - lastUplinkTxAtMs_),
+          (unsigned long)remainingGraceMs,
+          (unsigned long)rtrWindowDiag_.sleepGraceHoldCount);
+      bool graceHandled = false;
+      if (lora.receiveFrame(down, remainingGraceMs)) {
+        applyDownlink(down);
+        graceHandled = true;
+        handledDownlink = true;
+      }
+      LOGI(
+          "RTR_SLEEP_GRACE_WINDOW_CLOSE handled=%d remainingMs=%lu",
+          graceHandled ? 1 : 0,
+          (unsigned long)remainingGraceMs);
+      if (graceHandled || isRtrSessionModeActive()) {
+        delay(50);
+        return;
+      }
+    }
   }
 
   // Em LoRa-only, usa deep sleep para economia de energia.

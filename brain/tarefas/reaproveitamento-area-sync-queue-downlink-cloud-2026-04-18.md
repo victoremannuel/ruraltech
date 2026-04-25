@@ -404,6 +404,9 @@ Historico adicional desta rodada:
 - 2026-04-25: a coleira ganhou contadores e snapshots de janela/discovery/raw downlink/page, expostos em `/status`, com logs `RTR_WINDOW_ARMED`, `RTR_WINDOW_CLOSED_CONTEXT`, `RTR_RAW_DOWNLINK_SEEN`, `RTR_RAW_DOWNLINK_REJECT_CONTEXT` e `RTR_PAGE_RX_CONTEXT`
 - 2026-04-25: overrides de bancada opt-in foram adicionados na coleira para separar timing de radio/cripto sem alterar o default de producao: `RTR_BENCH_HOLD_AFTER_UPLINK_MS` e `RTR_BENCH_SECONDARY_WINDOW_MS`
 - 2026-04-25: helper compartilhado `firmware/shared/rtr_diag_support.h` e teste host `rtr_diag_support_test.cpp` passaram junto com os testes existentes do wake/page
+- 2026-04-25: a politica de page foi endurecida com deadline soft explicito para fast-path, deadline hard de ACK preservado, e retry por campanha com grace window (`PAGE_RETRY_GRACE_MS`) sem depender de novo uplink
+- 2026-04-25: a coleira passou a segurar uma sleep grace window (`COLLAR_SLEEP_GRACE_MS`) antes do deep sleep para capturar a campanha de retry tardia, com logs `RTR_SLEEP_GRACE_HOLD` e `RTR_SLEEP_GRACE_WINDOW_CLOSE`
+- 2026-04-25: `/status` da matriz agora expõe `lastWakeToPageLatencyMs`, `lastSoftDeadlineMs`, `lastSoftDeadlineMet` e `lastPageRetryAtMs`; `/status` da coleira expõe `sleepGraceWindowMs`, `sleepGraceHoldCount` e timestamps associados
 
 ## Next step
 
@@ -429,6 +432,9 @@ Historico adicional desta rodada:
 3. Capturar `/status` da matriz e da coleira antes e depois do comando, com foco em:
    - matriz: `lastDecryptFail*`, `lastPageOutcome`, `lastWakeHint*`, `lastPageSentAtMs`, `lastPageAckDeadlineAtMs`
    - coleira: `rawDownlinkSeenCount`, `rawDownlinkRejectedCount`, `lastDownlinkDropReason`, `pageRxCount`, `lastPageRxAtMs`, `lastPageAckTxAtMs`
+   - novos campos de deadline/policy:
+   - matriz: `lastWakeToPageLatencyMs`, `lastSoftDeadlineMet`, `lastPageRetryAtMs`
+   - coleira: `sleepGraceWindowMs`, `sleepGraceHoldCount`, `lastSleepGraceHoldAtMs`
 4. Se a bancada ainda ficar inconclusiva por timing, habilitar temporariamente um dos overrides da coleira:
    - `RTR_BENCH_HOLD_AFTER_UPLINK_MS`
    - `RTR_BENCH_SECONDARY_WINDOW_MS`

@@ -13,6 +13,7 @@ int main() {
   assert(metric.valid);
   assert(metric.deltaMs == 180);
   assert(metric.deadlineMet);
+  assert(metric.deltaMs <= rtrv1::FAST_PAGE_DEADLINE_MS);
 
   core.lastPageSentAtMs = 1405;
   const rtrwake::FastPathMetric lateMetric =
@@ -20,5 +21,6 @@ int main() {
   assert(lateMetric.valid);
   assert(lateMetric.deltaMs == 405);
   assert(!lateMetric.deadlineMet);
+  assert(lateMetric.deltaMs < rtrv1::PAGE_ACK_TIMEOUT_MS);
   return 0;
 }

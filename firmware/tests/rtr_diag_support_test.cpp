@@ -33,6 +33,7 @@ int main() {
   rtrdiag::PageSnapshot page{};
   rtrdiag::noteWakeHint(&page, 2000, 55, true);
   rtrdiag::notePageTx(&page, 77, 0xAA55ULL, 19, 2, 2100, 3600);
+  rtrdiag::notePageLatency(&page, 100, 300, true);
   assert(page.lastWakeHintAtMs == 2000);
   assert(page.lastWakeHintSeq == 55);
   assert(page.lastWakeHintAccepted);
@@ -42,7 +43,13 @@ int main() {
   assert(page.lastPageCampaignCount == 2);
   assert(page.lastPageSentAtMs == 2100);
   assert(page.lastPageAckDeadlineAtMs == 3600);
+  assert(page.lastWakeToPageLatencyMs == 100);
+  assert(page.lastSoftDeadlineMs == 300);
+  assert(page.lastSoftDeadlineMet);
   assert(strcmp(page.lastPageOutcome, "tx_ok") == 0);
+  rtrdiag::notePageRetry(&page, 4500, "timeout_retry_grace");
+  assert(page.lastPageRetryAtMs == 4500);
+  assert(strcmp(page.lastPageOutcome, "timeout_retry_grace") == 0);
   rtrdiag::notePageOutcome(&page, "timeout_final");
   assert(strcmp(page.lastPageOutcome, "timeout_final") == 0);
 
@@ -54,6 +61,7 @@ int main() {
   rtrdiag::noteRawDownlinkAccepted(&collar);
   rtrdiag::notePageRx(&collar, 320);
   rtrdiag::notePageAckTx(&collar, 333);
+  rtrdiag::noteSleepGraceHold(&collar, 340, 700);
   rtrdiag::noteWindowClosed(&collar, 350, true);
   assert(collar.discoveryWindowOpenCount == 1);
   assert(collar.secondaryWindowOpenCount == 1);
@@ -70,6 +78,9 @@ int main() {
   assert(collar.pageRxCount == 1);
   assert(collar.lastPageRxAtMs == 320);
   assert(collar.lastPageAckTxAtMs == 333);
+  assert(collar.lastSleepGraceHoldAtMs == 340);
+  assert(collar.lastSleepGraceWindowMs == 700);
+  assert(collar.sleepGraceHoldCount == 1);
   assert(collar.lastWindowCloseAtMs == 350);
   assert(collar.lastWindowHandled);
   assert(strcmp(collar.lastDownlinkDropReason, "accepted") == 0);

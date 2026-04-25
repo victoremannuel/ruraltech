@@ -184,6 +184,19 @@ static inline bool canRetryAfterTimeout(const SessionCore& session) {
   return session.campaignCount < session.maxCampaigns;
 }
 
+static inline void scheduleRetryReadyToSend(
+    SessionCore* session,
+    uint32_t nowMs,
+    uint32_t graceMs) {
+  if (!session) return;
+  session->pageSent = false;
+  session->pageAcked = false;
+  session->pageAckDeadlineAtMs = 0;
+  session->nextPageAttemptAtMs = nowMs + graceMs;
+  session->cloudTxDeferred = true;
+  session->state = State::PAGING_READY_TO_SEND;
+}
+
 static inline void scheduleRetryWaitingUplink(
     SessionCore* session,
     uint32_t nowMs) {

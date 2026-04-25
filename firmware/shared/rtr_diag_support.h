@@ -35,8 +35,12 @@ struct PageSnapshot {
   uint32_t lastPageMessageId = 0;
   uint32_t lastPageSentAtMs = 0;
   uint32_t lastPageAckDeadlineAtMs = 0;
+  uint32_t lastPageRetryAtMs = 0;
+  uint32_t lastWakeToPageLatencyMs = 0;
+  uint32_t lastSoftDeadlineMs = 0;
   uint8_t lastPageCampaignCount = 0;
   bool lastWakeHintAccepted = false;
+  bool lastSoftDeadlineMet = false;
   char lastPageOutcome[kOutcomeSize] = "none";
 };
 
@@ -49,16 +53,19 @@ struct CollarWindowSnapshot {
   uint32_t lastPageRxAtMs = 0;
   uint32_t lastPageAckTxAtMs = 0;
   uint32_t lastWindowCloseAtMs = 0;
+  uint32_t lastSleepGraceHoldAtMs = 0;
   uint32_t rawDownlinkSeenCount = 0;
   uint32_t rawDownlinkAcceptedCount = 0;
   uint32_t rawDownlinkRejectedCount = 0;
   uint32_t pageRxCount = 0;
+  uint32_t sleepGraceHoldCount = 0;
   uint16_t lastDownlinkRawLen = 0;
   int16_t lastDownlinkRawRssi = 0;
   float lastDownlinkRawSnr = 0.0f;
   uint8_t lastDownlinkRawMsgType = 0;
   uint32_t lastDiscoveryWindowMs = 0;
   uint32_t lastSecondaryWindowMs = 0;
+  uint32_t lastSleepGraceWindowMs = 0;
   bool lastWindowHandled = false;
   char lastDownlinkDropReason[kReasonSize]{};
 };
@@ -134,6 +141,28 @@ static inline void notePageOutcome(PageSnapshot* snapshot, const char* outcome) 
   copyText(snapshot->lastPageOutcome, sizeof(snapshot->lastPageOutcome), outcome);
 }
 
+static inline void notePageLatency(
+    PageSnapshot* snapshot,
+    uint32_t deltaMs,
+    uint32_t softDeadlineMs,
+    bool deadlineMet) {
+  if (!snapshot) return;
+  snapshot->lastWakeToPageLatencyMs = deltaMs;
+  snapshot->lastSoftDeadlineMs = softDeadlineMs;
+  snapshot->lastSoftDeadlineMet = deadlineMet;
+}
+
+static inline void notePageRetry(
+    PageSnapshot* snapshot,
+    uint32_t retryAtMs,
+    const char* outcome) {
+  if (!snapshot) return;
+  snapshot->lastPageRetryAtMs = retryAtMs;
+  if (outcome && outcome[0]) {
+    copyText(snapshot->lastPageOutcome, sizeof(snapshot->lastPageOutcome), outcome);
+  }
+}
+
 static inline void noteDiscoveryWindowOpen(
     CollarWindowSnapshot* snapshot,
     bool secondary,
@@ -205,6 +234,16 @@ static inline void notePageRx(CollarWindowSnapshot* snapshot, uint32_t atMs) {
 static inline void notePageAckTx(CollarWindowSnapshot* snapshot, uint32_t atMs) {
   if (!snapshot) return;
   snapshot->lastPageAckTxAtMs = atMs;
+}
+
+static inline void noteSleepGraceHold(
+    CollarWindowSnapshot* snapshot,
+    uint32_t atMs,
+    uint32_t windowMs) {
+  if (!snapshot) return;
+  snapshot->sleepGraceHoldCount++;
+  snapshot->lastSleepGraceHoldAtMs = atMs;
+  snapshot->lastSleepGraceWindowMs = windowMs;
 }
 
 static inline uint32_t secondaryWindowMs(

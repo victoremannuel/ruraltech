@@ -3420,6 +3420,11 @@ static bool trySendRtrPage(
   const rtrwake::FastPathMetric fastPathMetric =
       rtrwake::computeFastPathMetric(session.core, rtrv1::FAST_PAGE_DEADLINE_MS);
   if (fastPathMetric.valid) {
+    rtrdiag::notePageLatency(
+        &lastPageDiag,
+        fastPathMetric.deltaMs,
+        rtrv1::FAST_PAGE_DEADLINE_MS,
+        fastPathMetric.deadlineMet);
     LOGI(
         "RTR_WAKE_TO_PAGE_LATENCY deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu pageTxAtMs=%lu deltaMs=%lu deadlineMs=%lu deadlineMet=%d reason=page_tx_ok",
         (unsigned long)session.core.deviceId,
@@ -3430,6 +3435,15 @@ static bool trySendRtrPage(
         (unsigned long)fastPathMetric.deltaMs,
         (unsigned long)rtrv1::FAST_PAGE_DEADLINE_MS,
         fastPathMetric.deadlineMet ? 1 : 0);
+    if (!fastPathMetric.deadlineMet) {
+      LOGW(
+          "RTR_PAGE_SOFT_DEADLINE_MISSED deviceId=%lu commandId=%s uplinkSeq=%lu deltaMs=%lu softDeadlineMs=%lu",
+          (unsigned long)session.core.deviceId,
+          session.commandId[0] ? session.commandId : "-",
+          (unsigned long)session.core.uplinkSeq,
+          (unsigned long)fastPathMetric.deltaMs,
+          (unsigned long)rtrv1::FAST_PAGE_DEADLINE_MS);
+    }
   }
   LOGI(
       "RTR_PAGE_TX_CONTEXT deviceId=%lu commandId=%s sessionId=%llu messageId=%lu campaignCount=%u sentAtMs=%lu ackDeadlineAtMs=%lu outcome=%s",
@@ -4608,7 +4622,8 @@ static void processPendingWakeSessions() {
         }
         if (rtrwake::pageAckTimedOut(session.core, nowMs)) {
           if (rtrwake::canRetryAfterTimeout(session.core)) {
-            rtrdiag::notePageOutcome(&lastPageDiag, "timeout_retry");
+            const uint32_t retryAtMs = nowMs + rtrv1::PAGE_RETRY_GRACE_MS;
+            rtrdiag::notePageRetry(&lastPageDiag, retryAtMs, "timeout_retry_grace");
             LOGW(
                 "RTR_PAGE_TIMEOUT_RETRY deviceId=%lu commandId=%s campaignCount=%u pageSent=%d lastPageSentAtMs=%lu ackDeadlineAtMs=%lu",
                 (unsigned long)session.core.deviceId,
@@ -4627,16 +4642,26 @@ static void processPendingWakeSessions() {
                 (unsigned)session.core.campaignCount,
                 (unsigned long)session.core.lastPageSentAtMs,
                 (unsigned long)session.core.pageAckDeadlineAtMs);
+            LOGI(
+                "RTR_PAGE_TIMEOUT_GRACE_SCHEDULED deviceId=%lu commandId=%s retryAtMs=%lu graceMs=%lu nextCampaign=%u",
+                (unsigned long)session.core.deviceId,
+                session.commandId[0] ? session.commandId : "-",
+                (unsigned long)retryAtMs,
+                (unsigned long)rtrv1::PAGE_RETRY_GRACE_MS,
+                (unsigned)(session.core.campaignCount + 1));
             transitionPendingWakeState(
-                session, rtrwake::State::PAGING_WAITING_UPLINK, "page_timeout_retry");
-            rtrwake::scheduleRetryWaitingUplink(&session.core, nowMs);
+                session, rtrwake::State::PAGING_READY_TO_SEND, "page_timeout_retry_grace");
+            rtrwake::scheduleRetryReadyToSend(
+                &session.core,
+                nowMs,
+                rtrv1::PAGE_RETRY_GRACE_MS);
             setPendingWakeReason(
                 session,
                 rtrv1::REASON_PAGE_TIMEOUT,
                 rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_TIMEOUT));
             publishFenceTransportState(
                 session.core.deviceId,
-                "page_timeout_retry_scheduled",
+                "page_timeout_retry_grace",
                 rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_TIMEOUT),
                 rtrv1::REASON_PAGE_TIMEOUT,
                 false,
