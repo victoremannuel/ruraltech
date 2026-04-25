@@ -38,7 +38,7 @@ def git_dirty() -> bool:
 
 def main() -> int:
     git_sha = run_git("rev-parse", "HEAD")
-    git_short = run_git("rev-parse", "--short=8", "HEAD")
+    git_short = run_git("rev-parse", "--short=7", "HEAD")
     build_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     dirty = git_dirty()
 

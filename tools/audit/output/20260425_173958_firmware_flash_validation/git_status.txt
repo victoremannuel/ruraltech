@@ -1,0 +1,8 @@
+M brain/tarefas/reaproveitamento-area-sync-queue-downlink-cloud-2026-04-18.md
+ M tools/audit/check_firmware_provenance.py
+ M tools/audit/generate_build_info.py
+?? app/devtools_options.yaml
+?? tools/audit/__pycache__/check_firmware_provenance.cpython-314.pyc
+?? tools/audit/__pycache__/flash_and_validate_firmware.cpython-314.pyc
+?? tools/audit/__pycache__/generate_build_info.cpython-314.pyc
+?? tools/audit/flash_and_validate_firmware.py

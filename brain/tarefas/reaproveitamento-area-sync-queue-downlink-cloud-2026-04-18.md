@@ -116,6 +116,18 @@ Estado de partida consolidado nesta rodada:
   - `noteUplinkHint(...)` liberando a sessão apenas com uplink real do mesmo `deviceId`
   - logs `RTR_WAITING_FRESH_UPLINK` e `RTR_FRESH_UPLINK_RECEIVED`
   - expansão do teste host `firmware/tests/rtrv1_stale_wake_hint_test.cpp` cobrindo bloqueio de predicted wake e rejeição de device errado
+- [x] Implementar o plano de reflash e validação de proveniência de firmware:
+  - `tools/audit/generate_build_info.py` ajustado para short SHA canônico de 7 caracteres
+  - `tools/audit/check_firmware_provenance.py` alinhado ao short SHA esperado pelo plano
+  - novo helper `tools/audit/flash_and_validate_firmware.py` criado para:
+    - validar `HEAD` e dirty files
+    - regenerar `generated_build_info.h`
+    - rodar testes host obrigatórios
+    - compilar com `--build-path` limpo
+    - subir com `--input-dir`
+    - capturar boot serial
+    - validar `FW_PROVENANCE`, `/status` e bench opcional
+    - emitir `validation_report.md` em `tools/audit/output/<run>/`
 
 ## Status
 
@@ -237,6 +249,27 @@ Nova rodada aplicada em 2026-04-25 (fresh uplink obrigatório após `RTR_WAKE_HI
   - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rtrv1_fast_path_priority_test.cpp`: ok
   - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rtrv1_terminal_failure_status_test.cpp`: ok
   - `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz`: pendente/inconclusivo nesta rodada até retorno do host
+
+Nova rodada aplicada em 2026-04-25 (plano de reflash e validação de proveniência):
+- `tools/audit/generate_build_info.py` agora gera `RT_BUILD_GIT_SHORT_SHA` com 7 caracteres, alinhando o build metadata ao short SHA canônico `8f12088` exigido pelo plano
+- `tools/audit/check_firmware_provenance.py` agora valida `RT_BUILD_GIT_SHORT_SHA` contra os 7 primeiros caracteres do commit alvo, evitando falso negativo por abbrev de 8 caracteres
+- criado `tools/audit/flash_and_validate_firmware.py` com fluxo end-to-end de bancada:
+  - cria `tools/audit/output/<timestamp>_firmware_flash_validation/`
+  - valida `git status --short`, `git rev-parse HEAD` e dirty files fora de allowlist
+  - roda `generate_build_info.py`, snapshot do header gerado e bloqueia SHA stale
+  - executa os 4 testes host obrigatórios do wake orchestration
+  - compila `gateway-matriz` e `coleira` com `--build-path` explícito e registra artefatos
+  - sobe ambos com `arduino-cli upload --input-dir`
+  - captura boot serial diretamente via `pyserial`
+  - valida `FW_PROVENANCE` da matriz e da coleira contra o commit alvo e reprova SHA stale
+  - consulta `/status` quando URLs são fornecidas
+  - suporta bench opcional via `--bench-command` e emite `validation_report.md`
+- validação desta rodada:
+  - `python3 -m py_compile tools/audit/generate_build_info.py tools/audit/check_firmware_provenance.py tools/audit/flash_and_validate_firmware.py`: ok
+  - `python3 tools/audit/flash_and_validate_firmware.py --help`: ok
+  - `python3 tools/audit/flash_and_validate_firmware.py --allow-dirty --skip-compile --skip-upload --skip-serial --skip-status --skip-bench`: ok
+  - diretório de evidência do dry run: `tools/audit/output/20260425_173958_firmware_flash_validation/`
+  - `python3 tools/audit/check_firmware_provenance.py --expected-sha 8f12088ed3184941220170ec7732a870641327d2`: ok
 
 Nova rodada aplicada em 2026-04-21 (proveniência de firmware / SHA de bancada):
 - criado `firmware/shared/build_info.h` com fallback seguro para metadata de build (`gitSha`, `gitShortSha`, `buildUtc`, `dirty`, `buildSource`)

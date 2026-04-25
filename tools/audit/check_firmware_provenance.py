@@ -77,6 +77,7 @@ def main() -> int:
     args = parser.parse_args()
 
     expected_sha = args.expected_sha or git_head()
+    expected_short = expected_sha[:7]
 
     generated = ROOT / "firmware" / "shared" / "generated_build_info.h"
     matrix_ino = ROOT / "gateway-matriz" / "gateway-matriz.ino"
@@ -111,8 +112,8 @@ def main() -> int:
             "RT_BUILD_GIT_SHORT_SHA",
             "firmware/shared/generated_build_info.h",
             git_short,
-            expected_sha[:8],
-            okfail(git_short == expected_sha[:8]),
+            expected_short,
+            okfail(git_short == expected_short),
         ),
         CheckRow(
             "RT_BUILD_UTC",
@@ -153,6 +154,7 @@ def main() -> int:
 
     summary = {
         "expected_sha": expected_sha,
+        "expected_short_sha": expected_short,
         "generated_git_sha": git_sha,
         "generated_git_short_sha": git_short,
         "ready": all(row.status == "OK" for row in rows),
