@@ -65,6 +65,7 @@ struct SessionCore {
   bool pageSent = false;
   bool pageAcked = false;
   bool cloudTxDeferred = false;
+  bool requiresFreshUplink = false;
   bool beginDispatchPending = false;
   bool sessionStarted = false;
   bool finished = false;
@@ -121,6 +122,8 @@ static inline bool noteUplinkHint(
   if (!session || !session->active || session->deviceId != deviceId) return false;
   session->lastUplinkAtMs = nowMs;
   session->nextPageAttemptAtMs = nowMs;
+  session->predictedWakeAtMs = 0;
+  session->requiresFreshUplink = false;
   session->cloudTxDeferred = true;
   if (session->state == State::PAGING_WAITING_UPLINK ||
       session->state == State::PAGING_READY_TO_SEND) {
@@ -134,9 +137,30 @@ static inline bool predictedWakeReady(
     const SessionCore& session,
     uint32_t nowMs) {
   return session.active &&
+      !session.requiresFreshUplink &&
       session.state == State::PAGING_WAITING_UPLINK &&
       session.predictedWakeAtMs != 0 &&
       (int32_t)(nowMs - session.predictedWakeAtMs) >= 0;
+}
+
+static inline void requireFreshUplink(
+    SessionCore* session,
+    uint32_t nowMs) {
+  if (!session) return;
+  (void)nowMs;
+
+  session->requiresFreshUplink = true;
+  session->lastUplinkAtMs = 0;
+  session->predictedWakeAtMs = 0;
+  session->nextPageAttemptAtMs = 0;
+  session->pageSent = false;
+  session->pageAcked = false;
+  session->lastPageSentAtMs = 0;
+  session->pageAckDeadlineAtMs = 0;
+  session->cloudTxDeferred = false;
+  session->inFlightPage = SessionCore::InFlightPageAttempt{};
+  session->scheduledRetry = SessionCore::ScheduledRetry{};
+  session->state = State::PAGING_WAITING_UPLINK;
 }
 
 static inline bool hasFreshWakeHint(

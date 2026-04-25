@@ -109,6 +109,13 @@ Estado de partida consolidado nesta rodada:
   - retorno controlado para `PAGING_WAITING_UPLINK` sem limpar `plan`, `commandId` ou contexto da sessão
   - log obrigatório `RTR_WAKE_HINT_STALE ... action=wait_next_uplink`
   - teste host dedicado `firmware/tests/rtrv1_stale_wake_hint_test.cpp`
+- [x] Aplicar correção cirúrgica para exigir uplink fresco após `RTR_WAKE_HINT_STALE`:
+  - novo flag `requiresFreshUplink` em `gateway-matriz/RtrWakeOrchestrator.h`
+  - helper puro `requireFreshUplink(...)` invalidando `lastUplinkAtMs`, `predictedWakeAtMs` e tentativa pendente sem apagar contexto do comando
+  - `predictedWakeReady(...)` bloqueado enquanto `requiresFreshUplink=true`
+  - `noteUplinkHint(...)` liberando a sessão apenas com uplink real do mesmo `deviceId`
+  - logs `RTR_WAITING_FRESH_UPLINK` e `RTR_FRESH_UPLINK_RECEIVED`
+  - expansão do teste host `firmware/tests/rtrv1_stale_wake_hint_test.cpp` cobrindo bloqueio de predicted wake e rejeição de device errado
 
 ## Status
 
@@ -207,6 +214,29 @@ Nova rodada aplicada em 2026-04-25 (wake hint vencido bloqueando `RTR_PAGE`):
   - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rtrv1_wake_scheduler_test.cpp`: ok
   - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rtrv1_fast_path_priority_test.cpp`: ok
   - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rtrv1_terminal_failure_status_test.cpp`: ok
+
+Nova rodada aplicada em 2026-04-25 (fresh uplink obrigatório após `RTR_WAKE_HINT_STALE`):
+- `gateway-matriz/RtrWakeOrchestrator.h` agora mantém `requiresFreshUplink` no `SessionCore` para separar explicitamente “aguardando uplink real” de “pode promover por predicted wake`
+- novo helper puro `requireFreshUplink(...)` invalida hint e agenda antigos sem apagar `plan`, `commandId`, `radioCommandId`, `sessionNonce`, `scopeId` nem alvo da sessão
+- `predictedWakeReady(...)` deixa de promover sessões marcadas com `requiresFreshUplink=true`, quebrando o ciclo `PAGING_WAITING_UPLINK -> PAGING_READY_TO_SEND -> RTR_WAKE_HINT_STALE`
+- `noteUplinkHint(...)` agora:
+  - limpa `requiresFreshUplink`
+  - zera `predictedWakeAtMs`
+  - só libera a sessão quando o uplink é do mesmo `deviceId`
+- `gateway-matriz/gateway-matriz.ino` agora registra:
+  - `RTR_WAITING_FRESH_UPLINK` no rebaixamento por stale hint
+  - `RTR_FRESH_UPLINK_RECEIVED` quando a sessão volta a ficar apta após uplink físico real
+- teste host reforçado `firmware/tests/rtrv1_stale_wake_hint_test.cpp` agora prova:
+  - limpeza do hint antigo via `requireFreshUplink(...)`
+  - bloqueio de `predictedWakeReady(...)` mesmo com `predictedWakeAtMs` reinjetado
+  - rejeição de `noteUplinkHint(...)` com `deviceId` errado
+  - liberação correta após uplink fresco do alvo certo
+- validação desta rodada:
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rtrv1_stale_wake_hint_test.cpp`: ok
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rtrv1_wake_scheduler_test.cpp`: ok
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rtrv1_fast_path_priority_test.cpp`: ok
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rtrv1_terminal_failure_status_test.cpp`: ok
+  - `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz`: pendente/inconclusivo nesta rodada até retorno do host
 
 Nova rodada aplicada em 2026-04-21 (proveniência de firmware / SHA de bancada):
 - criado `firmware/shared/build_info.h` com fallback seguro para metadata de build (`gitSha`, `gitShortSha`, `buildUtc`, `dirty`, `buildSource`)

@@ -3304,6 +3304,7 @@ static void notePendingWakeHintFromUplink(const LoRaFrame& rx) {
   PendingWakeSession& session = pendingWakeSessions[idx];
   const char* fromState = pendingWakeStateLabel(session.core.state);
   const uint32_t nowMs = millis();
+  const bool wasRequiringFreshUplink = session.core.requiresFreshUplink;
   session.core.uplinkSeq = rx.seq;
   const bool accepted = rtrwake::noteUplinkHint(&session.core, rx.deviceId, nowMs);
   rtrdiag::noteWakeHint(&lastPageDiag, nowMs, rx.seq, accepted);
@@ -3316,6 +3317,13 @@ static void notePendingWakeHintFromUplink(const LoRaFrame& rx) {
       fromState,
       (unsigned long)nowMs);
   if (!accepted) return;
+  if (wasRequiringFreshUplink) {
+    LOGI(
+        "RTR_FRESH_UPLINK_RECEIVED deviceId=%lu commandId=%s uplinkSeq=%lu",
+        (unsigned long)rx.deviceId,
+        session.commandId[0] ? session.commandId : "-",
+        (unsigned long)rx.seq);
+  }
   publishFenceTransportState(session.core.deviceId, "paging_ready");
   LOGI(
       "RTR_WAKE_HINT_FROM_UPLINK deviceId=%lu commandId=%s stateBefore=%s lastSeenAtMs=%lu campaignCount=%u",
@@ -3349,13 +3357,17 @@ static bool reschedulePendingWakeForFreshUplink(
       (unsigned long)hintAgeMs,
       (unsigned long)rtrv1::FAST_PAGE_DEADLINE_MS,
       pendingWakeStateLabel(session.core.state));
-  session.core.nextPageAttemptAtMs = 0;
-  session.core.cloudTxDeferred = false;
   transitionPendingWakeState(
       session,
       rtrwake::State::PAGING_WAITING_UPLINK,
       reasonLabel);
-  publishFenceTransportState(session.core.deviceId, "paging_waiting_uplink");
+  rtrwake::requireFreshUplink(&session.core, nowMs);
+  LOGI(
+      "RTR_WAITING_FRESH_UPLINK deviceId=%lu commandId=%s reason=%s",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      reasonLabel ? reasonLabel : "-");
+  publishFenceTransportState(session.core.deviceId, "paging_waiting_fresh_uplink");
   return true;
 }
 
