@@ -139,6 +139,24 @@ static inline bool predictedWakeReady(
       (int32_t)(nowMs - session.predictedWakeAtMs) >= 0;
 }
 
+static inline bool hasFreshWakeHint(
+    const SessionCore& session,
+    uint32_t nowMs,
+    uint32_t maxAgeMs) {
+  if (!session.active) return false;
+  if (session.lastUplinkAtMs == 0) return false;
+  if ((int32_t)(nowMs - session.lastUplinkAtMs) < 0) return false;
+  return (nowMs - session.lastUplinkAtMs) <= maxAgeMs;
+}
+
+static inline uint32_t wakeHintAgeMs(
+    const SessionCore& session,
+    uint32_t nowMs) {
+  if (session.lastUplinkAtMs == 0) return 0xFFFFFFFFUL;
+  if ((int32_t)(nowMs - session.lastUplinkAtMs) < 0) return 0xFFFFFFFFUL;
+  return nowMs - session.lastUplinkAtMs;
+}
+
 static inline void markPageAttempt(
     SessionCore* session,
     uint32_t nowMs,

@@ -102,6 +102,13 @@ Estado de partida consolidado nesta rodada:
   - isolar `case rtrwake::State::SESSION_IN_PROGRESS` com escopo explícito em `processPendingWakeSessionStep(...)`
   - preservar sem alteração a lógica incremental do wake loop, logs e diagnósticos expostos em `/status`
   - revalidar a compilação da matriz até o limite confiável deste host
+- [x] Aplicar correção cirúrgica para bloquear `RTR_PAGE` com wake hint vencido:
+  - helper puro `hasFreshWakeHint(...)` e `wakeHintAgeMs(...)` em `RtrWakeOrchestrator.h`
+  - guarda explícita no fast-path de uplink antes de `trySendRtrPage(...)`
+  - guarda explícita no `case PAGING_READY_TO_SEND` antes do envio do page
+  - retorno controlado para `PAGING_WAITING_UPLINK` sem limpar `plan`, `commandId` ou contexto da sessão
+  - log obrigatório `RTR_WAKE_HINT_STALE ... action=wait_next_uplink`
+  - teste host dedicado `firmware/tests/rtrv1_stale_wake_hint_test.cpp`
 
 ## Status
 
@@ -178,6 +185,28 @@ Nova rodada aplicada em 2026-04-25 (fix cirúrgico de build da matriz pós-WDT-s
   - `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz`: pré-processamento/cache do sketch confirmados em `~/Library/Caches/arduino/sketches/B803C21924EBF1231D7A09BC72D83B61/`
   - `gateway-matriz.ino.cpp` gerado no cache sem reaparecimento do erro sintático anterior durante a rodada
   - encerrado sem conclusão final confiável por retorno ao padrão histórico de hang silencioso do `arduino-cli` neste host
+
+Nova rodada aplicada em 2026-04-25 (wake hint vencido bloqueando `RTR_PAGE`):
+- `gateway-matriz/RtrWakeOrchestrator.h` agora expõe helpers puros `hasFreshWakeHint(...)` e `wakeHintAgeMs(...)`, reaproveitáveis em teste host e no firmware
+- `gateway-matriz/gateway-matriz.ino` agora valida a idade do hint antes de qualquer `RTR_PAGE` em dois pontos:
+  - fast-path logo após uplink aceito
+  - loop incremental em `processPendingWakeSessionStep(...)` no estado `PAGING_READY_TO_SEND`
+- quando o hint está vencido, a matriz:
+  - registra `RTR_WAKE_HINT_STALE` com `deviceId`, `commandId`, `ageMs`, `maxAgeMs`, estado e ação
+  - volta a sessão para `PAGING_WAITING_UPLINK`
+  - limpa apenas `nextPageAttemptAtMs` e `cloudTxDeferred`
+  - preserva `plan`, `commandId`, `radioCommandId`, `sessionNonce` e restante do contexto da sessão
+- o limiar adotado nesta rodada reaproveita `rtrv1::FAST_PAGE_DEADLINE_MS` (`300 ms`), mantendo coerência com o diagnóstico existente `RTR_PAGE_SOFT_DEADLINE_MISSED`
+- teste host novo `firmware/tests/rtrv1_stale_wake_hint_test.cpp` cobre:
+  - hint fresco no limite de `300 ms`
+  - hint vencido com `301 ms`
+  - retorno para `PAGING_WAITING_UPLINK`
+  - nova promoção imediata para `PAGING_READY_TO_SEND` quando chega outro uplink
+- validação desta rodada:
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rtrv1_stale_wake_hint_test.cpp`: ok
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rtrv1_wake_scheduler_test.cpp`: ok
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rtrv1_fast_path_priority_test.cpp`: ok
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rtrv1_terminal_failure_status_test.cpp`: ok
 
 Nova rodada aplicada em 2026-04-21 (proveniência de firmware / SHA de bancada):
 - criado `firmware/shared/build_info.h` com fallback seguro para metadata de build (`gitSha`, `gitShortSha`, `buildUtc`, `dirty`, `buildSource`)

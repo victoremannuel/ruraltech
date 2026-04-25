@@ -2946,7 +2946,18 @@ static void processAcceptedUplink(const LoRaFrame& rx) {
         (unsigned long)rtrv1::FAST_PAGE_DEADLINE_MS);
     if (wakeSession->core.state == rtrwake::State::PAGING_READY_TO_SEND) {
       const char* fastPathReason = nullptr;
-      if (!trySendRtrPage(*wakeSession, &fastPathReason)) {
+      if (reschedulePendingWakeForFreshUplink(
+              *wakeSession,
+              millis(),
+              "fast_path_wake_hint_stale",
+              "wake_hint_stale_wait_next_uplink")) {
+        LOGI(
+            "RTR_WAKE_FAST_PATH_SKIP deviceId=%lu commandId=%s uplinkSeq=%lu reason=%s",
+            (unsigned long)rx.deviceId,
+            wakeSession->commandId[0] ? wakeSession->commandId : "-",
+            (unsigned long)wakeSession->core.uplinkSeq,
+            "wake_hint_stale_wait_next_uplink");
+      } else if (!trySendRtrPage(*wakeSession, &fastPathReason)) {
         LOGW(
             "RTR_WAKE_FAST_PATH_SKIP deviceId=%lu commandId=%s uplinkSeq=%lu reason=%s",
             (unsigned long)rx.deviceId,
@@ -3319,6 +3330,33 @@ static void notePendingWakeHintFromUplink(const LoRaFrame& rx) {
       (unsigned long)rx.deviceId,
       session.commandId[0] ? session.commandId : "-",
       (unsigned)session.core.campaignCount);
+}
+
+static bool reschedulePendingWakeForFreshUplink(
+    PendingWakeSession& session,
+    uint32_t nowMs,
+    const char* stage,
+    const char* reasonLabel) {
+  const uint32_t hintAgeMs = rtrwake::wakeHintAgeMs(session.core, nowMs);
+  if (rtrwake::hasFreshWakeHint(session.core, nowMs, rtrv1::FAST_PAGE_DEADLINE_MS)) {
+    return false;
+  }
+  noteWakeLoopStage(stage, session);
+  LOGW(
+      "RTR_WAKE_HINT_STALE deviceId=%lu commandId=%s ageMs=%lu maxAgeMs=%lu state=%s action=wait_next_uplink",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long)hintAgeMs,
+      (unsigned long)rtrv1::FAST_PAGE_DEADLINE_MS,
+      pendingWakeStateLabel(session.core.state));
+  session.core.nextPageAttemptAtMs = 0;
+  session.core.cloudTxDeferred = false;
+  transitionPendingWakeState(
+      session,
+      rtrwake::State::PAGING_WAITING_UPLINK,
+      reasonLabel);
+  publishFenceTransportState(session.core.deviceId, "paging_waiting_uplink");
+  return true;
 }
 
 static int32_t coordinateToE7(double value) {
@@ -4652,6 +4690,13 @@ static bool processPendingWakeSessionStep(uint8_t idx, PendingWakeSession& sessi
       case rtrwake::State::PAGING_READY_TO_SEND:
         if (session.core.nextPageAttemptAtMs == 0 ||
             (int32_t)(nowMs - session.core.nextPageAttemptAtMs) >= 0) {
+          if (reschedulePendingWakeForFreshUplink(
+                  session,
+                  nowMs,
+                  "wake_hint_stale",
+                  "wake_hint_stale_wait_next_uplink")) {
+            return true;
+          }
           noteWakeLoopStage("page_ready_send", session);
           const char* sendReason = nullptr;
           if (!trySendRtrPage(session, &sendReason)) {
