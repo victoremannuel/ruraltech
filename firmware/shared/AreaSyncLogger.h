@@ -126,6 +126,10 @@
   AS_MATRIX_INFO("COMMAND_MARK_DISPATCHING_BEGIN", \
     "commandId=%s command=%s", commandId, command)
 
+#define AS_MATRIX_SIMPLE_COMMAND_CLEARED(commandId, command, reason) \
+  AS_MATRIX_INFO("SIMPLE_COMMAND_CLEARED", \
+    "commandId=%s command=%s reason=%s", commandId, command, reason)
+
 // Despacho LoRa
 #define AS_MATRIX_DISPATCH_BEGIN(cmdId, areaId, propId, targetCount) \
   AS_MATRIX_INFO("DISPATCH_BEGIN", \

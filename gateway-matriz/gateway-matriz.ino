@@ -1986,6 +1986,14 @@ static void publishEventToCloud(const LoRaFrame& rx) {
 }
 
 static void clearActiveSimpleCommand() {
+  if (activeSimpleCommand.active) {
+    AS_MATRIX_SIMPLE_COMMAND_CLEARED(
+        activeSimpleCommand.commandId[0] ? activeSimpleCommand.commandId : "-",
+        activeSimpleCommand.command[0] ? activeSimpleCommand.command : "-",
+        activeSimpleCommand.lastReasonCode != rpv2::REASON_NONE
+            ? rpv2::reasonCodeLabel(activeSimpleCommand.lastReasonCode)
+            : "cleared");
+  }
   if (deferredUplinkQueueCount > 0 && deferredUplinkFlushAtMs == 0) {
     deferredUplinkFlushAtMs = millis() + cfg::SIMPLE_COMMAND_ACK_POST_FLUSH_DELAY_MS;
   }
@@ -7249,6 +7257,9 @@ void setup() {
         cfg::DIAG_PROFILE_NAME,
         (unsigned)cfg::DIAG_STAGE,
         matrixCloudId().c_str());
+    LOGI(
+        "RPV2_PLANNER_REV rev=progressive_reduce_real_path_v1 gitShort=%s",
+        build.gitShortSha);
   }
   LOGI("Gateway matriz pronto fw=%s", cfg::FW_VERSION);
 }

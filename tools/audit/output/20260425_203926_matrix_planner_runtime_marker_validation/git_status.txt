@@ -1,0 +1,4 @@
+M firmware/shared/AreaSyncLogger.h
+ M gateway-matriz/gateway-matriz.ino
+ M tools/audit/__pycache__/flash_and_validate_firmware.cpython-314.pyc
+ M tools/audit/flash_and_validate_firmware.py

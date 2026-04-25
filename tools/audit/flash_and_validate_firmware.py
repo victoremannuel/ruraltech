@@ -33,6 +33,28 @@ DEFAULT_MATRIX_PORT = "/dev/tty.usbserial-59470049741"
 DEFAULT_COLLAR_PORT = "/dev/tty.usbserial-1420"
 DEFAULT_MATRIX_BUILD = Path("/tmp/ruraltech-build-matriz")
 DEFAULT_COLLAR_BUILD = Path("/tmp/ruraltech-build-coleira")
+SOURCE_MARKER_PATHS = ["gateway-matriz", "firmware/shared", "firmware/tests"]
+REQUIRED_SOURCE_MARKERS = [
+    "RPV2_PLAN_ENTER",
+    "RPV2_PLANNER_REV",
+    "progressive_reduce_real_path_v1",
+    "RPV2_PLAN_CANDIDATE_EVAL",
+    "RPV2_PLAN_CHUNK_FIT",
+    "RPV2_PLAN_FINAL",
+    "RPV2_PLAN_FAILED_TERMINAL",
+    "radio_proto_v2_planner_support",
+    "measurementOk",
+    "fitsLimit",
+]
+REQUIRED_MATRIX_BINARY_MARKERS = [
+    "RPV2_PLAN_ENTER",
+    "RPV2_PLANNER_REV",
+    "progressive_reduce_real_path_v1",
+    "RPV2_PLAN_CANDIDATE_EVAL",
+    "RPV2_PLAN_CHUNK_FIT",
+    "RPV2_PLAN_FINAL",
+    "FW_PROVENANCE role=matrix",
+]
 ALLOWED_DIRTY_SUFFIXES = (
     "manual_settings.local.h",
     "manual_settings.local.example.h",
@@ -82,6 +104,12 @@ class RuntimeStageResult:
     stale_sha_absent: bool = False
     details: str = ""
     observation: ProvenanceObservation | None = None
+
+
+def which_search_tool() -> list[str]:
+    if shutil.which("rg"):
+        return ["rg", "-n", "-F"]
+    return ["grep", "-R", "-n"]
 
 
 def now_utc() -> str:
@@ -162,12 +190,48 @@ def validate_workspace(target_commit: str, out_dir: Path) -> tuple[str, str, lis
     status_lines = git_status_lines()
     head = run_text(["git", "rev-parse", "HEAD"])
     short_head = short7(head)
+    branch = run_text(["git", "branch", "--show-current"])
+    log10 = run_text(["git", "log", "--oneline", "-10"])
+    ensure_text(out_dir / "branch.txt", f"{branch}\n")
+    ensure_text(out_dir / "git_log_oneline_10.txt", f"{log10}\n")
     ensure_text(out_dir / "git_status.txt", ("\n".join(status_lines) + "\n") if status_lines else "")
     ensure_text(out_dir / "head.txt", f"{head}\n")
     ensure_text(out_dir / "head_short.txt", f"{short_head}\n")
     if head != target_commit:
         raise ValidationError(f"HEAD {head} difere do commit alvo {target_commit}")
     return head, short_head, status_lines
+
+
+def validate_source_markers(out_dir: Path) -> StageResult:
+    search_tool = which_search_tool()
+    lines: list[str] = []
+    missing: list[str] = []
+    base_paths = SOURCE_MARKER_PATHS.copy()
+    for marker in REQUIRED_SOURCE_MARKERS:
+        command = search_tool + [marker] + base_paths
+        result = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=False,
+        )
+        lines.append(f"$ {' '.join(command)}")
+        stdout = result.stdout.strip()
+        stderr = result.stderr.strip()
+        if stdout:
+            lines.append(stdout)
+        if stderr:
+            lines.append(stderr)
+        if result.returncode not in (0, 1):
+            lines.append(f"exit_code={result.returncode}")
+        if not stdout:
+            missing.append(marker)
+    ensure_text(out_dir / "source_marker_search.txt", ("\n".join(lines) + "\n") if lines else "")
+    if missing:
+        return StageResult("FAIL", "markers ausentes: " + ", ".join(missing))
+    return StageResult("PASS", "todos os markers obrigatorios encontrados no source")
 
 
 def snapshot_generated_header(out_dir: Path) -> None:
@@ -246,6 +310,7 @@ def validate_include_chain() -> StageResult:
 
 def run_host_tests(out_dir: Path) -> tuple[StageResult, list[str]]:
     tests = [
+        "firmware/tests/rpv2_fence_planner_test.cpp",
         "firmware/tests/rtrv1_stale_wake_hint_test.cpp",
         "firmware/tests/rtrv1_wake_scheduler_test.cpp",
         "firmware/tests/rtrv1_fast_path_priority_test.cpp",
@@ -354,6 +419,42 @@ def validate_binary_strings(build_path: Path, target_commit: str, stale_sha: str
     if saw_target_full or saw_target_short:
         return StageResult("PASS", f"binario em {build_path} contem evidencia parcial do SHA alvo")
     return StageResult("SKIPPED", f"strings nao encontrou SHA alvo em {build_path}; validacao fica a cargo do serial")
+
+
+def validate_matrix_binary_markers(build_path: Path, out_path: Path) -> StageResult:
+    bin_files = sorted(build_path.rglob("*.bin"))
+    if not bin_files:
+        ensure_text(out_path, "")
+        return StageResult("SKIPPED", f"nenhum .bin encontrado em {build_path}")
+    if shutil.which("strings") is None:
+        ensure_text(out_path, "")
+        return StageResult("SKIPPED", "comando strings indisponivel neste host")
+
+    found = {marker: False for marker in REQUIRED_MATRIX_BINARY_MARKERS}
+    lines: list[str] = []
+    for bin_path in bin_files:
+        result = subprocess.run(
+            ["strings", str(bin_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=False,
+        )
+        payload = result.stdout.splitlines()
+        lines.append(f"$ strings {bin_path}")
+        for marker in REQUIRED_MATRIX_BINARY_MARKERS:
+            for line in payload:
+                if marker in line:
+                    lines.append(line)
+                    found[marker] = True
+                    break
+        lines.append(f"exit_code={result.returncode}")
+    ensure_text(out_path, ("\n".join(lines) + "\n") if lines else "")
+    missing = [marker for marker, ok in found.items() if not ok]
+    if missing:
+        return StageResult("FAIL", "markers ausentes no binario: " + ", ".join(missing))
+    return StageResult("PASS", "todos os markers obrigatorios encontrados no binario da matriz")
 
 
 def compile_target(
@@ -482,6 +583,27 @@ def summarize_runtime(observation: ProvenanceObservation, target_commit: str, st
     )
 
 
+def validate_matrix_boot_markers(log_path: Path, out_path: Path) -> StageResult:
+    text = read_text(log_path)
+    markers = {
+        "FW_PROVENANCE role=matrix": "FW_PROVENANCE role=matrix" in text,
+        "RPV2_PLANNER_REV rev=progressive_reduce_real_path_v1":
+            "RPV2_PLANNER_REV rev=progressive_reduce_real_path_v1" in text,
+        "DIAG_STAGE=4":
+            "Matrix diag_stage=4" in text or "diagStage=4" in text or "DIAG_STAGE=4" in text,
+        "QUEUE_POLLING_CFG":
+            "QUEUE_POLLING_CFG" in text,
+        "CLOUD_BACKHAUL_CFG":
+            "CLOUD_BACKHAUL_CFG" in text,
+    }
+    lines = [f"{name}: {'PASS' if ok else 'FAIL'}" for name, ok in markers.items()]
+    ensure_text(out_path, "\n".join(lines) + "\n")
+    missing = [name for name, ok in markers.items() if not ok]
+    if missing:
+        return StageResult("FAIL", "boot markers ausentes: " + ", ".join(missing))
+    return StageResult("PASS", "boot serial contem proveniencia, revisao do planner e configuracao cloud")
+
+
 def fetch_status_json(url: str, out_path: Path) -> dict | None:
     try:
         with urllib.request.urlopen(url, timeout=10) as response:
@@ -540,11 +662,36 @@ def capture_serial_pair(
 def validate_bench_logs(matrix_log: Path, collar_log: Path) -> StageResult:
     matrix_text = read_text(matrix_log)
     collar_text = read_text(collar_log)
+    planner_enter = "RPV2_PLAN_ENTER" in matrix_text
+    planner_eval = "RPV2_PLAN_CANDIDATE_EVAL" in matrix_text
+    chunk_reject = "RPV2_PLAN_CHUNK_REJECT" in matrix_text
+    chunk_fit = "RPV2_PLAN_CHUNK_FIT" in matrix_text
+    plan_final_success = "RPV2_PLAN_FINAL" in matrix_text and "planReady=1" in matrix_text
+    plan_final_failure = "RPV2_PLAN_FINAL" in matrix_text and "planReady=0" in matrix_text
+    simple_cleared = "SIMPLE_COMMAND_CLEARED" in matrix_text
     has_stale = "RTR_WAKE_HINT_STALE" in matrix_text
     has_waiting = "RTR_WAITING_FRESH_UPLINK" in matrix_text
     repeated_stale_only = has_stale and not has_waiting
     fresh_release = all(token in matrix_text for token in ("RTR_FRESH_UPLINK_RECEIVED", "RTR_WAKE_HINT_FROM_UPLINK", "RTR_PAGE_TX_OK"))
     collar_page = all(token in collar_text for token in ("RTR_RAW_DOWNLINK_SEEN", "RTR_RAW_DOWNLINK_ACCEPT", "RTR_PAGE_RX", "RTR_PAGE_ACK_TX"))
+    deadlock_after_reject = (
+        chunk_reject
+        and "QUEUE_POLL_SKIPPED reason=simple_command_active" in matrix_text
+        and not chunk_fit
+        and not plan_final_success
+        and not plan_final_failure
+        and not simple_cleared
+    )
+    if not planner_enter or not planner_eval:
+        return StageResult("FAIL", "bench sem markers obrigatorios RPV2_PLAN_ENTER/RPV2_PLAN_CANDIDATE_EVAL")
+    if deadlock_after_reject:
+        return StageResult("FAIL", "planner rejeitou candidato e entrou em simple_command_active sem plan final")
+    if chunk_reject and (chunk_fit or plan_final_failure or simple_cleared):
+        if chunk_fit and plan_final_success and "RTR_WAKE_SESSION_CREATED" in matrix_text:
+            return StageResult("PASS", "planner reduziu oversize, fechou planReady=1 e criou wake session")
+        if plan_final_failure and simple_cleared:
+            return StageResult("PASS", "planner encerrou em falha terminal e limpou simple command")
+        return StageResult("PASS", "bench contem markers de progressao do planner apos reject")
     if repeated_stale_only:
         return StageResult("FAIL", "stale loop sem RTR_WAITING_FRESH_UPLINK")
     if has_stale and has_waiting:
@@ -599,6 +746,7 @@ def build_report(
     head: str,
     short_head: str,
     dirty_files: list[str],
+    source_markers: StageResult,
     generated_headers: StageResult,
     build_info: StageResult,
     include_chain: StageResult,
@@ -606,10 +754,12 @@ def build_report(
     matrix_compile: StageResult,
     collar_compile: StageResult,
     matrix_binary: StageResult,
+    matrix_binary_markers: StageResult,
     collar_binary: StageResult,
     matrix_upload: StageResult,
     collar_upload: StageResult,
     matrix_runtime: RuntimeStageResult,
+    matrix_boot_markers: StageResult,
     collar_runtime: RuntimeStageResult,
     matrix_status: StageResult,
     collar_status: StageResult,
@@ -624,7 +774,7 @@ def build_report(
         stale_sha,
     )
     report = [
-        "# RuralTech Firmware Provenance Path Validation Report",
+        "# RuralTech Matrix Planner Runtime Marker Validation Report",
         "",
         "## Target Commit",
         target_commit,
@@ -640,6 +790,9 @@ def build_report(
         report.append("- none")
     report.extend(
         [
+            "",
+            "## Source Marker Audit",
+            f"- Source markers: {source_markers.status} ({source_markers.details or '-'})",
             "",
             "## Generated Build Info",
             f"- Header locations audit: {generated_headers.status} ({generated_headers.details or '-'})",
@@ -658,6 +811,7 @@ def build_report(
             f"- gitSha target: {'PASS' if matrix_runtime.target_sha_match else matrix_runtime.status}",
             f"- gitShort target: {'PASS' if matrix_runtime.target_short_match else matrix_runtime.status}",
             f"- stale SHA absent: {'PASS' if matrix_runtime.stale_sha_absent else matrix_runtime.status}",
+            f"- boot markers: {matrix_boot_markers.status} ({matrix_boot_markers.details or '-'})",
             f"- detail: {matrix_runtime.details or '-'}",
             "",
             "## Collar Runtime Provenance",
@@ -671,6 +825,7 @@ def build_report(
             f"- matrix compile: {matrix_compile.status} ({matrix_compile.details or '-'})",
             f"- collar compile: {collar_compile.status} ({collar_compile.details or '-'})",
             f"- matrix binary SHA: {matrix_binary.status} ({matrix_binary.details or '-'})",
+            f"- matrix binary markers: {matrix_binary_markers.status} ({matrix_binary_markers.details or '-'})",
             f"- collar binary SHA: {collar_binary.status} ({collar_binary.details or '-'})",
             f"- matrix upload: {matrix_upload.status} ({matrix_upload.details or '-'})",
             f"- collar upload: {collar_upload.status} ({collar_upload.details or '-'})",
@@ -730,7 +885,7 @@ def main() -> int:
     parser.add_argument("--skip-bench", action="store_true")
     args = parser.parse_args()
 
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_provenance_path_validation"
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_matrix_planner_runtime_marker_validation"
     out_dir = Path(args.output_dir) if args.output_dir else ROOT / "tools" / "audit" / "output" / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -741,6 +896,7 @@ def main() -> int:
     head = ""
     short_head = ""
     dirty_files: list[str] = []
+    source_markers_result = StageResult("SKIPPED", "nao executado")
     generated_headers_result = StageResult("SKIPPED", "nao executado")
     build_info_result = StageResult("SKIPPED", "nao executado")
     include_chain_result = StageResult("SKIPPED", "nao executado")
@@ -748,10 +904,12 @@ def main() -> int:
     matrix_compile = StageResult("SKIPPED", "compile pulado")
     collar_compile = StageResult("SKIPPED", "compile pulado")
     matrix_binary = StageResult("SKIPPED", "binario nao inspecionado")
+    matrix_binary_markers = StageResult("SKIPPED", "binario nao inspecionado")
     collar_binary = StageResult("SKIPPED", "binario nao inspecionado")
     matrix_upload = StageResult("SKIPPED", "upload pulado")
     collar_upload = StageResult("SKIPPED", "upload pulado")
     matrix_runtime = RuntimeStageResult(status="SKIPPED", details="serial nao capturado")
+    matrix_boot_markers = StageResult("SKIPPED", "serial nao capturado")
     collar_runtime = RuntimeStageResult(status="SKIPPED", details="serial nao capturado")
     matrix_status_result = StageResult("SKIPPED", "status pulado")
     collar_status_result = StageResult("SKIPPED", "status pulado")
@@ -760,13 +918,20 @@ def main() -> int:
     try:
         head, short_head, dirty_files = validate_workspace(args.target_commit, out_dir)
         commands_executed.extend([
+            "git branch --show-current",
             "git status --short",
+            "git log --oneline -10",
             "git rev-parse HEAD",
             "git rev-parse --short=7 HEAD",
         ])
         disallowed_dirty = [line for line in dirty_files if not is_allowed_dirty(line)]
         if dirty_files and not args.allow_dirty and disallowed_dirty:
             raise ValidationError("workspace dirty com arquivos fora da allowlist: " + "; ".join(disallowed_dirty))
+
+        source_markers_result = validate_source_markers(out_dir)
+        commands_executed.append("marker search via rg/grep")
+        if source_markers_result.status != "PASS":
+            raise ValidationError(source_markers_result.details)
 
         gen_result = run_capture(["python3", "tools/audit/generate_build_info.py"], out_dir / "generate_build_info.log", timeout=120)
         commands_executed.append("python3 tools/audit/generate_build_info.py")
@@ -825,6 +990,10 @@ def main() -> int:
                 args.stale_sha,
                 out_dir / "matrix_binary_sha.txt",
             )
+            matrix_binary_markers = validate_matrix_binary_markers(
+                matrix_build_path,
+                out_dir / "matrix_binary_markers.txt",
+            )
             collar_binary = validate_binary_strings(
                 collar_build_path,
                 args.target_commit,
@@ -833,6 +1002,8 @@ def main() -> int:
             )
             if matrix_binary.status == "FAIL":
                 raise ValidationError(matrix_binary.details)
+            if matrix_binary_markers.status == "FAIL":
+                raise ValidationError(matrix_binary_markers.details)
             if collar_binary.status == "FAIL":
                 raise ValidationError(collar_binary.details)
 
@@ -873,6 +1044,10 @@ def main() -> int:
                 args.target_commit,
                 args.stale_sha,
             )
+            matrix_boot_markers = validate_matrix_boot_markers(
+                out_dir / "matrix_boot_serial.log",
+                out_dir / "matrix_boot_marker_validation.txt",
+            )
             collar_runtime = summarize_runtime(
                 parse_provenance(out_dir / "collar_boot_serial.log", "collar", args.target_commit, args.stale_sha),
                 args.target_commit,
@@ -880,6 +1055,8 @@ def main() -> int:
             )
             if matrix_runtime.status != "PASS":
                 raise ValidationError(f"proveniencia da matriz invalida: {matrix_runtime.details}")
+            if matrix_boot_markers.status != "PASS":
+                raise ValidationError(f"markers de boot da matriz invalidos: {matrix_boot_markers.details}")
             if collar_runtime.status != "PASS":
                 raise ValidationError(f"proveniencia da coleira invalida: {collar_runtime.details}")
 
@@ -916,6 +1093,7 @@ def main() -> int:
             head,
             short_head,
             dirty_files,
+            source_markers_result,
             generated_headers_result,
             build_info_result,
             include_chain_result,
@@ -923,10 +1101,12 @@ def main() -> int:
             matrix_compile,
             collar_compile,
             matrix_binary,
+            matrix_binary_markers,
             collar_binary,
             matrix_upload,
             collar_upload,
             matrix_runtime,
+            matrix_boot_markers,
             collar_runtime,
             matrix_status_result,
             collar_status_result,
@@ -946,6 +1126,7 @@ def main() -> int:
             head,
             short_head,
             dirty_files or git_status_lines(),
+            source_markers_result,
             generated_headers_result,
             build_info_result,
             include_chain_result,
@@ -953,10 +1134,12 @@ def main() -> int:
             matrix_compile,
             collar_compile,
             matrix_binary,
+            matrix_binary_markers,
             collar_binary,
             matrix_upload,
             collar_upload,
             matrix_runtime,
+            matrix_boot_markers,
             collar_runtime,
             matrix_status_result,
             collar_status_result,

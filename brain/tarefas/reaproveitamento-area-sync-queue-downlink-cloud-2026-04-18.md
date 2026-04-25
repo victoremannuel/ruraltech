@@ -336,6 +336,31 @@ Nova rodada aplicada em 2026-04-25 (correção do caminho real `SET_FENCE` para 
   - o risco de repetir o bench ambíguo `reject único -> COMMAND_MARK_DISPATCHING_BEGIN -> simple_command_active` caiu, porque o marcador de dispatch foi empurrado para o primeiro `RTR_PAGE_TX_OK`
   - a próxima prova obrigatória de bancada passa a ser a sequência `RPV2_PLAN_ENTER -> RPV2_PLANNER_REV -> RPV2_PLAN_CANDIDATE_EVAL -> RPV2_PLAN_CHUNK_REJECT -> RPV2_PLAN_CHUNK_FIT -> RPV2_PLAN_FINAL planReady=1 -> RTR_WAKE_SESSION_CREATED`
 
+Nova rodada aplicada em 2026-04-25 (pipeline auditável de validação dos runtime markers da matriz):
+- `gateway-matriz/gateway-matriz.ino`:
+  - a matriz agora emite `RPV2_PLANNER_REV rev=progressive_reduce_real_path_v1` também no boot, ao lado do `FW_PROVENANCE`, removendo a ambiguidade entre “patch existe no source” e “firmware realmente rodando”
+  - `clearActiveSimpleCommand()` passou a registrar `SIMPLE_COMMAND_CLEARED` com `commandId`, `command` e `reason`, dando prova explícita de limpeza do lifecycle após falha terminal ou fechamento normal
+- `firmware/shared/AreaSyncLogger.h`:
+  - novo macro `AS_MATRIX_SIMPLE_COMMAND_CLEARED`
+- `tools/audit/flash_and_validate_firmware.py`:
+  - o run padrão agora usa diretório de evidência `*_matrix_planner_runtime_marker_validation`
+  - passou a registrar branch atual e `git log --oneline -10`
+  - ganhou auditoria obrigatória de markers no source (`source_marker_search.txt`)
+  - ganhou auditoria obrigatória de markers no binário da matriz via `strings` (`matrix_binary_markers.txt`)
+  - ganhou validação de boot serial da matriz exigindo `FW_PROVENANCE role=matrix`, `RPV2_PLANNER_REV`, `CLOUD_BACKHAUL_CFG`, `QUEUE_POLLING_CFG` e sinal efetivo de `DIAG_STAGE=4`
+  - o smoke de bancada agora falha explicitamente se houver `RPV2_PLAN_CHUNK_REJECT` seguido de `simple_command_active` sem `RPV2_PLAN_FINAL`/`SIMPLE_COMMAND_CLEARED`
+  - os host tests agora incluem `rpv2_fence_planner_test.cpp`
+- validação local desta rodada:
+  - `python3 -m py_compile tools/audit/flash_and_validate_firmware.py`: ok
+  - `python3 tools/audit/flash_and_validate_firmware.py --help`: ok
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rpv2_fence_planner_test.cpp -o /tmp/rpv2_fence_planner_test && /tmp/rpv2_fence_planner_test`: ok
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rtrv1_terminal_failure_status_test.cpp -o /tmp/rtrv1_terminal_failure_status_test && /tmp/rtrv1_terminal_failure_status_test`: ok
+  - `python3 tools/audit/flash_and_validate_firmware.py --target-commit $(git rev-parse HEAD) --allow-dirty --skip-compile --skip-upload --skip-serial --skip-status --skip-bench`: ok
+  - diretório de evidência do dry-run local: `tools/audit/output/20260425_203926_matrix_planner_runtime_marker_validation/`
+- conclusão desta rodada:
+  - antes de qualquer novo reteste funcional de `SET_FENCE`, agora existe um pipeline único no repositório para provar markers em source, binário e boot/runtime da matriz
+  - a próxima rodada física de bancada pode ser invalidada automaticamente se `RPV2_PLANNER_REV` não aparecer no boot ou se o binário não contiver os markers do planner real
+
 Nova rodada aplicada em 2026-04-21 (proveniência de firmware / SHA de bancada):
 - criado `firmware/shared/build_info.h` com fallback seguro para metadata de build (`gitSha`, `gitShortSha`, `buildUtc`, `dirty`, `buildSource`)
 - criado gerador local `tools/audit/generate_build_info.py`, que escreve `firmware/shared/generated_build_info.h` a partir do git atual
