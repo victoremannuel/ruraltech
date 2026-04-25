@@ -98,10 +98,14 @@ Estado de partida consolidado nesta rodada:
   - handoff assíncrono para o `RPv2` já existente
   - desativação do page single-shot bloqueante no caminho cloud de `SET_FENCE`
   - testes host do orquestrador e correlação de ACK
+- [x] Aplicar correção cirúrgica de build da matriz pós-rodada WDT-safe:
+  - isolar `case rtrwake::State::SESSION_IN_PROGRESS` com escopo explícito em `processPendingWakeSessionStep(...)`
+  - preservar sem alteração a lógica incremental do wake loop, logs e diagnósticos expostos em `/status`
+  - revalidar a compilação da matriz até o limite confiável deste host
 
 ## Status
 
-**Atualizado: 2026-04-21**
+**Atualizado: 2026-04-25**
 
 Rodada de implementação RPv2 concluída, `RTRv1 paging + wake lock` aplicada e correção do wake orchestration assíncrono da matriz concluída localmente. Validação host e builds aprovados; validação física de bancada segue pendente.
 
@@ -161,7 +165,19 @@ Nova rodada aplicada em 2026-04-21 (`RPV2` pós-`RTR_PAGE_ACK`, WDT + wake lock)
   - `g++ ... firmware/tests/rtrv1_fast_path_priority_test.cpp`: ok
   - `g++ ... firmware/tests/rtrv1_terminal_failure_status_test.cpp`: ok
   - `g++ ... firmware/tests/rtrv1_wake_scheduler_test.cpp`: ok
-  - builds Arduino continuam sem confirmação conclusiva neste host por histórico de hang do `arduino-cli compile`
+- builds Arduino continuam sem confirmação conclusiva neste host por histórico de hang do `arduino-cli compile`
+
+Nova rodada aplicada em 2026-04-25 (fix cirúrgico de build da matriz pós-WDT-safe):
+- corrigido o erro de compilação `jump to case label / crosses initialization of 'const char* sessionReason'` em `gateway-matriz/gateway-matriz.ino`
+- o `case rtrwake::State::SESSION_IN_PROGRESS` em `processPendingWakeSessionStep(...)` passou a usar bloco explícito `{ ... }`, restaurando o escopo C++ correto sem mexer na máquina de estados
+- a lógica WDT-safe recém-introduzida foi preservada integralmente:
+  - handoff em ticks distintos `PAGE_ACKED -> SESSION_START_READY -> SESSION_IN_PROGRESS`
+  - logs `RTR_BEGIN_DISPATCH_DEFERRED`, `RTR_BEGIN_DISPATCH_START` e diagnóstico de wake loop
+  - campos adicionais de `/status` da matriz relacionados ao wake loop
+- validação desta rodada:
+  - `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz`: pré-processamento/cache do sketch confirmados em `~/Library/Caches/arduino/sketches/B803C21924EBF1231D7A09BC72D83B61/`
+  - `gateway-matriz.ino.cpp` gerado no cache sem reaparecimento do erro sintático anterior durante a rodada
+  - encerrado sem conclusão final confiável por retorno ao padrão histórico de hang silencioso do `arduino-cli` neste host
 
 Nova rodada aplicada em 2026-04-21 (proveniência de firmware / SHA de bancada):
 - criado `firmware/shared/build_info.h` com fallback seguro para metadata de build (`gitSha`, `gitShortSha`, `buildUtc`, `dirty`, `buildSource`)
@@ -419,6 +435,7 @@ Historico adicional desta rodada:
 - 2026-04-25: o handoff `PAGE_ACKED -> SESSION_START_READY -> BEGIN` foi quebrado em ticks distintos, com `RTR_BEGIN_DISPATCH_DEFERRED` e `RTR_BEGIN_DISPATCH_START` antes do `executeFenceCommandRpv2Plan(...)`
 - 2026-04-25: a matriz agora expõe em `/status` diagnóstico de wake loop: `lastWakeLoopStage`, `lastWakeLoopStageAtMs`, `lastWakeLoopStageSessionId`, `lastWakeLoopStageDeviceId`, `wakeLoopIterationCount`, `wakeLoopBudgetHitCount`, `wakeLoopYieldCount`, `lastSoftTimeoutAtMs`, `lastRetryScheduleAtMs` e `lastBeginDispatchAtMs`
 - 2026-04-25: logs novos desta fase: `RTR_WAKE_LOOP_STAGE`, `RTR_WAKE_LOOP_BUDGET_HIT`, `RTR_WAKE_LOOP_YIELD`, `RTR_PAGE_SOFT_TIMEOUT_MARKED`, `RTR_RETRY_SCHEDULED_LIGHTWEIGHT`, `RTR_BEGIN_DISPATCH_DEFERRED` e `RTR_BEGIN_DISPATCH_START`
+- 2026-04-25: corrigido o build break da matriz pós-rodada WDT-safe isolando com chaves o `case rtrwake::State::SESSION_IN_PROGRESS`, eliminando o cruzamento de inicialização de `sessionReason` sem alterar a semântica da execução
 
 ## Next step
 
@@ -458,6 +475,7 @@ Historico adicional desta rodada:
    - `RTR_BENCH_SECONDARY_WINDOW_MS`
    e registrar os logs `BENCH_WAKE_HOLD_ACTIVE` ou `BENCH_SECONDARY_WINDOW_OVERRIDE`
 5. Confirmar que a coleira permanece acordada por wake lock e não entra em `deep sleep` antes do término ou timeout da sessão
+6. Rodar nova validação de build da matriz em um ambiente onde o `arduino-cli` consiga concluir o fechamento final do compile, apenas para registrar evidência terminal de `ok` após o fix de escopo
 6. Confirmar no backend:
    - `transport=radio_fence_v2`
    - `transportState=applied`

@@ -4857,7 +4857,7 @@ static bool processPendingWakeSessionStep(uint8_t idx, PendingWakeSession& sessi
             (unsigned)session.core.campaignCount);
         return true;
 
-      case rtrwake::State::SESSION_IN_PROGRESS:
+      case rtrwake::State::SESSION_IN_PROGRESS: {
         if (!session.core.beginDispatchPending || session.core.sessionStarted) break;
         noteWakeLoopStage("begin_dispatch_start", session);
         wakeLoopDiag.lastBeginDispatchAtMs = nowMs;
@@ -4919,6 +4919,7 @@ static bool processPendingWakeSessionStep(uint8_t idx, PendingWakeSession& sessi
                         rtrv1::REASON_SESSION_NOT_STARTED_AFTER_PAGE_ACK));
         }
         return true;
+      }
 
       case rtrwake::State::COMPLETED:
         noteWakeLoopStage("session_completed", session);
