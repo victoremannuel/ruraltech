@@ -271,6 +271,28 @@ Nova rodada aplicada em 2026-04-25 (plano de reflash e validação de proveniên
   - diretório de evidência do dry run: `tools/audit/output/20260425_173958_firmware_flash_validation/`
   - `python3 tools/audit/check_firmware_provenance.py --expected-sha 8f12088ed3184941220170ec7732a870641327d2`: ok
 
+Nova rodada aplicada em 2026-04-25 (endurecimento do helper de proveniência anexo):
+- `tools/audit/flash_and_validate_firmware.py` agora ficou alinhado ao plano cirúrgico anexo com fail-fast e evidência mais auditável:
+  - `run_id` padronizado em `tools/audit/output/<timestamp>_provenance_path_validation/`
+  - grava `head.txt` e `head_short.txt` separados
+  - falha imediatamente quando `HEAD` diverge do commit-alvo, sem mascarar a discrepância de bancada
+  - valida `generated_build_info.h` exigindo full SHA e short SHA separadamente
+  - varre duplicatas de `generated_build_info.h` e salva `generated_build_info_locations.txt`
+  - valida a include chain `build_info.h -> generated_build_info.h -> matriz/coleira`
+  - inspeciona `.bin` com `strings` antes do flash quando há build local
+  - endurece a validação serial exigindo match exato de `gitSha` e `gitShort`
+  - marca passos físicos pulados como `SKIPPED` em vez de `PASS`
+  - gera `validation_report.md` no formato pedido pelo plano, com seções explícitas para header, include chain, runtime, compile/upload e smoke opcional
+- validação local desta rodada:
+  - `python3 -m py_compile tools/audit/flash_and_validate_firmware.py tools/audit/check_firmware_provenance.py tools/audit/generate_build_info.py`: ok
+  - `python3 tools/audit/flash_and_validate_firmware.py --help`: ok
+  - `python3 tools/audit/flash_and_validate_firmware.py --allow-dirty --skip-compile --skip-upload --skip-serial --skip-status --skip-bench`: falha esperada com `HEAD c2ae156ab4fb6a42c9296794dd05a0ce5dce3a46 difere do commit alvo 8f12088ed3184941220170ec7732a870641327d2`
+  - `python3 tools/audit/flash_and_validate_firmware.py --target-commit c2ae156ab4fb6a42c9296794dd05a0ce5dce3a46 --allow-dirty --skip-compile --skip-upload --skip-serial --skip-status --skip-bench`: ok
+  - diretório de evidência local: `tools/audit/output/20260425_182444_provenance_path_validation/`
+- conclusão desta rodada:
+  - o helper agora distingue corretamente `dry-run local` de `validação física`
+  - a próxima interpretação de `RTR_WAKE_HINT_STALE`, `RTR_WAITING_FRESH_UPLINK` ou `SET_FENCE` continua bloqueada até prova física de proveniência no commit `8f12088...`
+
 Nova rodada aplicada em 2026-04-21 (proveniência de firmware / SHA de bancada):
 - criado `firmware/shared/build_info.h` com fallback seguro para metadata de build (`gitSha`, `gitShortSha`, `buildUtc`, `dirty`, `buildSource`)
 - criado gerador local `tools/audit/generate_build_info.py`, que escreve `firmware/shared/generated_build_info.h` a partir do git atual
@@ -530,6 +552,17 @@ Historico adicional desta rodada:
 - 2026-04-25: corrigido o build break da matriz pós-rodada WDT-safe isolando com chaves o `case rtrwake::State::SESSION_IN_PROGRESS`, eliminando o cruzamento de inicialização de `sessionReason` sem alterar a semântica da execução
 
 ## Next step
+
+### Validação física obrigatória da proveniência antes de reabrir o protocolo
+
+1. Mover a workspace real de bancada para o commit `8f12088ed3184941220170ec7732a870641327d2`
+2. Rodar `python3 tools/audit/flash_and_validate_firmware.py --target-commit 8f12088ed3184941220170ec7732a870641327d2 --matrix-port /dev/tty.usbserial-59470049741 --collar-port /dev/tty.usbserial-1420 --allow-dirty`
+3. Confirmar no artefato `validation_report.md`:
+   - `generated_build_info.h` com `8f12088...`
+   - `FW_PROVENANCE role=matrix` com `gitSha=8f12088...` e `gitShort=8f12088`
+   - `FW_PROVENANCE role=collar` com `gitSha=8f12088...` e `gitShort=8f12088`
+   - ausência total de `891dd586`
+4. Só depois dessa prova física voltar a interpretar `RTR_WAKE_HINT_STALE`, `RTR_WAITING_FRESH_UPLINK`, `RTR_FRESH_UPLINK_RECEIVED` e o fluxo `SET_FENCE`
 
 ### Validação da fase wake orchestration assíncrono (próxima rodada de bancada)
 

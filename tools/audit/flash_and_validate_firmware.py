@@ -73,6 +73,17 @@ class ProvenanceObservation:
     line: str = ""
 
 
+@dataclass
+class RuntimeStageResult:
+    status: str
+    provenance_present: bool = False
+    target_sha_match: bool = False
+    target_short_match: bool = False
+    stale_sha_absent: bool = False
+    details: str = ""
+    observation: ProvenanceObservation | None = None
+
+
 def now_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -152,7 +163,8 @@ def validate_workspace(target_commit: str, out_dir: Path) -> tuple[str, str, lis
     head = run_text(["git", "rev-parse", "HEAD"])
     short_head = short7(head)
     ensure_text(out_dir / "git_status.txt", ("\n".join(status_lines) + "\n") if status_lines else "")
-    ensure_text(out_dir / "commit.txt", f"{head}\n{short_head}\n")
+    ensure_text(out_dir / "head.txt", f"{head}\n")
+    ensure_text(out_dir / "head_short.txt", f"{short_head}\n")
     if head != target_commit:
         raise ValidationError(f"HEAD {head} difere do commit alvo {target_commit}")
     return head, short_head, status_lines
@@ -169,11 +181,67 @@ def validate_generated_header(target_commit: str, stale_sha: str, out_dir: Path)
     text = read_text(generated)
     target_short = short7(target_commit)
     snapshot_generated_header(out_dir)
-    if target_commit not in text and target_short not in text:
-        return StageResult("FAIL", "generated_build_info.h nao contem o SHA alvo")
+    if target_commit not in text:
+        return StageResult("FAIL", "generated_build_info.h nao contem o SHA alvo completo")
+    if target_short not in text:
+        return StageResult("FAIL", "generated_build_info.h nao contem o short SHA alvo")
     if stale_sha in text:
         return StageResult("FAIL", f"generated_build_info.h ainda contem SHA stale {stale_sha}")
     return StageResult("PASS", f"SHA alvo presente ({target_short})")
+
+
+def generated_header_flags(out_dir: Path, target_commit: str, stale_sha: str) -> tuple[bool, bool, bool]:
+    snapshot = out_dir / "generated_build_info_snapshot.h"
+    text = read_text(snapshot if snapshot.exists() else ROOT / "firmware" / "shared" / "generated_build_info.h")
+    target_short = short7(target_commit)
+    return (target_commit in text, target_short in text, stale_sha in text)
+
+
+def find_generated_header_locations(out_dir: Path) -> StageResult:
+    ignored_parts = {"graphify-out", ".git", ".venv", "__pycache__", "tools/audit/output"}
+    locations: list[Path] = []
+    for path in ROOT.rglob("generated_build_info.h"):
+        rel = path.relative_to(ROOT)
+        rel_str = rel.as_posix()
+        if any(part in ignored_parts for part in rel.parts):
+            continue
+        if "/build/" in rel_str:
+            continue
+        locations.append(path)
+    locations = sorted(locations)
+    ensure_text(
+        out_dir / "generated_build_info_locations.txt",
+        ("\n".join(path.relative_to(ROOT).as_posix() for path in locations) + "\n") if locations else "",
+    )
+    expected = ROOT / "firmware" / "shared" / "generated_build_info.h"
+    if not locations:
+        return StageResult("FAIL", "nenhum generated_build_info.h encontrado")
+    if expected not in locations:
+        return StageResult("FAIL", "header primario firmware/shared/generated_build_info.h nao encontrado")
+    unexpected = [path.relative_to(ROOT).as_posix() for path in locations if path != expected]
+    if unexpected:
+        return StageResult("PASS", "copias adicionais encontradas: " + ", ".join(unexpected))
+    return StageResult("PASS", "somente o header primario foi encontrado")
+
+
+def validate_include_chain() -> StageResult:
+    build_info = read_text(ROOT / "firmware" / "shared" / "build_info.h")
+    matrix_ino = read_text(ROOT / "gateway-matriz" / "gateway-matriz.ino")
+    matrix_api = read_text(ROOT / "gateway-matriz" / "ApiServer.cpp")
+    collar_ino = read_text(ROOT / "coleira" / "coleira.ino")
+
+    checks = [
+        ('build_info inclui generated_build_info.h', '#include "generated_build_info.h"' in build_info),
+        ('build_info usa fallback apenas com #ifndef', build_info.count("#ifndef RT_BUILD_GIT_SHA") >= 1),
+        ('matriz inclui build_info.h', '../firmware/shared/build_info.h' in matrix_ino),
+        ('coleira inclui build_info.h', '../firmware/shared/build_info.h' in collar_ino),
+        ('matriz usa buildinfo::current()', 'buildinfo::current()' in matrix_ino and 'buildinfo::current()' in matrix_api),
+        ('coleira usa buildinfo::current()', 'buildinfo::current()' in collar_ino),
+    ]
+    missing = [label for label, ok in checks if not ok]
+    if missing:
+        return StageResult("FAIL", "; ".join(missing))
+    return StageResult("PASS", "include chain build_info -> generated_build_info validado em matriz e coleira")
 
 
 def run_host_tests(out_dir: Path) -> tuple[StageResult, list[str]]:
@@ -241,6 +309,51 @@ def has_firmware_artifacts(build_path: Path) -> bool:
     bin_files = list(build_path.rglob("*.bin"))
     elf_files = list(build_path.rglob("*.elf"))
     return bool(bin_files and elf_files)
+
+
+def validate_binary_strings(build_path: Path, target_commit: str, stale_sha: str, out_path: Path) -> StageResult:
+    bin_files = sorted(build_path.rglob("*.bin"))
+    if not bin_files:
+        ensure_text(out_path, "")
+        return StageResult("SKIPPED", f"nenhum .bin encontrado em {build_path}")
+    if shutil.which("strings") is None:
+        ensure_text(out_path, "")
+        return StageResult("SKIPPED", "comando strings indisponivel neste host")
+
+    target_short = short7(target_commit)
+    lines: list[str] = []
+    saw_target_full = False
+    saw_target_short = False
+    saw_stale = False
+    for bin_path in bin_files:
+        result = subprocess.run(
+            ["strings", str(bin_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=False,
+        )
+        lines.append(f"$ strings {bin_path}")
+        for line in result.stdout.splitlines():
+            if target_commit in line or target_short in line or stale_sha in line:
+                lines.append(line)
+            if target_commit in line:
+                saw_target_full = True
+            if target_short in line:
+                saw_target_short = True
+            if stale_sha in line:
+                saw_stale = True
+        lines.append(f"exit_code={result.returncode}")
+    ensure_text(out_path, ("\n".join(lines) + "\n") if lines else "")
+
+    if saw_stale:
+        return StageResult("FAIL", f"binario em {build_path} contem SHA stale {stale_sha}")
+    if saw_target_full and saw_target_short:
+        return StageResult("PASS", f"binario em {build_path} contem SHA alvo completo e curto")
+    if saw_target_full or saw_target_short:
+        return StageResult("PASS", f"binario em {build_path} contem evidencia parcial do SHA alvo")
+    return StageResult("SKIPPED", f"strings nao encontrou SHA alvo em {build_path}; validacao fica a cargo do serial")
 
 
 def compile_target(
@@ -322,7 +435,7 @@ def parse_provenance(log_path: Path, expected_role: str, target_commit: str, sta
             continue
         git_sha = match.group("git_sha")
         git_short = match.group("git_short")
-        if git_sha == target_commit or target_short in {git_short, git_sha[:7]}:
+        if git_sha == target_commit and git_short == target_short:
             return ProvenanceObservation(
                 status="PASS",
                 role=role,
@@ -344,6 +457,31 @@ def parse_provenance(log_path: Path, expected_role: str, target_commit: str, sta
     return ProvenanceObservation(status="FAIL", role=expected_role, line="FW_PROVENANCE nao encontrado")
 
 
+def summarize_runtime(observation: ProvenanceObservation, target_commit: str, stale_sha: str) -> RuntimeStageResult:
+    if observation.status == "SKIPPED":
+        return RuntimeStageResult(status="SKIPPED", details=observation.line, observation=observation)
+    if observation.status == "NOT_RUN":
+        return RuntimeStageResult(status="SKIPPED", details=observation.line, observation=observation)
+
+    target_short = short7(target_commit)
+    line = observation.line or ""
+    provenance_present = "FW_PROVENANCE" in line
+    target_sha_match = observation.git_sha == target_commit
+    target_short_match = observation.git_short == target_short
+    stale_sha_absent = stale_sha not in line and stale_sha != observation.git_sha
+    status = "PASS" if all((provenance_present, target_sha_match, target_short_match, stale_sha_absent)) else "FAIL"
+    details = observation.line or "sem linha observada"
+    return RuntimeStageResult(
+        status=status,
+        provenance_present=provenance_present,
+        target_sha_match=target_sha_match,
+        target_short_match=target_short_match,
+        stale_sha_absent=stale_sha_absent,
+        details=details,
+        observation=observation,
+    )
+
+
 def fetch_status_json(url: str, out_path: Path) -> dict | None:
     try:
         with urllib.request.urlopen(url, timeout=10) as response:
@@ -359,7 +497,7 @@ def fetch_status_json(url: str, out_path: Path) -> dict | None:
 
 def validate_status_payload(payload: dict | None, target_commit: str, stale_sha: str) -> StageResult:
     if payload is None:
-        return StageResult("NOT_RUN", "status indisponivel")
+        return StageResult("SKIPPED", "status indisponivel")
     required = ["firmwareRole", "firmwareVersion", "gitSha", "gitShortSha", "buildUtc", "buildDirty", "buildSource"]
     missing = [key for key in required if key not in payload]
     if missing:
@@ -415,7 +553,7 @@ def validate_bench_logs(matrix_log: Path, collar_log: Path) -> StageResult:
         return StageResult("PASS", "fresh uplink liberou page")
     if collar_page:
         return StageResult("PASS", "coleira recebeu RTR_PAGE")
-    return StageResult("NOT_RUN", "bench sem evidencia suficiente")
+    return StageResult("SKIPPED", "bench sem evidencia suficiente")
 
 
 def run_bench_command(
@@ -454,22 +592,25 @@ def run_bench_command(
     return validate_bench_logs(matrix_log, collar_log)
 
 
-def stage_line(title: str, result: StageResult) -> str:
-    return f"## {title}\n{result.status}\n{result.details}\n"
-
-
 def build_report(
     out_dir: Path,
     target_commit: str,
+    stale_sha: str,
+    head: str,
+    short_head: str,
     dirty_files: list[str],
+    generated_headers: StageResult,
     build_info: StageResult,
+    include_chain: StageResult,
     host_tests: StageResult,
     matrix_compile: StageResult,
     collar_compile: StageResult,
+    matrix_binary: StageResult,
+    collar_binary: StageResult,
     matrix_upload: StageResult,
     collar_upload: StageResult,
-    matrix_runtime: ProvenanceObservation,
-    collar_runtime: ProvenanceObservation,
+    matrix_runtime: RuntimeStageResult,
+    collar_runtime: RuntimeStageResult,
     matrix_status: StageResult,
     collar_status: StageResult,
     bench_result: StageResult,
@@ -477,47 +618,78 @@ def build_report(
     blocking_issues: list[str],
     commands: Iterable[str],
 ) -> None:
+    header_has_full_sha, header_has_short_sha, header_has_stale_sha = generated_header_flags(
+        out_dir,
+        target_commit,
+        stale_sha,
+    )
     report = [
-        "# Firmware Flash Validation Report",
+        "# RuralTech Firmware Provenance Path Validation Report",
         "",
-        "## Target commit",
+        "## Target Commit",
         target_commit,
         "",
-        "## Git status",
-        ("dirty" if dirty_files else "clean"),
+        "## Repository State",
+        f"- HEAD: {head or '-'}",
+        f"- Short HEAD: {short_head or '-'}",
+        "- Dirty files:",
     ]
     if dirty_files:
         report.extend(dirty_files)
+    else:
+        report.append("- none")
     report.extend(
         [
             "",
-            stage_line("Build info validation", build_info),
-            stage_line("Host tests", host_tests),
-            stage_line("Matrix compile", matrix_compile),
-            stage_line("Collar compile", collar_compile),
-            stage_line("Matrix upload", matrix_upload),
-            stage_line("Collar upload", collar_upload),
-            "## Matrix runtime provenance",
-            matrix_runtime.status,
-            f"Observed SHA: {matrix_runtime.git_sha or '-'}",
-            f"Observed build UTC: {matrix_runtime.build_utc or '-'}",
-            f"Observed dirty flag: {matrix_runtime.dirty or '-'}",
-            f"Observed line: {matrix_runtime.line or '-'}",
+            "## Generated Build Info",
+            f"- Header locations audit: {generated_headers.status} ({generated_headers.details or '-'})",
+            f"- Contains target full SHA: {'PASS' if header_has_full_sha else 'FAIL'}",
+            f"- Contains target short SHA: {'PASS' if header_has_short_sha else 'FAIL'}",
+            f"- Contains stale SHA: {'FAIL' if header_has_stale_sha else 'PASS'}",
+            f"- Validation summary: {build_info.status} ({build_info.details or '-'})",
             "",
-            "## Collar runtime provenance",
-            collar_runtime.status,
-            f"Observed SHA: {collar_runtime.git_sha or '-'}",
-            f"Observed build UTC: {collar_runtime.build_utc or '-'}",
-            f"Observed dirty flag: {collar_runtime.dirty or '-'}",
-            f"Observed line: {collar_runtime.line or '-'}",
+            "## Include Chain",
+            f"- build_info.h includes generated metadata: {include_chain.status}",
+            f"- collar uses build_info: {'PASS' if include_chain.status == 'PASS' else 'FAIL'}",
+            f"- matrix uses build_info: {'PASS' if include_chain.status == 'PASS' else 'FAIL'}",
             "",
-            stage_line("Matrix /status validation", matrix_status),
-            stage_line("Collar /status validation", collar_status),
-            stage_line("SET_FENCE wake validation", bench_result),
-            "## Final result",
+            "## Matrix Runtime Provenance",
+            f"- FW_PROVENANCE role=matrix present: {'PASS' if matrix_runtime.provenance_present else matrix_runtime.status}",
+            f"- gitSha target: {'PASS' if matrix_runtime.target_sha_match else matrix_runtime.status}",
+            f"- gitShort target: {'PASS' if matrix_runtime.target_short_match else matrix_runtime.status}",
+            f"- stale SHA absent: {'PASS' if matrix_runtime.stale_sha_absent else matrix_runtime.status}",
+            f"- detail: {matrix_runtime.details or '-'}",
+            "",
+            "## Collar Runtime Provenance",
+            f"- FW_PROVENANCE role=collar present: {'PASS' if collar_runtime.provenance_present else collar_runtime.status}",
+            f"- gitSha target: {'PASS' if collar_runtime.target_sha_match else collar_runtime.status}",
+            f"- gitShort target: {'PASS' if collar_runtime.target_short_match else collar_runtime.status}",
+            f"- stale SHA absent: {'PASS' if collar_runtime.stale_sha_absent else collar_runtime.status}",
+            f"- detail: {collar_runtime.details or '-'}",
+            "",
+            "## Compile and Upload",
+            f"- matrix compile: {matrix_compile.status} ({matrix_compile.details or '-'})",
+            f"- collar compile: {collar_compile.status} ({collar_compile.details or '-'})",
+            f"- matrix binary SHA: {matrix_binary.status} ({matrix_binary.details or '-'})",
+            f"- collar binary SHA: {collar_binary.status} ({collar_binary.details or '-'})",
+            f"- matrix upload: {matrix_upload.status} ({matrix_upload.details or '-'})",
+            f"- collar upload: {collar_upload.status} ({collar_upload.details or '-'})",
+            "",
+            "## Optional /status Validation",
+            f"- matrix /status: {matrix_status.status} ({matrix_status.details or '-'})",
+            f"- collar /status: {collar_status.status} ({collar_status.details or '-'})",
+            "",
+            "## Optional SET_FENCE Smoke",
+            f"- {bench_result.status.lower()}",
+            f"- observed key logs: {bench_result.details or '-'}",
+            "",
+            "## Host Tests",
+            f"- {host_tests.status} ({host_tests.details or '-'})",
+            "",
+            "## Final Result",
             final_result,
             "",
-            "## Blocking issues",
+            "## Blocking Issues",
         ]
     )
     if blocking_issues:
@@ -558,7 +730,7 @@ def main() -> int:
     parser.add_argument("--skip-bench", action="store_true")
     args = parser.parse_args()
 
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_firmware_flash_validation"
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_provenance_path_validation"
     out_dir = Path(args.output_dir) if args.output_dir else ROOT / "tools" / "audit" / "output" / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -566,9 +738,27 @@ def main() -> int:
     blocking_issues: list[str] = []
     matrix_build_path = Path(args.matrix_build_path)
     collar_build_path = Path(args.collar_build_path)
+    head = ""
+    short_head = ""
+    dirty_files: list[str] = []
+    generated_headers_result = StageResult("SKIPPED", "nao executado")
+    build_info_result = StageResult("SKIPPED", "nao executado")
+    include_chain_result = StageResult("SKIPPED", "nao executado")
+    host_tests_result = StageResult("SKIPPED", "nao executado")
+    matrix_compile = StageResult("SKIPPED", "compile pulado")
+    collar_compile = StageResult("SKIPPED", "compile pulado")
+    matrix_binary = StageResult("SKIPPED", "binario nao inspecionado")
+    collar_binary = StageResult("SKIPPED", "binario nao inspecionado")
+    matrix_upload = StageResult("SKIPPED", "upload pulado")
+    collar_upload = StageResult("SKIPPED", "upload pulado")
+    matrix_runtime = RuntimeStageResult(status="SKIPPED", details="serial nao capturado")
+    collar_runtime = RuntimeStageResult(status="SKIPPED", details="serial nao capturado")
+    matrix_status_result = StageResult("SKIPPED", "status pulado")
+    collar_status_result = StageResult("SKIPPED", "status pulado")
+    bench_result = StageResult("SKIPPED", "bench pulado")
 
     try:
-        head, _, dirty_files = validate_workspace(args.target_commit, out_dir)
+        head, short_head, dirty_files = validate_workspace(args.target_commit, out_dir)
         commands_executed.extend([
             "git status --short",
             "git rev-parse HEAD",
@@ -582,9 +772,15 @@ def main() -> int:
         commands_executed.append("python3 tools/audit/generate_build_info.py")
         if gen_result.returncode != 0:
             raise ValidationError("generate_build_info.py falhou")
+        generated_headers_result = find_generated_header_locations(out_dir)
         build_info_result = validate_generated_header(args.target_commit, args.stale_sha, out_dir)
+        include_chain_result = validate_include_chain()
+        if generated_headers_result.status == "FAIL":
+            raise ValidationError(generated_headers_result.details)
         if build_info_result.status != "PASS":
             raise ValidationError(build_info_result.details)
+        if include_chain_result.status != "PASS":
+            raise ValidationError(include_chain_result.details)
 
         host_tests_result, host_test_commands = run_host_tests(out_dir)
         commands_executed.extend(host_test_commands)
@@ -595,8 +791,6 @@ def main() -> int:
         if instrumentation_result.status != "PASS":
             raise ValidationError(instrumentation_result.details)
 
-        matrix_compile = StageResult("NOT_RUN", "compile pulado")
-        collar_compile = StageResult("NOT_RUN", "compile pulado")
         if not args.skip_compile:
             clean_build_paths(matrix_build_path, collar_build_path, out_dir)
             commands_executed.append("arduino-cli cache clean")
@@ -625,9 +819,23 @@ def main() -> int:
             )
             if collar_compile.status != "PASS":
                 raise ValidationError(collar_compile.details)
+            matrix_binary = validate_binary_strings(
+                matrix_build_path,
+                args.target_commit,
+                args.stale_sha,
+                out_dir / "matrix_binary_sha.txt",
+            )
+            collar_binary = validate_binary_strings(
+                collar_build_path,
+                args.target_commit,
+                args.stale_sha,
+                out_dir / "collar_binary_sha.txt",
+            )
+            if matrix_binary.status == "FAIL":
+                raise ValidationError(matrix_binary.details)
+            if collar_binary.status == "FAIL":
+                raise ValidationError(collar_binary.details)
 
-        matrix_upload = StageResult("NOT_RUN", "upload pulado")
-        collar_upload = StageResult("NOT_RUN", "upload pulado")
         if not args.skip_upload:
             if args.skip_compile:
                 raise ValidationError("nao e seguro subir firmware com --skip-compile; remova --skip-upload ou rode compile")
@@ -648,8 +856,6 @@ def main() -> int:
             if collar_upload.status != "PASS":
                 raise ValidationError(collar_upload.details)
 
-        matrix_runtime = ProvenanceObservation(status="NOT_RUN", role="matrix", line="serial nao capturado")
-        collar_runtime = ProvenanceObservation(status="NOT_RUN", role="collar", line="serial nao capturado")
         if not args.skip_serial:
             capture_serial_pair(
                 args.matrix_port,
@@ -662,15 +868,21 @@ def main() -> int:
             commands_executed.append(
                 f"serial capture matrix={args.matrix_port} collar={args.collar_port} duration={args.serial_duration}"
             )
-            matrix_runtime = parse_provenance(out_dir / "matrix_boot_serial.log", "matrix", args.target_commit, args.stale_sha)
-            collar_runtime = parse_provenance(out_dir / "collar_boot_serial.log", "collar", args.target_commit, args.stale_sha)
+            matrix_runtime = summarize_runtime(
+                parse_provenance(out_dir / "matrix_boot_serial.log", "matrix", args.target_commit, args.stale_sha),
+                args.target_commit,
+                args.stale_sha,
+            )
+            collar_runtime = summarize_runtime(
+                parse_provenance(out_dir / "collar_boot_serial.log", "collar", args.target_commit, args.stale_sha),
+                args.target_commit,
+                args.stale_sha,
+            )
             if matrix_runtime.status != "PASS":
-                raise ValidationError(f"proveniencia da matriz invalida: {matrix_runtime.line}")
+                raise ValidationError(f"proveniencia da matriz invalida: {matrix_runtime.details}")
             if collar_runtime.status != "PASS":
-                raise ValidationError(f"proveniencia da coleira invalida: {collar_runtime.line}")
+                raise ValidationError(f"proveniencia da coleira invalida: {collar_runtime.details}")
 
-        matrix_status_result = StageResult("NOT_RUN", "status pulado")
-        collar_status_result = StageResult("NOT_RUN", "status pulado")
         if not args.skip_status and args.matrix_status_url:
             matrix_payload = fetch_status_json(args.matrix_status_url, out_dir / "matrix_status.json")
             matrix_status_result = validate_status_payload(matrix_payload, args.target_commit, args.stale_sha)
@@ -684,7 +896,6 @@ def main() -> int:
             if collar_status_result.status == "FAIL":
                 raise ValidationError(collar_status_result.details)
 
-        bench_result = StageResult("NOT_RUN", "bench pulado")
         if not args.skip_bench and args.bench_command:
             bench_result = run_bench_command(
                 args.bench_command,
@@ -700,12 +911,19 @@ def main() -> int:
 
         build_report(
             out_dir,
+            args.target_commit,
+            args.stale_sha,
             head,
+            short_head,
             dirty_files,
+            generated_headers_result,
             build_info_result,
+            include_chain_result,
             host_tests_result,
             matrix_compile,
             collar_compile,
+            matrix_binary,
+            collar_binary,
             matrix_upload,
             collar_upload,
             matrix_runtime,
@@ -724,18 +942,25 @@ def main() -> int:
         build_report(
             out_dir,
             args.target_commit,
-            git_status_lines(),
-            StageResult("FAIL", "ver relatorio"),
-            StageResult("NOT_RUN", "interrompido"),
-            StageResult("NOT_RUN", "interrompido"),
-            StageResult("NOT_RUN", "interrompido"),
-            StageResult("NOT_RUN", "interrompido"),
-            StageResult("NOT_RUN", "interrompido"),
-            ProvenanceObservation(status="NOT_RUN", role="matrix"),
-            ProvenanceObservation(status="NOT_RUN", role="collar"),
-            StageResult("NOT_RUN", "interrompido"),
-            StageResult("NOT_RUN", "interrompido"),
-            StageResult("NOT_RUN", "interrompido"),
+            args.stale_sha,
+            head,
+            short_head,
+            dirty_files or git_status_lines(),
+            generated_headers_result,
+            build_info_result,
+            include_chain_result,
+            host_tests_result,
+            matrix_compile,
+            collar_compile,
+            matrix_binary,
+            collar_binary,
+            matrix_upload,
+            collar_upload,
+            matrix_runtime,
+            collar_runtime,
+            matrix_status_result,
+            collar_status_result,
+            bench_result,
             "FAIL",
             blocking_issues,
             commands_executed,

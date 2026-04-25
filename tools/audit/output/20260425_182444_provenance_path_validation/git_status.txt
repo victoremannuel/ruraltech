@@ -1,0 +1,4 @@
+M tools/audit/flash_and_validate_firmware.py
+?? tools/audit/__pycache__/check_firmware_provenance.cpython-314.pyc
+?? tools/audit/__pycache__/flash_and_validate_firmware.cpython-314.pyc
+?? tools/audit/__pycache__/generate_build_info.cpython-314.pyc
