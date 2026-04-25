@@ -293,6 +293,29 @@ Nova rodada aplicada em 2026-04-25 (endurecimento do helper de proveniência ane
   - o helper agora distingue corretamente `dry-run local` de `validação física`
   - a próxima interpretação de `RTR_WAKE_HINT_STALE`, `RTR_WAITING_FRESH_UPLINK` ou `SET_FENCE` continua bloqueada até prova física de proveniência no commit `8f12088...`
 
+Nova rodada aplicada em 2026-04-25 (redução progressiva do planner `RPv2` após oversize do envelope seguro):
+- `gateway-matriz/gateway-matriz.ino`:
+  - `buildFenceRpv2Plan()` deixou de depender de busca binária implícita e passou a reduzir explicitamente o candidato de `remainingPoints -> 1` até achar o maior chunk que cabe
+  - cada tentativa agora mede o frame pelo mesmo pipeline real `buildExactSecureWireMetrics(...)`, sem estimativa paralela para a decisão final
+  - novo log `RPV2_PLAN_CANDIDATE_EVAL` registra `fragmentIndex`, `startPointIndex`, `endPointIndex`, `pointCount`, tamanhos internos e `wireLenFinal`
+  - `RPV2_PLAN_CHUNK_REJECT` agora ocorre em cada rejeição intermediária e não encerra o planner enquanto `candidateCount > 1`
+  - falha terminal agora registra `RPV2_PLAN_FAILED_TERMINAL` com `fragmentIndex`, `startPointIndex`, `wireLenFinal` e reason explícito
+  - o `reason` terminal passou a diferenciar `fence_single_point_chunk_too_large` de `no_point_fits_in_frame`
+  - `rpv2ReasonCodeFromLabel(...)` agora mapeia `point_chunk_too_large` e `fence_single_point_chunk_too_large` para reason codes já existentes, sem alterar o protocolo
+- `firmware/tests/rpv2_fence_planner_test.cpp`:
+  - reforçado para provar que um fence de 6 pontos não falha no primeiro reject
+  - novo cenário forçado cobrindo “rejeita maior candidato, reduz e aceita menor candidato”
+  - novo cenário terminal cobrindo single-point oversize com `fence_single_point_chunk_too_large`
+- validação desta rodada:
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rpv2_fence_planner_test.cpp -o /tmp/rpv2_fence_planner_test && /tmp/rpv2_fence_planner_test`: ok
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rpv2_codec_test.cpp -o /tmp/rpv2_codec_test && /tmp/rpv2_codec_test`: ok
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rpv2_crc_test.cpp -o /tmp/rpv2_crc_test && /tmp/rpv2_crc_test`: ok
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rtrv1_stale_wake_hint_test.cpp -o /tmp/rtrv1_stale_wake_hint_test && /tmp/rtrv1_stale_wake_hint_test`: ok
+  - `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz`: inconclusivo neste host, seguindo o padrão histórico de hang/ausência de fechamento confiável
+- conclusão desta rodada:
+  - a matriz agora tem caminho explícito para sair de `6 pontos -> oversize` e continuar reduzindo até um chunk válido
+  - a próxima evidência física esperada passa a ser `RPV2_PLAN_CHUNK_REJECT ...`, seguida de `RPV2_PLAN_CHUNK_FIT`, `RPV2_PLAN_FINAL planReady=1`, `RTR_WAKE_SESSION_CREATED` e `RTR_WAITING_FRESH_UPLINK`
+
 Nova rodada aplicada em 2026-04-21 (proveniência de firmware / SHA de bancada):
 - criado `firmware/shared/build_info.h` com fallback seguro para metadata de build (`gitSha`, `gitShortSha`, `buildUtc`, `dirty`, `buildSource`)
 - criado gerador local `tools/audit/generate_build_info.py`, que escreve `firmware/shared/generated_build_info.h` a partir do git atual
@@ -563,6 +586,19 @@ Historico adicional desta rodada:
    - `FW_PROVENANCE role=collar` com `gitSha=8f12088...` e `gitShort=8f12088`
    - ausência total de `891dd586`
 4. Só depois dessa prova física voltar a interpretar `RTR_WAKE_HINT_STALE`, `RTR_WAITING_FRESH_UPLINK`, `RTR_FRESH_UPLINK_RECEIVED` e o fluxo `SET_FENCE`
+
+### Validação física obrigatória do planner `RPv2` após oversize
+
+1. Regravar a matriz com o patch de redução progressiva do planner
+2. Repetir um `SET_FENCE` de 6 pontos na bancada
+3. Confirmar na serial da matriz a sequência:
+   - `RPV2_PLAN_CANDIDATE_EVAL`
+   - ao menos um `RPV2_PLAN_CHUNK_REJECT`
+   - `RPV2_PLAN_CHUNK_FIT`
+   - `RPV2_PLAN_FINAL ... planReady=1`
+   - `RTR_WAKE_SESSION_CREATED`
+   - `RTR_WAITING_FRESH_UPLINK`
+4. Confirmar que não volta a ficar preso apenas em `QUEUE_POLL_SKIPPED reason=simple_command_active` sem `planReady=1` nem falha terminal publicada
 
 ### Validação da fase wake orchestration assíncrono (próxima rodada de bancada)
 
