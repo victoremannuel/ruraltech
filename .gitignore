@@ -1,3 +1,5 @@
+# ==== CODEX ====
+
 # Prerequisites
 *.d
 
@@ -66,3 +68,5 @@ graphify-out/cost.json         # local token tracking, not useful to share
 graphify-out/
 graphify-out
 graphify-out/**
+
+.gitignore

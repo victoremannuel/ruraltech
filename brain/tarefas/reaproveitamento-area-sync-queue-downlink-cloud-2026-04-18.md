@@ -133,7 +133,7 @@ Estado de partida consolidado nesta rodada:
 
 **Atualizado: 2026-04-25**
 
-Rodada de implementação RPv2 concluída, `RTRv1 paging + wake lock` aplicada e correção do wake orchestration assíncrono da matriz concluída localmente. Validação host e builds aprovados; validação física de bancada segue pendente.
+Rodada de implementação RPv2 concluída, `RTRv1 paging + wake lock` aplicada e correção do wake orchestration assíncrono da matriz concluída localmente. Nesta sessão, o caminho real de planner/lifecycle do `SET_FENCE` na matriz também foi endurecido com logs obrigatórios de entrada/revisão, classificação explícita de oversize redutível vs erro terminal e atraso do `COMMAND_MARK_DISPATCHING_BEGIN` até o primeiro `RTR_PAGE_TX_OK`. Validação host aprovada; validação física de bancada segue pendente e o `arduino-cli compile` da matriz continua inconclusivo neste host por histórico de hang silencioso.
 
 Nova rodada aplicada em 2026-04-21:
 - `loadNextQueuedCommand()` agora trata corpo semanticamente vazio como vazio real, inclusive ruído equivalente a `null`, sem cair em `QUEUE_FETCH_HTTP_OK_UNEXPECTED_SHAPE`
@@ -315,6 +315,26 @@ Nova rodada aplicada em 2026-04-25 (redução progressiva do planner `RPv2` apó
 - conclusão desta rodada:
   - a matriz agora tem caminho explícito para sair de `6 pontos -> oversize` e continuar reduzindo até um chunk válido
   - a próxima evidência física esperada passa a ser `RPV2_PLAN_CHUNK_REJECT ...`, seguida de `RPV2_PLAN_CHUNK_FIT`, `RPV2_PLAN_FINAL planReady=1`, `RTR_WAKE_SESSION_CREATED` e `RTR_WAITING_FRESH_UPLINK`
+
+Nova rodada aplicada em 2026-04-25 (correção do caminho real `SET_FENCE` para planner/lifecycle observável):
+- `gateway-matriz/gateway-matriz.ino`:
+  - `buildFenceRpv2Plan()` agora emite `RPV2_PLAN_ENTER` com `source=cloud_queue` no caminho real de wake session e registra `RPV2_PLANNER_REV rev=progressive_reduce_real_path_v1 gitShort=<sha>`
+  - a avaliação de cada candidato passou a separar explicitamente `measurementOk`, `fitsLimit`, oversize redutível e erro terminal via helper compartilhado `firmware/shared/radio_proto_v2_planner_support.h`
+  - `RPV2_PLAN_CANDIDATE_EVAL` passou a registrar os campos do contrato físico desta fase (`plainFrameSize`, `secureWireSize`, `wireLenFinal`, `measurementOk`, `fitsLimit`)
+  - oversize com `candidateCount > 1` agora permanece obrigatoriamente redutível; oversize de `candidateCount == 1` fecha com `fence_single_point_chunk_too_large`; falhas de encode/medição passam a fechar como `codec_or_buffer_error`
+  - `COMMAND_MARK_DISPATCHING_BEGIN` deixou de ocorrer no aceite da fila para `SET_FENCE` e agora só é emitido quando a matriz realmente transmite `RTR_PAGE`, evitando marcar despacho antes da fase real de rádio
+  - `rpv2ReasonCodeFromLabel(...)` passou a mapear `codec_or_buffer_error` sem introduzir drift de protocolo
+- `firmware/tests/rpv2_fence_planner_test.cpp`:
+  - ganhou cobertura explícita do helper compartilhado para os três casos críticos: oversize redutível, oversize terminal em single-point e erro terminal de encode/medição
+- validação local desta rodada:
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rpv2_fence_planner_test.cpp -o /tmp/rpv2_fence_planner_test && /tmp/rpv2_fence_planner_test`: ok
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rtrv1_stale_wake_hint_test.cpp -o /tmp/rtrv1_stale_wake_hint_test && /tmp/rtrv1_stale_wake_hint_test`: ok
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rtrv1_terminal_failure_status_test.cpp -o /tmp/rtrv1_terminal_failure_status_test && /tmp/rtrv1_terminal_failure_status_test`: ok
+  - `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz`: inconclusivo neste host; processo voltou ao padrão histórico de hang sem saída útil e foi interrompido manualmente
+- conclusão desta rodada:
+  - o caminho real `cloud_queue -> prepareFenceWakeSession() -> buildFenceRpv2Plan()` agora deixa prova inequívoca de entrada do planner e do motivo de cada rejeição/terminalidade
+  - o risco de repetir o bench ambíguo `reject único -> COMMAND_MARK_DISPATCHING_BEGIN -> simple_command_active` caiu, porque o marcador de dispatch foi empurrado para o primeiro `RTR_PAGE_TX_OK`
+  - a próxima prova obrigatória de bancada passa a ser a sequência `RPV2_PLAN_ENTER -> RPV2_PLANNER_REV -> RPV2_PLAN_CANDIDATE_EVAL -> RPV2_PLAN_CHUNK_REJECT -> RPV2_PLAN_CHUNK_FIT -> RPV2_PLAN_FINAL planReady=1 -> RTR_WAKE_SESSION_CREATED`
 
 Nova rodada aplicada em 2026-04-21 (proveniência de firmware / SHA de bancada):
 - criado `firmware/shared/build_info.h` com fallback seguro para metadata de build (`gitSha`, `gitShortSha`, `buildUtc`, `dirty`, `buildSource`)
@@ -592,6 +612,8 @@ Historico adicional desta rodada:
 1. Regravar a matriz com o patch de redução progressiva do planner
 2. Repetir um `SET_FENCE` de 6 pontos na bancada
 3. Confirmar na serial da matriz a sequência:
+   - `RPV2_PLAN_ENTER`
+   - `RPV2_PLANNER_REV`
    - `RPV2_PLAN_CANDIDATE_EVAL`
    - ao menos um `RPV2_PLAN_CHUNK_REJECT`
    - `RPV2_PLAN_CHUNK_FIT`

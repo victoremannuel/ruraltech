@@ -51,6 +51,7 @@
 #include "../firmware/shared/radio_proto_v2_codec.h"
 #include "../firmware/shared/radio_proto_v2_crc.h"
 #include "../firmware/shared/radio_proto_v2_id.h"
+#include "../firmware/shared/radio_proto_v2_planner_support.h"
 #include "../firmware/shared/radio_proto_v2_reason_codes.h"
 
 LoRaGateway lora;
@@ -3056,6 +3057,7 @@ static uint16_t rpv2ReasonCodeFromLabel(const char* reason) {
   if (!reason || !reason[0]) return rpv2::REASON_NONE;
   if (strcmp(reason, "no_point_fits_in_frame") == 0) return rpv2::REASON_NO_POINT_FITS_IN_FRAME;
   if (strcmp(reason, "point_chunk_too_large") == 0) return rpv2::REASON_NO_POINT_FITS_IN_FRAME;
+  if (strcmp(reason, "codec_or_buffer_error") == 0) return rpv2::REASON_NO_POINT_FITS_IN_FRAME;
   if (strcmp(reason, "fence_single_point_chunk_too_large") == 0) return rpv2::REASON_SECURE_ENVELOPE_TOO_LARGE;
   if (strcmp(reason, "secure_envelope_too_large") == 0) return rpv2::REASON_SECURE_ENVELOPE_TOO_LARGE;
   if (strcmp(reason, "begin_timeout") == 0) return rpv2::REASON_BEGIN_TIMEOUT;
@@ -3097,6 +3099,14 @@ static void publishFenceTransportState(
     bool ok = false) {
   setFenceTargetTransportState(deviceId, transportState, terminal, ok, reason, reasonCode);
   publishSimpleCommandResult(transportState, reason);
+}
+
+static void markFenceCommandDispatchingBegin() {
+  if (!activeSimpleCommand.active) return;
+  if (strcmp(activeSimpleCommand.command, "SET_FENCE") != 0) return;
+  AS_MATRIX_COMMAND_MARK_DISPATCHING_BEGIN(
+      activeSimpleCommand.commandId,
+      activeSimpleCommand.command);
 }
 
 static void logRpv2StageTransition(
@@ -3559,6 +3569,7 @@ static bool trySendRtrPage(
       (unsigned long long)session.core.pageSessionId,
       (unsigned long)session.core.pageMessageId,
       (unsigned)session.core.campaignCount);
+  markFenceCommandDispatchingBegin();
   return true;
 }
 
@@ -3826,6 +3837,7 @@ static bool sendRtrPageForCommand(
       "rtr_page_sent",
       nullptr,
       nullptr);
+  markFenceCommandDispatchingBegin();
   publishFenceTransportState(deviceId, "awaiting_page_ack");
   LOGI(
       "RTR_PAGE_TX_OK deviceId=%lu commandId=%s sessionId=%llu messageId=%lu",
@@ -3972,6 +3984,7 @@ static bool buildFenceRpv2Plan(
     uint64_t radioCommandId,
     uint32_t sessionNonce,
     const char* commandId,
+    const char* source,
     Rpv2FenceChunkPlan* plan,
     const char** reason) {
   if (!plan) {
@@ -3996,6 +4009,17 @@ static bool buildFenceRpv2Plan(
     plan->points[i].lonE7 = coordinateToE7(lon);
   }
   plan->fenceCrc32 = rpv2::crc32Fence(plan->points, totalPoints);
+  const buildinfo::BuildInfo build = buildinfo::current();
+  LOGI(
+      "RPV2_PLAN_ENTER deviceId=%lu commandId=%s totalPoints=%u maxFrame=%u source=%s",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned)totalPoints,
+      (unsigned)rpv2::MAX_LORA_FRAME_BYTES,
+      source && source[0] ? source : "unknown");
+  LOGI(
+      "RPV2_PLANNER_REV rev=progressive_reduce_real_path_v1 gitShort=%s",
+      build.gitShortSha);
   uint16_t minChunkPoints = 0;
   uint16_t maxChunkPoints = 0;
   uint16_t minSecureWireSize = 0;
@@ -4008,7 +4032,7 @@ static bool buildFenceRpv2Plan(
     uint16_t best = 0;
     uint16_t bestPlainSize = 0;
     uint16_t bestSecureSize = 0;
-    const char* terminalReason = "point_chunk_too_large";
+    const char* terminalReason = "codec_or_buffer_error";
     uint16_t terminalWireLen = 0;
 
     while (candidateCount >= 1) {
@@ -4040,17 +4064,24 @@ static bool buildFenceRpv2Plan(
       tx.timestamp = 0;
       memset(tx.nonce, 0xA5, sizeof(tx.nonce));
       SecureWireMetrics metrics;
+      const bool encodeOk = plainSize > 0 && plainSize <= sizeof(tx.payload);
       bool metricsOk = false;
-      if (plainSize > 0 && plainSize <= sizeof(tx.payload)) {
+      if (encodeOk) {
         tx.payloadLen = static_cast<uint8_t>(plainSize);
         memcpy(tx.payload, payload, plainSize);
         metricsOk = buildExactSecureWireMetrics(tx, &metrics, nullptr, 0);
       } else {
         metrics.reason = "points_encode_failed";
       }
-      const bool fit = metricsOk && metrics.wireLenFinal <= rpv2::MAX_LORA_FRAME_BYTES;
+      const rpv2plan::CandidateDecision decision = rpv2plan::classifyCandidate(
+          encodeOk,
+          metricsOk,
+          metrics.wireLenFinal,
+          rpv2::MAX_LORA_FRAME_BYTES,
+          metrics.reason,
+          candidateCount);
       LOGI(
-          "RPV2_PLAN_CANDIDATE_EVAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u endPointIndex=%u pointCount=%u plainPayloadLen=%u packedLen=%u cipherPayloadLen=%u wireLenFinal=%u limit=128 fit=%u",
+          "RPV2_PLAN_CANDIDATE_EVAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u endPointIndex=%u pointCount=%u plainFrameSize=%u secureWireSize=%u wireLenFinal=%u limit=%u measurementOk=%u fitsLimit=%u",
           (unsigned long)deviceId,
           commandId && commandId[0] ? commandId : "-",
           (unsigned long long)radioCommandId,
@@ -4059,41 +4090,43 @@ static bool buildFenceRpv2Plan(
           (unsigned)(start + candidateCount - 1),
           (unsigned)candidateCount,
           (unsigned)plainSize,
-          (unsigned)metrics.packedLen,
-          (unsigned)metrics.cipherPayloadLen,
           (unsigned)metrics.wireLenFinal,
-          fit ? 1U : 0U);
-      if (fit) {
+          (unsigned)metrics.wireLenFinal,
+          (unsigned)rpv2::MAX_LORA_FRAME_BYTES,
+          decision.measurementOk ? 1U : 0U,
+          decision.fitsLimit ? 1U : 0U);
+      if (decision.fitsLimit) {
         best = candidateCount;
         bestPlainSize = static_cast<uint16_t>(plainSize);
         bestSecureSize = metrics.wireLenFinal;
         break;
       }
-      const char* rejectReason = metrics.reason ? metrics.reason : "secure_envelope_too_large";
+      const char* rejectReason = decision.reason ? decision.reason : "codec_or_buffer_error";
       terminalWireLen = metrics.wireLenFinal;
-      LOGW(
-          "RPV2_PLAN_CHUNK_REJECT deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u reason=%s wireLenFinal=%u limit=128",
-          (unsigned long)deviceId,
-          commandId && commandId[0] ? commandId : "-",
-          (unsigned long long)radioCommandId,
-          (unsigned)(plan->totalChunks + 1),
-          (unsigned)start,
-          (unsigned)candidateCount,
-          rejectReason,
-          (unsigned)metrics.wireLenFinal);
-      if (candidateCount == 1) {
-        terminalReason =
-            strcmp(rejectReason, "secure_envelope_too_large") == 0
-                ? "fence_single_point_chunk_too_large"
-                : "no_point_fits_in_frame";
-        break;
+      if (decision.reducibleOversize || decision.terminalSinglePointOversize) {
+        LOGW(
+            "RPV2_PLAN_CHUNK_REJECT deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u reason=%s wireLenFinal=%u limit=%u",
+            (unsigned long)deviceId,
+            commandId && commandId[0] ? commandId : "-",
+            (unsigned long long)radioCommandId,
+            (unsigned)(plan->totalChunks + 1),
+            (unsigned)start,
+            (unsigned)candidateCount,
+            decision.terminalSinglePointOversize ? "secure_envelope_too_large" : rejectReason,
+            (unsigned)metrics.wireLenFinal,
+            (unsigned)rpv2::MAX_LORA_FRAME_BYTES);
       }
-      candidateCount--;
+      if (decision.reducibleOversize) {
+        candidateCount--;
+        continue;
+      }
+      terminalReason = rejectReason;
+      break;
     }
 
     if (best == 0) {
       LOGW(
-          "RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u reason=%s wireLenFinal=%u limit=128",
+          "RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u reason=%s wireLenFinal=%u limit=%u",
           (unsigned long)deviceId,
           commandId && commandId[0] ? commandId : "-",
           (unsigned long long)radioCommandId,
@@ -4101,16 +4134,14 @@ static bool buildFenceRpv2Plan(
           (unsigned)start,
           1U,
           terminalReason,
-          (unsigned)terminalWireLen);
+          (unsigned)terminalWireLen,
+          (unsigned)rpv2::MAX_LORA_FRAME_BYTES);
       LOGW(
-          "RPV2_PLAN_FINAL deviceId=%lu commandId=%s radioCommandId=%llu totalPoints=%u totalChunks=%u minChunkPoints=%u maxChunkPoints=%u minWireLen=%u maxWireLen=%u planReady=0 failStartPoint=%u reason=%s",
+          "RPV2_PLAN_FINAL deviceId=%lu commandId=%s planReady=0 chunkCount=%u totalPoints=%u minWireLen=%u maxWireLen=%u failStartPoint=%u reason=%s",
           (unsigned long)deviceId,
           commandId && commandId[0] ? commandId : "-",
-          (unsigned long long)radioCommandId,
-          (unsigned)totalPoints,
           (unsigned)plan->totalChunks,
-          (unsigned)minChunkPoints,
-          (unsigned)maxChunkPoints,
+          (unsigned)totalPoints,
           (unsigned)minSecureWireSize,
           (unsigned)maxSecureWireSize,
           (unsigned)start,
@@ -4127,7 +4158,7 @@ static bool buildFenceRpv2Plan(
     item.plainFrameSize = bestPlainSize;
     item.secureWireSize = bestSecureSize;
     LOGI(
-        "RPV2_PLAN_CHUNK_FIT deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u plainPayloadLen=%u wireLenFinal=%u limit=128",
+        "RPV2_PLAN_CHUNK_FIT deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u plainFrameSize=%u wireLenFinal=%u limit=%u",
         (unsigned long)deviceId,
         commandId && commandId[0] ? commandId : "-",
         (unsigned long long)radioCommandId,
@@ -4135,7 +4166,8 @@ static bool buildFenceRpv2Plan(
         (unsigned)item.startPointIndex,
         (unsigned)item.pointCount,
         (unsigned)item.plainFrameSize,
-        (unsigned)item.secureWireSize);
+        (unsigned)item.secureWireSize,
+        (unsigned)rpv2::MAX_LORA_FRAME_BYTES);
     plan->totalChunks++;
     if (minChunkPoints == 0 || item.pointCount < minChunkPoints) {
       minChunkPoints = item.pointCount;
@@ -4153,14 +4185,11 @@ static bool buildFenceRpv2Plan(
   }
 
   LOGI(
-      "RPV2_PLAN_FINAL deviceId=%lu commandId=%s radioCommandId=%llu totalPoints=%u totalChunks=%u minChunkPoints=%u maxChunkPoints=%u minWireLen=%u maxWireLen=%u planReady=1",
+      "RPV2_PLAN_FINAL deviceId=%lu commandId=%s planReady=1 chunkCount=%u totalPoints=%u minWireLen=%u maxWireLen=%u",
       (unsigned long)deviceId,
       commandId && commandId[0] ? commandId : "-",
-      (unsigned long long)radioCommandId,
-      (unsigned)plan->totalPoints,
       (unsigned)plan->totalChunks,
-      (unsigned)minChunkPoints,
-      (unsigned)maxChunkPoints,
+      (unsigned)plan->totalPoints,
       (unsigned)minSecureWireSize,
       (unsigned)maxSecureWireSize);
   return true;
@@ -4566,6 +4595,7 @@ static bool sendFenceCommandRpv2Session(
           radioCommandId,
           sessionNonce,
           commandId,
+          "direct_session",
           &plan,
           reason)) {
     LOGW(
@@ -4627,6 +4657,7 @@ static bool prepareFenceWakeSession(
           radioCommandId,
           sessionNonce,
           commandId,
+          "cloud_queue",
           &plan,
           reason)) {
     LOGW(
@@ -6170,7 +6201,9 @@ static bool dispatchQueuedSimpleCommand(
   }
   activeSimpleCommand.lastAttemptAtMs = millis();
   activeSimpleCommand.retryCount = 1;
-  AS_MATRIX_COMMAND_MARK_DISPATCHING_BEGIN(commandId.c_str(), command);
+  if (strcmp(command, "SET_FENCE") != 0) {
+    AS_MATRIX_COMMAND_MARK_DISPATCHING_BEGIN(commandId.c_str(), command);
+  }
   publishSimpleCommandResult(
       strcmp(command, "SET_FENCE") == 0 ? "paging_waiting_uplink" : "dispatching",
       nullptr);

@@ -3,6 +3,7 @@
 
 #include "../shared/radio_proto_v2_codec.h"
 #include "../shared/radio_proto_v2_crc.h"
+#include "../shared/radio_proto_v2_planner_support.h"
 
 namespace {
 enum class MsgType : uint8_t {
@@ -152,6 +153,54 @@ static ProgressivePlanResult buildAlwaysOversizePlan(uint8_t totalPoints) {
 }  // namespace
 
 int main() {
+  {
+    const rpv2plan::CandidateDecision reducible = rpv2plan::classifyCandidate(
+        true,
+        true,
+        134,
+        128,
+        "secure_envelope_too_large",
+        6);
+    assert(reducible.measurementOk);
+    assert(!reducible.fitsLimit);
+    assert(reducible.reducibleOversize);
+    assert(!reducible.terminalCodecError);
+    assert(!reducible.terminalSinglePointOversize);
+    assert(strcmp(reducible.reason, "secure_envelope_too_large") == 0);
+  }
+
+  {
+    const rpv2plan::CandidateDecision terminalSinglePoint = rpv2plan::classifyCandidate(
+        true,
+        true,
+        134,
+        128,
+        "secure_envelope_too_large",
+        1);
+    assert(terminalSinglePoint.measurementOk);
+    assert(!terminalSinglePoint.fitsLimit);
+    assert(!terminalSinglePoint.reducibleOversize);
+    assert(!terminalSinglePoint.terminalCodecError);
+    assert(terminalSinglePoint.terminalSinglePointOversize);
+    assert(strcmp(terminalSinglePoint.reason, "fence_single_point_chunk_too_large") == 0);
+  }
+
+  {
+    const rpv2plan::CandidateDecision codecFailure = rpv2plan::classifyCandidate(
+        false,
+        false,
+        0,
+        128,
+        "points_encode_failed",
+        3);
+    assert(!codecFailure.measurementOk);
+    assert(!codecFailure.fitsLimit);
+    assert(!codecFailure.reducibleOversize);
+    assert(codecFailure.terminalCodecError);
+    assert(!codecFailure.terminalSinglePointOversize);
+    assert(strcmp(codecFailure.reason, "points_encode_failed") == 0);
+  }
+
   rpv2::Header header{};
   header.protocolVersion = rpv2::PROTOCOL_VERSION;
   header.flags = rpv2::FLAG_ACK_REQUIRED | rpv2::FLAG_FROM_MATRIX;
