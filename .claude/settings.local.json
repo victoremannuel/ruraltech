@@ -48,7 +48,8 @@
       "Bash(echo \"EXIT: $?\")",
       "Bash(curl -s 'https://nhoewnfuyjbtpklrotbf.supabase.co/rest/v1/collars?select=id,binding_ready,supports_scoped_lora,property_scope_id,property_id&id=eq.3222380545' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ob2V3bmZ1eWpidHBrbHJvdGJmIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTE3MTk3MywiZXhwIjoyMDkwNzQ3OTczfQ.uQixcWFTH_eSrG-PJEQ7ali3phfGb6Cy-8dkcDnQiO4' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ob2V3bmZ1eWpidHBrbHJvdGJmIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTE3MTk3MywiZXhwIjoyMDkwNzQ3OTczfQ.uQixcWFTH_eSrG-PJEQ7ali3phfGb6Cy-8dkcDnQiO4')",
       "Bash(.venv/bin/python3 tools/audit/_patch_collar.py)",
-      "Bash(rtk ls *)"
+      "Bash(rtk ls *)",
+      "Bash(/Users/victoremannuel/ruraltech/.venv/bin/python3:*)"
     ]
   }
 }
