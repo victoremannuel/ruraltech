@@ -255,6 +255,12 @@ static uint64_t parseScopeIdHex(const char* raw) {
 
 static void clearRtrSessionMode(const char* reason) {
   if (!rtrSessionMode_.active) return;
+  if (reason && strcmp(reason, "idle_timeout") == 0) {
+    LOGW(
+        "RTR_PRESTART_TIMEOUT sessionId=%llu reason=%s",
+        (unsigned long long)rtrSessionMode_.sessionId,
+        reason);
+  }
   LOGI(
       "RTR_SESSION_MODE_EXIT sessionId=%llu reason=%s",
       (unsigned long long)rtrSessionMode_.sessionId,
@@ -3617,6 +3623,10 @@ void loop() {
   }
 
   if (isRtrSessionModeActive()) {
+    LOGI(
+        "RTR_PRESTART_HOLD sessionId=%llu remainingMs=%lu",
+        (unsigned long long)rtrSessionMode_.sessionId,
+        (unsigned long)(rtrSessionMode_.wakeLockUntilMs - millis()));
     LOGI(
         "RTR_SESSION_WAKE_LOCK_HOLD sessionId=%llu remainingMs=%lu",
         (unsigned long long)rtrSessionMode_.sessionId,

@@ -23,10 +23,11 @@ int main() {
   session.deviceId = 1234;
   session.pageSessionId = 0xAA55ULL;
   session.pageMessageId = 99;
-  session.pageSent = true;
-  session.lastPageSentAtMs = 1000;
-  session.pageAckDeadlineAtMs = 2000;
-  assert(!rtrwake::isLatePageAck(session, 1999));
-  assert(rtrwake::isLatePageAck(session, 2001));
+  rtrwake::markPageAttempt(&session, 1000, 1000);
+  session.inFlightPage.sessionId = 0xAA55ULL;
+  session.inFlightPage.messageId = 99;
+  session.inFlightPage.hardDeadlineAtMs = 2900;
+  assert(!rtrwake::isLatePageAck(session, 2899));
+  assert(rtrwake::isLatePageAck(session, 2901));
   return 0;
 }

@@ -10,11 +10,12 @@ enum class State : uint8_t {
   PAGING_WAITING_UPLINK = 1,
   PAGING_READY_TO_SEND = 2,
   PAGING_AWAITING_ACK = 3,
-  PAGE_ACKED = 4,
-  SESSION_START_READY = 5,
-  SESSION_IN_PROGRESS = 6,
-  COMPLETED = 7,
-  FAILED = 8,
+  PAGING_RETRY_GRACE = 4,
+  PAGE_ACKED = 5,
+  SESSION_START_READY = 6,
+  SESSION_IN_PROGRESS = 7,
+  COMPLETED = 8,
+  FAILED = 9,
 };
 
 struct Presence {
@@ -25,6 +26,28 @@ struct Presence {
 };
 
 struct SessionCore {
+  struct InFlightPageAttempt {
+    bool valid = false;
+    bool pageSent = false;
+    bool ackAccepted = false;
+    bool expired = false;
+    bool cancelledByRetry = false;
+    uint64_t sessionId = 0;
+    uint32_t messageId = 0;
+    uint8_t campaignCount = 0;
+    uint32_t sentAtMs = 0;
+    uint32_t softDeadlineAtMs = 0;
+    uint32_t hardDeadlineAtMs = 0;
+  };
+
+  struct ScheduledRetry {
+    bool pending = false;
+    uint32_t retryAtMs = 0;
+    uint8_t nextCampaignCount = 0;
+    uint32_t graceMs = 0;
+    const char* reason = nullptr;
+  };
+
   bool active = false;
   State state = State::IDLE;
   uint32_t deviceId = 0;
@@ -44,6 +67,8 @@ struct SessionCore {
   bool cloudTxDeferred = false;
   bool sessionStarted = false;
   bool finished = false;
+  InFlightPageAttempt inFlightPage{};
+  ScheduledRetry scheduledRetry{};
 };
 
 struct FastPathMetric {
@@ -60,6 +85,7 @@ static inline const char* stateLabel(State state) {
     case State::PAGING_WAITING_UPLINK: return "paging_waiting_uplink";
     case State::PAGING_READY_TO_SEND: return "paging_ready_to_send";
     case State::PAGING_AWAITING_ACK: return "paging_awaiting_ack";
+    case State::PAGING_RETRY_GRACE: return "paging_retry_grace";
     case State::PAGE_ACKED: return "page_acked";
     case State::SESSION_START_READY: return "session_start_ready";
     case State::SESSION_IN_PROGRESS: return "session_in_progress";
@@ -122,6 +148,19 @@ static inline void markPageAttempt(
   session->pageAcked = false;
   session->lastPageSentAtMs = nowMs;
   session->pageAckDeadlineAtMs = nowMs + ackTimeoutMs;
+  session->scheduledRetry = SessionCore::ScheduledRetry{};
+  session->inFlightPage.valid = true;
+  session->inFlightPage.pageSent = true;
+  session->inFlightPage.ackAccepted = false;
+  session->inFlightPage.expired = false;
+  session->inFlightPage.cancelledByRetry = false;
+  session->inFlightPage.sessionId = session->pageSessionId;
+  session->inFlightPage.messageId = session->pageMessageId;
+  session->inFlightPage.campaignCount = session->campaignCount;
+  session->inFlightPage.sentAtMs = nowMs;
+  session->inFlightPage.softDeadlineAtMs = nowMs + ackTimeoutMs;
+  session->inFlightPage.hardDeadlineAtMs =
+      session->inFlightPage.softDeadlineAtMs + rtrv1::PAGE_RETRY_GRACE_MS;
 }
 
 static inline bool pageAckMatches(
@@ -131,8 +170,11 @@ static inline bool pageAckMatches(
     uint32_t pageMessageId) {
   return session.active &&
       session.deviceId == deviceId &&
-      session.pageSessionId == pageSessionId &&
-      session.pageMessageId == pageMessageId;
+      ((session.inFlightPage.valid &&
+        session.inFlightPage.sessionId == pageSessionId &&
+        session.inFlightPage.messageId == pageMessageId) ||
+       (session.pageSessionId == pageSessionId &&
+        session.pageMessageId == pageMessageId));
 }
 
 static inline void markPageAcked(SessionCore* session) {
@@ -140,18 +182,34 @@ static inline void markPageAcked(SessionCore* session) {
   session->pageAcked = true;
   session->pageSent = false;
   session->pageAckDeadlineAtMs = 0;
+  session->inFlightPage.ackAccepted = true;
+  session->scheduledRetry = SessionCore::ScheduledRetry{};
   session->state = State::PAGE_ACKED;
 }
 
-static inline bool pageAckTimedOut(
+static inline bool inFlightAttemptSoftTimedOut(
     const SessionCore& session,
     uint32_t nowMs) {
   return session.active &&
       session.state == State::PAGING_AWAITING_ACK &&
-      session.pageSent &&
-      session.lastPageSentAtMs != 0 &&
-      session.pageAckDeadlineAtMs != 0 &&
-      (int32_t)(nowMs - session.pageAckDeadlineAtMs) >= 0;
+      session.inFlightPage.valid &&
+      session.inFlightPage.pageSent &&
+      session.inFlightPage.softDeadlineAtMs != 0 &&
+      !session.scheduledRetry.pending &&
+      (int32_t)(nowMs - session.inFlightPage.softDeadlineAtMs) >= 0;
+}
+
+static inline bool inFlightAttemptHardTimedOut(
+    const SessionCore& session,
+    uint32_t nowMs) {
+  return session.active &&
+      (session.state == State::PAGING_AWAITING_ACK ||
+       session.state == State::PAGING_RETRY_GRACE) &&
+      session.inFlightPage.valid &&
+      session.inFlightPage.pageSent &&
+      session.inFlightPage.hardDeadlineAtMs != 0 &&
+      !session.inFlightPage.ackAccepted &&
+      (int32_t)(nowMs - session.inFlightPage.hardDeadlineAtMs) >= 0;
 }
 
 static inline bool awaitingAckWithoutPageSent(const SessionCore& session) {
@@ -162,9 +220,11 @@ static inline bool awaitingAckWithoutPageSent(const SessionCore& session) {
 
 static inline bool canConsumePageAckFastPath(const SessionCore& session) {
   return session.active &&
-      session.state == State::PAGING_AWAITING_ACK &&
-      session.pageSent &&
-      session.lastPageSentAtMs != 0;
+      (session.state == State::PAGING_AWAITING_ACK ||
+       session.state == State::PAGING_RETRY_GRACE) &&
+      session.inFlightPage.valid &&
+      session.inFlightPage.pageSent &&
+      session.inFlightPage.sentAtMs != 0;
 }
 
 static inline bool isLatePageAck(
@@ -176,8 +236,9 @@ static inline bool isLatePageAck(
              session.pageSessionId,
              session.pageMessageId) &&
       session.active &&
-      session.pageAckDeadlineAtMs != 0 &&
-      (int32_t)(nowMs - session.pageAckDeadlineAtMs) > 0;
+      session.inFlightPage.valid &&
+      session.inFlightPage.hardDeadlineAtMs != 0 &&
+      (int32_t)(nowMs - session.inFlightPage.hardDeadlineAtMs) > 0;
 }
 
 static inline bool canRetryAfterTimeout(const SessionCore& session) {
@@ -189,12 +250,35 @@ static inline void scheduleRetryReadyToSend(
     uint32_t nowMs,
     uint32_t graceMs) {
   if (!session) return;
-  session->pageSent = false;
   session->pageAcked = false;
-  session->pageAckDeadlineAtMs = 0;
-  session->nextPageAttemptAtMs = nowMs + graceMs;
+  session->scheduledRetry.pending = true;
+  session->scheduledRetry.retryAtMs = nowMs + graceMs;
+  session->scheduledRetry.nextCampaignCount =
+      session->campaignCount < 0xFF ? static_cast<uint8_t>(session->campaignCount + 1)
+                                    : session->campaignCount;
+  session->scheduledRetry.graceMs = graceMs;
+  session->scheduledRetry.reason = "soft_timeout";
   session->cloudTxDeferred = true;
-  session->state = State::PAGING_READY_TO_SEND;
+  session->state = State::PAGING_RETRY_GRACE;
+}
+
+static inline bool retryReadyToSend(
+    const SessionCore& session,
+    uint32_t nowMs) {
+  return session.active &&
+      session.state == State::PAGING_RETRY_GRACE &&
+      session.scheduledRetry.pending &&
+      session.scheduledRetry.retryAtMs != 0 &&
+      !session.inFlightPage.valid &&
+      (int32_t)(nowMs - session.scheduledRetry.retryAtMs) >= 0;
+}
+
+static inline void expireInFlightAttempt(SessionCore* session) {
+  if (!session) return;
+  session->inFlightPage.valid = false;
+  session->inFlightPage.expired = true;
+  session->pageSent = false;
+  session->pageAckDeadlineAtMs = 0;
 }
 
 static inline void scheduleRetryWaitingUplink(
@@ -229,7 +313,8 @@ static inline bool shouldDeferCloudTx(
   return session.active &&
       session.deviceId == deviceId &&
       (session.state == State::PAGING_WAITING_UPLINK ||
-       session.state == State::PAGING_READY_TO_SEND);
+       session.state == State::PAGING_READY_TO_SEND ||
+       session.state == State::PAGING_RETRY_GRACE);
 }
 
 static inline const char* aggregateCommandStatus(

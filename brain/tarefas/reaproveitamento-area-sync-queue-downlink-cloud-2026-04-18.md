@@ -407,6 +407,10 @@ Historico adicional desta rodada:
 - 2026-04-25: a politica de page foi endurecida com deadline soft explicito para fast-path, deadline hard de ACK preservado, e retry por campanha com grace window (`PAGE_RETRY_GRACE_MS`) sem depender de novo uplink
 - 2026-04-25: a coleira passou a segurar uma sleep grace window (`COLLAR_SLEEP_GRACE_MS`) antes do deep sleep para capturar a campanha de retry tardia, com logs `RTR_SLEEP_GRACE_HOLD` e `RTR_SLEEP_GRACE_WINDOW_CLOSE`
 - 2026-04-25: `/status` da matriz agora expõe `lastWakeToPageLatencyMs`, `lastSoftDeadlineMs`, `lastSoftDeadlineMet` e `lastPageRetryAtMs`; `/status` da coleira expõe `sleepGraceWindowMs`, `sleepGraceHoldCount` e timestamps associados
+- 2026-04-25: o gargalo dominante de `PAGE_ACK` persistente foi corrigido separando attempt em voo (`inFlightPage`) de retry agendado (`scheduledRetry`) dentro do orquestrador da matriz
+- 2026-04-25: soft timeout deixou de apagar o contexto consumivel do attempt anterior; agora ele apenas agenda retry e move a sessao para `PAGING_RETRY_GRACE`, mantendo o ACK tardio elegivel ate o hard timeout
+- 2026-04-25: a matriz passou a aceitar `RTR_PAGE_ACK` dentro da grace window com logs `RTR_PAGE_ACK_ACCEPTED_WITHIN_GRACE` e `RTR_PAGE_RETRY_CANCELLED_BY_ACK`, alem de expor em `/status` `inFlightPage*`, `retryPending`, `retryCampaignCount`, `lastAckMatchedInGrace` e `lastAckRejectedReason`
+- 2026-04-25: a coleira ganhou logs explicitos de pre-start curto (`RTR_PRESTART_HOLD` e `RTR_PRESTART_TIMEOUT`) para separar espera de `BEGIN` do timeout longo de chunks
 
 ## Next step
 
@@ -435,6 +439,8 @@ Historico adicional desta rodada:
    - novos campos de deadline/policy:
    - matriz: `lastWakeToPageLatencyMs`, `lastSoftDeadlineMet`, `lastPageRetryAtMs`
    - coleira: `sleepGraceWindowMs`, `sleepGraceHoldCount`, `lastSleepGraceHoldAtMs`
+   - novos campos de attempt persistente:
+   - matriz: `inFlightPageValid`, `inFlightPageSessionId`, `inFlightPageMessageId`, `inFlightPageHardDeadlineAtMs`, `retryPending`, `retryAtMs`, `lastAckMatchedInGrace`, `lastAckRejectedReason`
 4. Se a bancada ainda ficar inconclusiva por timing, habilitar temporariamente um dos overrides da coleira:
    - `RTR_BENCH_HOLD_AFTER_UPLINK_MS`
    - `RTR_BENCH_SECONDARY_WINDOW_MS`
@@ -449,6 +455,7 @@ Historico adicional desta rodada:
    - page não recebido pela coleira
    - page ack não correlacionado na matriz
    - handoff `PAGE_ACKED -> RPV2` não executado
+   - substituição prematura do attempt em voo antes do `hardDeadlineAtMs`
 
 ### Validação da fase RPv2 (continuação após paging)
 

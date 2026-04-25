@@ -38,10 +38,23 @@ struct PageSnapshot {
   uint32_t lastPageRetryAtMs = 0;
   uint32_t lastWakeToPageLatencyMs = 0;
   uint32_t lastSoftDeadlineMs = 0;
+  uint64_t inFlightPageSessionId = 0;
+  uint32_t inFlightPageMessageId = 0;
+  uint32_t inFlightPageSentAtMs = 0;
+  uint32_t inFlightPageSoftDeadlineAtMs = 0;
+  uint32_t inFlightPageHardDeadlineAtMs = 0;
+  uint32_t retryAtMs = 0;
   uint8_t lastPageCampaignCount = 0;
+  uint8_t inFlightPageCampaignCount = 0;
+  uint8_t retryCampaignCount = 0;
   bool lastWakeHintAccepted = false;
   bool lastSoftDeadlineMet = false;
+  bool inFlightPageValid = false;
+  bool inFlightPageAckAccepted = false;
+  bool retryPending = false;
+  bool lastAckMatchedInGrace = false;
   char lastPageOutcome[kOutcomeSize] = "none";
+  char lastAckRejectedReason[kReasonSize]{};
 };
 
 struct CollarWindowSnapshot {
@@ -133,6 +146,17 @@ static inline void notePageTx(
   snapshot->lastPageCampaignCount = campaignCount;
   snapshot->lastPageSentAtMs = sentAtMs;
   snapshot->lastPageAckDeadlineAtMs = ackDeadlineAtMs;
+  snapshot->inFlightPageValid = true;
+  snapshot->inFlightPageSessionId = sessionId;
+  snapshot->inFlightPageMessageId = messageId;
+  snapshot->inFlightPageCampaignCount = campaignCount;
+  snapshot->inFlightPageSentAtMs = sentAtMs;
+  snapshot->inFlightPageAckAccepted = false;
+  snapshot->retryPending = false;
+  snapshot->retryAtMs = 0;
+  snapshot->retryCampaignCount = 0;
+  snapshot->lastAckMatchedInGrace = false;
+  snapshot->lastAckRejectedReason[0] = '\0';
   copyText(snapshot->lastPageOutcome, sizeof(snapshot->lastPageOutcome), "tx_ok");
 }
 
@@ -155,12 +179,55 @@ static inline void notePageLatency(
 static inline void notePageRetry(
     PageSnapshot* snapshot,
     uint32_t retryAtMs,
+    uint8_t retryCampaignCount,
     const char* outcome) {
   if (!snapshot) return;
   snapshot->lastPageRetryAtMs = retryAtMs;
+  snapshot->retryPending = true;
+  snapshot->retryAtMs = retryAtMs;
+  snapshot->retryCampaignCount = retryCampaignCount;
   if (outcome && outcome[0]) {
     copyText(snapshot->lastPageOutcome, sizeof(snapshot->lastPageOutcome), outcome);
   }
+}
+
+static inline void noteInFlightPageContext(
+    PageSnapshot* snapshot,
+    bool valid,
+    uint64_t sessionId,
+    uint32_t messageId,
+    uint8_t campaignCount,
+    uint32_t sentAtMs,
+    uint32_t softDeadlineAtMs,
+    uint32_t hardDeadlineAtMs,
+    bool ackAccepted) {
+  if (!snapshot) return;
+  snapshot->inFlightPageValid = valid;
+  snapshot->inFlightPageSessionId = sessionId;
+  snapshot->inFlightPageMessageId = messageId;
+  snapshot->inFlightPageCampaignCount = campaignCount;
+  snapshot->inFlightPageSentAtMs = sentAtMs;
+  snapshot->inFlightPageSoftDeadlineAtMs = softDeadlineAtMs;
+  snapshot->inFlightPageHardDeadlineAtMs = hardDeadlineAtMs;
+  snapshot->inFlightPageAckAccepted = ackAccepted;
+}
+
+static inline void noteAckMatched(PageSnapshot* snapshot, bool matchedInGrace) {
+  if (!snapshot) return;
+  snapshot->inFlightPageAckAccepted = true;
+  snapshot->lastAckMatchedInGrace = matchedInGrace;
+  snapshot->retryPending = false;
+  snapshot->retryAtMs = 0;
+  snapshot->retryCampaignCount = 0;
+  snapshot->lastAckRejectedReason[0] = '\0';
+}
+
+static inline void noteAckRejected(PageSnapshot* snapshot, const char* reason) {
+  if (!snapshot) return;
+  copyText(
+      snapshot->lastAckRejectedReason,
+      sizeof(snapshot->lastAckRejectedReason),
+      reason);
 }
 
 static inline void noteDiscoveryWindowOpen(

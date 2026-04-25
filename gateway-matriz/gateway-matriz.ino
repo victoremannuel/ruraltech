@@ -428,6 +428,7 @@ static void clearPendingWakeSession(int idx, const char* reason);
 static const char* pendingWakeStateLabel(rtrwake::State state);
 static void transitionPendingWakeState(PendingWakeSession& session, rtrwake::State nextState, const char* reason);
 static void setPendingWakeReason(PendingWakeSession& session, uint16_t reasonCode, const char* reasonLabel);
+static void syncLastPageDiagFromSession(const PendingWakeSession& session);
 static void updateDevicePresenceFromAcceptedUplink(const LoRaFrame& rx);
 static rtrwake::Presence* findDevicePresence(uint32_t deviceId);
 static void notePendingWakeHintFromUplink(const LoRaFrame& rx);
@@ -3174,6 +3175,22 @@ static void transitionPendingWakeState(
       reason ? reason : "-");
 }
 
+static void syncLastPageDiagFromSession(const PendingWakeSession& session) {
+  rtrdiag::noteInFlightPageContext(
+      &lastPageDiag,
+      session.core.inFlightPage.valid,
+      session.core.inFlightPage.sessionId,
+      session.core.inFlightPage.messageId,
+      session.core.inFlightPage.campaignCount,
+      session.core.inFlightPage.sentAtMs,
+      session.core.inFlightPage.softDeadlineAtMs,
+      session.core.inFlightPage.hardDeadlineAtMs,
+      session.core.inFlightPage.ackAccepted);
+  lastPageDiag.retryPending = session.core.scheduledRetry.pending;
+  lastPageDiag.retryAtMs = session.core.scheduledRetry.retryAtMs;
+  lastPageDiag.retryCampaignCount = session.core.scheduledRetry.nextCampaignCount;
+}
+
 static rtrwake::Presence* findDevicePresence(uint32_t deviceId) {
   if (deviceId == 0) return nullptr;
   for (uint8_t i = 0; i < kMaxDevicePresenceEntries; ++i) {
@@ -3217,6 +3234,15 @@ static void clearPendingWakeSession(int idx, const char* reason) {
   if (idx < 0 || idx >= kMaxPendingWakeSessions) return;
   PendingWakeSession& session = pendingWakeSessions[idx];
   if (!session.core.active) return;
+  if (session.core.inFlightPage.valid) {
+    LOGI(
+        "RTR_PAGE_ATTEMPT_REPLACED deviceId=%lu commandId=%s sessionId=%llu messageId=%lu reason=%s",
+        (unsigned long)session.core.deviceId,
+        session.commandId[0] ? session.commandId : "-",
+        (unsigned long long)session.core.inFlightPage.sessionId,
+        (unsigned long)session.core.inFlightPage.messageId,
+        reason ? reason : "-");
+  }
   LOGI(
       "RTR_WAKE_SESSION_CLEARED commandId=%s deviceId=%lu state=%s campaignCount=%u reason=%s",
       session.commandId[0] ? session.commandId : "-",
@@ -3409,6 +3435,7 @@ static bool trySendRtrPage(
       session.core.campaignCount,
       session.core.lastPageSentAtMs,
       session.core.pageAckDeadlineAtMs);
+  syncLastPageDiagFromSession(session);
   transitionPendingWakeState(session, rtrwake::State::PAGING_AWAITING_ACK, "page_tx_ok");
   publishFenceTransportState(session.core.deviceId, "awaiting_page_ack");
   appendPropertyCommandEvent(
@@ -3491,28 +3518,30 @@ static bool tryHandlePendingWakePageAckFastPath(const LoRaFrame& rx) {
   if (!rtrwake::canConsumePageAckFastPath(session.core)) {
     const uint32_t nowMs = millis();
     const bool lateAck = rtrwake::isLatePageAck(session.core, nowMs);
+    rtrdiag::noteAckRejected(&lastPageDiag, lateAck ? "ack_after_hard_timeout" : "ack_not_consumable");
     if (lateAck) {
       LOGW(
-          "RTR_PAGE_ACK_FAST_PATH_LATE deviceId=%lu commandId=%s sessionId=%llu messageId=%lu state=%s ackDeadlineAtMs=%lu nowMs=%lu accepted=%u sessionModeActive=%u",
+          "RTR_PAGE_ACK_FAST_PATH_LATE deviceId=%lu commandId=%s sessionId=%llu messageId=%lu state=%s hardDeadlineAtMs=%lu nowMs=%lu accepted=%u sessionModeActive=%u",
           (unsigned long)rx.deviceId,
           session.commandId[0] ? session.commandId : "-",
           (unsigned long long)header.sessionId,
           (unsigned long)header.messageId,
           pendingWakeStateLabel(session.core.state),
-          (unsigned long)session.core.pageAckDeadlineAtMs,
+          (unsigned long)session.core.inFlightPage.hardDeadlineAtMs,
           (unsigned long)nowMs,
           (unsigned)ack.accepted,
           (unsigned)ack.sessionModeActive);
     } else {
       LOGW(
-          "RTR_PAGE_ACK_FAST_PATH_SKIP deviceId=%lu commandId=%s sessionId=%llu messageId=%lu state=%s pageSent=%d ackDeadlineAtMs=%lu accepted=%u sessionModeActive=%u",
+          "RTR_PAGE_ACK_FAST_PATH_SKIP deviceId=%lu commandId=%s sessionId=%llu messageId=%lu state=%s inFlightValid=%d pageSent=%d hardDeadlineAtMs=%lu accepted=%u sessionModeActive=%u",
           (unsigned long)rx.deviceId,
           session.commandId[0] ? session.commandId : "-",
           (unsigned long long)header.sessionId,
           (unsigned long)header.messageId,
           pendingWakeStateLabel(session.core.state),
-          session.core.pageSent ? 1 : 0,
-          (unsigned long)session.core.pageAckDeadlineAtMs,
+          session.core.inFlightPage.valid ? 1 : 0,
+          session.core.inFlightPage.pageSent ? 1 : 0,
+          (unsigned long)session.core.inFlightPage.hardDeadlineAtMs,
           (unsigned)ack.accepted,
           (unsigned)ack.sessionModeActive);
     }
@@ -3548,18 +3577,27 @@ static bool handlePendingWakePageAck(const LoRaFrame& rx) {
     return false;
   }
   PendingWakeSession& session = pendingWakeSessions[idx];
-  if (session.core.state != rtrwake::State::PAGING_AWAITING_ACK) {
+  const bool ackWithinGrace =
+      session.core.state == rtrwake::State::PAGING_RETRY_GRACE &&
+      session.core.inFlightPage.valid &&
+      session.core.inFlightPage.hardDeadlineAtMs != 0 &&
+      (int32_t)(millis() - session.core.inFlightPage.hardDeadlineAtMs) < 0;
+  if (session.core.state != rtrwake::State::PAGING_AWAITING_ACK &&
+      !ackWithinGrace) {
     const uint32_t nowMs = millis();
     const bool lateAck = rtrwake::isLatePageAck(session.core, nowMs);
+    rtrdiag::noteAckRejected(
+        &lastPageDiag,
+        lateAck ? "ack_after_hard_timeout" : "state_not_awaiting_ack");
     if (lateAck) {
       LOGW(
-          "RTR_PAGE_ACK_LATE deviceId=%lu commandId=%s state=%s sessionId=%llu messageId=%lu ackDeadlineAtMs=%lu nowMs=%lu",
+          "RTR_PAGE_ACK_LATE deviceId=%lu commandId=%s state=%s sessionId=%llu messageId=%lu hardDeadlineAtMs=%lu nowMs=%lu",
           (unsigned long)rx.deviceId,
           session.commandId[0] ? session.commandId : "-",
           pendingWakeStateLabel(session.core.state),
           (unsigned long long)header.sessionId,
           (unsigned long)header.messageId,
-          (unsigned long)session.core.pageAckDeadlineAtMs,
+          (unsigned long)session.core.inFlightPage.hardDeadlineAtMs,
           (unsigned long)nowMs);
     } else {
       LOGW(
@@ -3584,6 +3622,25 @@ static bool handlePendingWakePageAck(const LoRaFrame& rx) {
     return true;
   }
   rtrwake::markPageAcked(&session.core);
+  if (ackWithinGrace) {
+    LOGI(
+        "RTR_PAGE_ACK_ACCEPTED_WITHIN_GRACE deviceId=%lu commandId=%s sessionId=%llu messageId=%lu retryAtMs=%lu",
+        (unsigned long)rx.deviceId,
+        session.commandId[0] ? session.commandId : "-",
+        (unsigned long long)header.sessionId,
+        (unsigned long)header.messageId,
+        (unsigned long)session.core.scheduledRetry.retryAtMs);
+    if (session.core.scheduledRetry.pending) {
+      LOGI(
+          "RTR_PAGE_RETRY_CANCELLED_BY_ACK deviceId=%lu commandId=%s sessionId=%llu messageId=%lu",
+          (unsigned long)rx.deviceId,
+          session.commandId[0] ? session.commandId : "-",
+          (unsigned long long)header.sessionId,
+          (unsigned long)header.messageId);
+    }
+  }
+  rtrdiag::noteAckMatched(&lastPageDiag, ackWithinGrace);
+  syncLastPageDiagFromSession(session);
   rtrdiag::notePageOutcome(&lastPageDiag, "ack_rx");
   transitionPendingWakeState(session, rtrwake::State::PAGE_ACKED, "page_ack_ok");
   publishFenceTransportState(session.core.deviceId, "page_acked");
@@ -4533,6 +4590,7 @@ static bool prepareFenceWakeSession(
   session->rpv2PlanReady = true;
   session->plan = plan;
   rtrdiag::notePageOutcome(&lastPageDiag, "none");
+  syncLastPageDiagFromSession(*session);
   setPendingWakeReason(*session, rtrv1::REASON_NONE, "");
 
   publishFenceTransportState(
@@ -4620,41 +4678,37 @@ static void processPendingWakeSessions() {
               "page_ack_state_without_page_tx");
           break;
         }
-        if (rtrwake::pageAckTimedOut(session.core, nowMs)) {
+        if (rtrwake::inFlightAttemptSoftTimedOut(session.core, nowMs)) {
           if (rtrwake::canRetryAfterTimeout(session.core)) {
             const uint32_t retryAtMs = nowMs + rtrv1::PAGE_RETRY_GRACE_MS;
-            rtrdiag::notePageRetry(&lastPageDiag, retryAtMs, "timeout_retry_grace");
+            rtrdiag::notePageRetry(
+                &lastPageDiag,
+                retryAtMs,
+                static_cast<uint8_t>(session.core.campaignCount + 1),
+                "timeout_retry_grace");
             LOGW(
-                "RTR_PAGE_TIMEOUT_RETRY deviceId=%lu commandId=%s campaignCount=%u pageSent=%d lastPageSentAtMs=%lu ackDeadlineAtMs=%lu",
+                "RTR_PAGE_SOFT_TIMEOUT deviceId=%lu commandId=%s campaignCount=%u sessionId=%llu messageId=%lu softDeadlineAtMs=%lu hardDeadlineAtMs=%lu",
                 (unsigned long)session.core.deviceId,
                 session.commandId[0] ? session.commandId : "-",
-                (unsigned)session.core.campaignCount,
-                session.core.pageSent ? 1 : 0,
-                (unsigned long)session.core.lastPageSentAtMs,
-                (unsigned long)session.core.pageAckDeadlineAtMs);
-            LOGW(
-                "RTR_PAGE_TERMINAL_CONTEXT deviceId=%lu commandId=%s sessionId=%llu messageId=%lu outcome=%s campaignCount=%u sentAtMs=%lu ackDeadlineAtMs=%lu",
-                (unsigned long)session.core.deviceId,
-                session.commandId[0] ? session.commandId : "-",
-                (unsigned long long)session.core.pageSessionId,
-                (unsigned long)session.core.pageMessageId,
-                lastPageDiag.lastPageOutcome,
-                (unsigned)session.core.campaignCount,
-                (unsigned long)session.core.lastPageSentAtMs,
-                (unsigned long)session.core.pageAckDeadlineAtMs);
+                (unsigned)session.core.inFlightPage.campaignCount,
+                (unsigned long long)session.core.inFlightPage.sessionId,
+                (unsigned long)session.core.inFlightPage.messageId,
+                (unsigned long)session.core.inFlightPage.softDeadlineAtMs,
+                (unsigned long)session.core.inFlightPage.hardDeadlineAtMs);
             LOGI(
-                "RTR_PAGE_TIMEOUT_GRACE_SCHEDULED deviceId=%lu commandId=%s retryAtMs=%lu graceMs=%lu nextCampaign=%u",
+                "RTR_PAGE_RETRY_SCHEDULED deviceId=%lu commandId=%s retryAtMs=%lu graceMs=%lu nextCampaign=%u",
                 (unsigned long)session.core.deviceId,
                 session.commandId[0] ? session.commandId : "-",
                 (unsigned long)retryAtMs,
                 (unsigned long)rtrv1::PAGE_RETRY_GRACE_MS,
                 (unsigned)(session.core.campaignCount + 1));
             transitionPendingWakeState(
-                session, rtrwake::State::PAGING_READY_TO_SEND, "page_timeout_retry_grace");
+                session, rtrwake::State::PAGING_RETRY_GRACE, "page_soft_timeout");
             rtrwake::scheduleRetryReadyToSend(
                 &session.core,
                 nowMs,
                 rtrv1::PAGE_RETRY_GRACE_MS);
+            syncLastPageDiagFromSession(session);
             setPendingWakeReason(
                 session,
                 rtrv1::REASON_PAGE_TIMEOUT,
@@ -4666,26 +4720,73 @@ static void processPendingWakeSessions() {
                 rtrv1::REASON_PAGE_TIMEOUT,
                 false,
                 false);
+          }
+        }
+        if (!session.core.scheduledRetry.pending &&
+            rtrwake::inFlightAttemptHardTimedOut(session.core, nowMs)) {
+          LOGW(
+              "RTR_PAGE_HARD_TIMEOUT deviceId=%lu commandId=%s campaignCount=%u sessionId=%llu messageId=%lu hardDeadlineAtMs=%lu nowMs=%lu",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              (unsigned)session.core.inFlightPage.campaignCount,
+              (unsigned long long)session.core.inFlightPage.sessionId,
+              (unsigned long)session.core.inFlightPage.messageId,
+              (unsigned long)session.core.inFlightPage.hardDeadlineAtMs,
+              (unsigned long)nowMs);
+          LOGI(
+              "RTR_PAGE_ATTEMPT_EXPIRED deviceId=%lu commandId=%s sessionId=%llu messageId=%lu",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              (unsigned long long)session.core.inFlightPage.sessionId,
+              (unsigned long)session.core.inFlightPage.messageId);
+          rtrwake::expireInFlightAttempt(&session.core);
+          syncLastPageDiagFromSession(session);
+          rtrdiag::notePageOutcome(&lastPageDiag, "timeout_final");
+          appendPropertyCommandEvent(
+              activeSimpleCommand.propertyId,
+              activeSimpleCommand.commandId,
+              "rtr_page_timeout_final",
+              nullptr,
+              nullptr);
+          failPendingWakeSession(
+              session,
+              rtrv1::REASON_PAGE_TIMEOUT_FINAL,
+              rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_TIMEOUT_FINAL));
+        }
+        break;
+
+      case rtrwake::State::PAGING_RETRY_GRACE:
+        if (rtrwake::inFlightAttemptHardTimedOut(session.core, nowMs)) {
+          LOGW(
+              "RTR_PAGE_HARD_TIMEOUT deviceId=%lu commandId=%s campaignCount=%u sessionId=%llu messageId=%lu hardDeadlineAtMs=%lu nowMs=%lu",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              (unsigned)session.core.inFlightPage.campaignCount,
+              (unsigned long long)session.core.inFlightPage.sessionId,
+              (unsigned long)session.core.inFlightPage.messageId,
+              (unsigned long)session.core.inFlightPage.hardDeadlineAtMs,
+              (unsigned long)nowMs);
+          LOGI(
+              "RTR_PAGE_ATTEMPT_EXPIRED deviceId=%lu commandId=%s sessionId=%llu messageId=%lu",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              (unsigned long long)session.core.inFlightPage.sessionId,
+              (unsigned long)session.core.inFlightPage.messageId);
+          rtrwake::expireInFlightAttempt(&session.core);
+          syncLastPageDiagFromSession(session);
+          if (session.core.scheduledRetry.pending &&
+              rtrwake::canRetryAfterTimeout(session.core)) {
+            session.core.campaignCount =
+                session.core.scheduledRetry.nextCampaignCount > 0
+                    ? session.core.scheduledRetry.nextCampaignCount - 1
+                    : session.core.campaignCount;
+            session.core.nextPageAttemptAtMs = session.core.scheduledRetry.retryAtMs;
+            transitionPendingWakeState(
+                session,
+                rtrwake::State::PAGING_READY_TO_SEND,
+                "page_hard_timeout_retry_ready");
           } else {
             rtrdiag::notePageOutcome(&lastPageDiag, "timeout_final");
-            LOGW(
-                "RTR_PAGE_TIMEOUT_FINAL deviceId=%lu commandId=%s campaignCount=%u pageSent=%d lastPageSentAtMs=%lu ackDeadlineAtMs=%lu",
-                (unsigned long)session.core.deviceId,
-                session.commandId[0] ? session.commandId : "-",
-                (unsigned)session.core.campaignCount,
-                session.core.pageSent ? 1 : 0,
-                (unsigned long)session.core.lastPageSentAtMs,
-                (unsigned long)session.core.pageAckDeadlineAtMs);
-            LOGW(
-                "RTR_PAGE_TERMINAL_CONTEXT deviceId=%lu commandId=%s sessionId=%llu messageId=%lu outcome=%s campaignCount=%u sentAtMs=%lu ackDeadlineAtMs=%lu",
-                (unsigned long)session.core.deviceId,
-                session.commandId[0] ? session.commandId : "-",
-                (unsigned long long)session.core.pageSessionId,
-                (unsigned long)session.core.pageMessageId,
-                lastPageDiag.lastPageOutcome,
-                (unsigned)session.core.campaignCount,
-                (unsigned long)session.core.lastPageSentAtMs,
-                (unsigned long)session.core.pageAckDeadlineAtMs);
             appendPropertyCommandEvent(
                 activeSimpleCommand.propertyId,
                 activeSimpleCommand.commandId,

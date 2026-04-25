@@ -212,6 +212,25 @@ void ApiServer::begin() {
       doc["lastWakeToPageLatencyMs"] = lastPageDiag.lastWakeToPageLatencyMs;
       doc["lastSoftDeadlineMs"] = lastPageDiag.lastSoftDeadlineMs;
       doc["lastSoftDeadlineMet"] = lastPageDiag.lastSoftDeadlineMet;
+      char inFlightPageSessionId[24]{};
+      snprintf(
+          inFlightPageSessionId,
+          sizeof(inFlightPageSessionId),
+          "%llu",
+          (unsigned long long)lastPageDiag.inFlightPageSessionId);
+      doc["inFlightPageValid"] = lastPageDiag.inFlightPageValid;
+      doc["inFlightPageSessionId"] = inFlightPageSessionId;
+      doc["inFlightPageMessageId"] = lastPageDiag.inFlightPageMessageId;
+      doc["inFlightPageCampaignCount"] = lastPageDiag.inFlightPageCampaignCount;
+      doc["inFlightPageSentAtMs"] = lastPageDiag.inFlightPageSentAtMs;
+      doc["inFlightPageSoftDeadlineAtMs"] = lastPageDiag.inFlightPageSoftDeadlineAtMs;
+      doc["inFlightPageHardDeadlineAtMs"] = lastPageDiag.inFlightPageHardDeadlineAtMs;
+      doc["inFlightPageAckAccepted"] = lastPageDiag.inFlightPageAckAccepted;
+      doc["retryPending"] = lastPageDiag.retryPending;
+      doc["retryAtMs"] = lastPageDiag.retryAtMs;
+      doc["retryCampaignCount"] = lastPageDiag.retryCampaignCount;
+      doc["lastAckMatchedInGrace"] = lastPageDiag.lastAckMatchedInGrace;
+      doc["lastAckRejectedReason"] = lastPageDiag.lastAckRejectedReason;
       doc["lastPageOutcome"] = lastPageDiag.lastPageOutcome;
       doc["lastWakeHintAtMs"] = lastPageDiag.lastWakeHintAtMs;
       doc["lastWakeHintSeq"] = lastPageDiag.lastWakeHintSeq;

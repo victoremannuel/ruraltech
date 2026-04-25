@@ -46,10 +46,24 @@ int main() {
   assert(page.lastWakeToPageLatencyMs == 100);
   assert(page.lastSoftDeadlineMs == 300);
   assert(page.lastSoftDeadlineMet);
+  assert(page.inFlightPageValid);
+  assert(page.inFlightPageSessionId == 0xAA55ULL);
+  assert(page.inFlightPageMessageId == 19);
+  assert(page.inFlightPageCampaignCount == 2);
   assert(strcmp(page.lastPageOutcome, "tx_ok") == 0);
-  rtrdiag::notePageRetry(&page, 4500, "timeout_retry_grace");
+  rtrdiag::noteInFlightPageContext(&page, true, 0xAA55ULL, 19, 2, 2100, 3600, 4500, false);
+  rtrdiag::notePageRetry(&page, 4500, 3, "timeout_retry_grace");
   assert(page.lastPageRetryAtMs == 4500);
+  assert(page.retryPending);
+  assert(page.retryAtMs == 4500);
+  assert(page.retryCampaignCount == 3);
   assert(strcmp(page.lastPageOutcome, "timeout_retry_grace") == 0);
+  rtrdiag::noteAckRejected(&page, "state_not_awaiting_ack");
+  assert(strcmp(page.lastAckRejectedReason, "state_not_awaiting_ack") == 0);
+  rtrdiag::noteAckMatched(&page, true);
+  assert(page.inFlightPageAckAccepted);
+  assert(page.lastAckMatchedInGrace);
+  assert(!page.retryPending);
   rtrdiag::notePageOutcome(&page, "timeout_final");
   assert(strcmp(page.lastPageOutcome, "timeout_final") == 0);
 

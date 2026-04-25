@@ -9,9 +9,12 @@ int main() {
   session.deviceId = 0xC011A001UL;
   session.pageSessionId = 0x1122334455667788ULL;
   session.pageMessageId = 77;
-  session.pageSent = true;
-  session.lastPageSentAtMs = 1000;
-  session.pageAckDeadlineAtMs = 2500;
+  rtrwake::markPageAttempt(&session, 1000, 1500);
+  session.pageSessionId = 0x1122334455667788ULL;
+  session.pageMessageId = 77;
+  session.inFlightPage.sessionId = 0x1122334455667788ULL;
+  session.inFlightPage.messageId = 77;
+  session.inFlightPage.hardDeadlineAtMs = 3400;
 
   assert(rtrwake::pageAckMatches(
       session,
@@ -19,8 +22,9 @@ int main() {
       0x1122334455667788ULL,
       77));
   assert(rtrwake::canConsumePageAckFastPath(session));
-  assert(!rtrwake::isLatePageAck(session, 2499));
-  assert(rtrwake::isLatePageAck(session, 2501));
+  session.state = rtrwake::State::PAGING_RETRY_GRACE;
+  assert(!rtrwake::isLatePageAck(session, 3399));
+  assert(rtrwake::isLatePageAck(session, 3401));
   assert(!rtrwake::pageAckMatches(
       session,
       0xC011A002UL,
