@@ -185,6 +185,7 @@ void ApiServer::begin() {
       doc["lastLoraIrqFlags"] = lora.lastIrqFlags();
       doc["lastLoraState"] = lora.lastRadioState();
       const rtrdiag::DecryptFailSnapshot& decryptFail = lora.lastDecryptFail();
+      const rtrdiag::RawRxSnapshot& rawRx = lora.rawRxDiag();
       doc["lastDecryptFailAtMs"] = decryptFail.atMs;
       doc["lastDecryptFailLen"] = decryptFail.len;
       doc["lastDecryptFailRssi"] = decryptFail.rssi;
@@ -196,6 +197,17 @@ void ApiServer::begin() {
       doc["lastDecryptFailNonceHex"] = decryptFail.nonceHex;
       doc["lastDecryptFailTagHex"] = decryptFail.tagHex;
       doc["lastDecryptFailCount"] = decryptFail.count;
+      doc["rawRxSeenCount"] = rawRx.rawRxSeenCount;
+      doc["rawRxNoiseDropCount"] = rawRx.rawRxNoiseDropCount;
+      doc["rawRxInvalidPatternDropCount"] = rawRx.rawRxInvalidPatternDropCount;
+      doc["rawRxDecryptAttemptCount"] = rawRx.rawRxDecryptAttemptCount;
+      doc["rawRxDecryptFailedCount"] = rawRx.rawRxDecryptFailedCount;
+      doc["rawRxAcceptedCount"] = rawRx.rawRxAcceptedCount;
+      doc["lastRawNoiseReason"] = rawRx.lastRawNoiseReason;
+      doc["lastRawPatternHex"] = rawRx.lastRawPatternHex;
+      doc["lastRawCandidateLen"] = rawRx.lastRawCandidateLen;
+      doc["lastRawCandidateRssi"] = rawRx.lastRawCandidateRssi;
+      doc["lastRawCandidateSnr"] = rawRx.lastRawCandidateSnr;
       char lastPageSessionId[24]{};
       snprintf(
           lastPageSessionId,

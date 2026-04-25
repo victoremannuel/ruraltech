@@ -30,6 +30,24 @@ int main() {
   assert(strcmp(decrypt.nonceHex, "00112233445566778899AABB") == 0);
   assert(strcmp(decrypt.tagHex, "DEADBEEFCAFEBABE") == 0);
 
+  const uint8_t repeated70[16] = {
+      0x70, 0x70, 0x70, 0x70, 0x70, 0x70, 0x70, 0x70,
+      0x70, 0x70, 0x70, 0x70, 0x70, 0x70, 0x70, 0x70};
+  const uint8_t varied[16] = {
+      0x70, 0x71, 0x70, 0x71, 0x70, 0x71, 0x70, 0x71,
+      0x70, 0x71, 0x70, 0x71, 0x70, 0x71, 0x70, 0x71};
+  assert(rtrdiag::hasExtremeRepeatedPrefix(repeated70, sizeof(repeated70), 12));
+  assert(!rtrdiag::hasExtremeRepeatedPrefix(varied, sizeof(varied), 12));
+  assert(rtrdiag::looksLikeRawNoise(112, -127, 0.0f, repeated70, sizeof(repeated70)));
+  assert(!rtrdiag::looksLikeRawNoise(112, -90, 7.5f, varied, sizeof(varied)));
+  assert(rtrdiag::looksLikeInvalidRepeatedPattern(
+      repeated70,
+      12,
+      repeated70,
+      8,
+      repeated70,
+      8));
+
   rtrdiag::PageSnapshot page{};
   rtrdiag::noteWakeHint(&page, 2000, 55, true);
   rtrdiag::notePageTx(&page, 77, 0xAA55ULL, 19, 2, 2100, 3600);
@@ -66,6 +84,22 @@ int main() {
   assert(!page.retryPending);
   rtrdiag::notePageOutcome(&page, "timeout_final");
   assert(strcmp(page.lastPageOutcome, "timeout_final") == 0);
+
+  rtrdiag::RawRxSnapshot raw{};
+  rtrdiag::noteRawRxSeen(&raw, 112, -127, 0.0f);
+  rtrdiag::noteRawNoiseDrop(&raw, "implausible_raw_signal", "70707070");
+  rtrdiag::noteRawPatternDrop(&raw, "repeated_pattern", "70707070");
+  rtrdiag::noteRawDecryptAttempt(&raw);
+  rtrdiag::noteRawDecryptFailed(&raw);
+  rtrdiag::noteRawAccepted(&raw);
+  assert(raw.rawRxSeenCount == 1);
+  assert(raw.rawRxNoiseDropCount == 1);
+  assert(raw.rawRxInvalidPatternDropCount == 1);
+  assert(raw.rawRxDecryptAttemptCount == 1);
+  assert(raw.rawRxDecryptFailedCount == 1);
+  assert(raw.rawRxAcceptedCount == 1);
+  assert(strcmp(raw.lastRawNoiseReason, "repeated_pattern") == 0);
+  assert(strcmp(raw.lastRawPatternHex, "70707070") == 0);
 
   rtrdiag::CollarWindowSnapshot collar{};
   rtrdiag::noteDiscoveryWindowOpen(&collar, false, 100, 2500);

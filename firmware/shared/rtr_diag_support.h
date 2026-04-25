@@ -12,6 +12,7 @@ static constexpr size_t kTagHexSize = 17;
 static constexpr size_t kReasonSize = 32;
 static constexpr size_t kStateSize = 24;
 static constexpr size_t kOutcomeSize = 20;
+static constexpr size_t kPatternHexSize = 17;
 
 struct DecryptFailSnapshot {
   uint32_t atMs = 0;
@@ -25,6 +26,20 @@ struct DecryptFailSnapshot {
   char headHex[kHeadHexSize]{};
   char nonceHex[kNonceHexSize]{};
   char tagHex[kTagHexSize]{};
+};
+
+struct RawRxSnapshot {
+  uint32_t rawRxSeenCount = 0;
+  uint32_t rawRxNoiseDropCount = 0;
+  uint32_t rawRxInvalidPatternDropCount = 0;
+  uint32_t rawRxDecryptAttemptCount = 0;
+  uint32_t rawRxDecryptFailedCount = 0;
+  uint32_t rawRxAcceptedCount = 0;
+  uint16_t lastRawCandidateLen = 0;
+  int16_t lastRawCandidateRssi = 0;
+  float lastRawCandidateSnr = 0.0f;
+  char lastRawNoiseReason[kReasonSize]{};
+  char lastRawPatternHex[kPatternHexSize]{};
 };
 
 struct PageSnapshot {
@@ -91,6 +106,92 @@ static inline void copyText(char* dst, size_t dstSize, const char* src) {
   }
   strncpy(dst, src, dstSize - 1);
   dst[dstSize - 1] = '\0';
+}
+
+static inline bool hasExtremeRepeatedPrefix(
+    const uint8_t* data,
+    size_t len,
+    size_t inspectLen = 12) {
+  if (!data || len == 0) return false;
+  const size_t capped = len < inspectLen ? len : inspectLen;
+  if (capped < 8) return false;
+  const uint8_t first = data[0];
+  for (size_t i = 1; i < capped; ++i) {
+    if (data[i] != first) return false;
+  }
+  return true;
+}
+
+static inline bool looksLikeRawNoise(
+    uint16_t len,
+    int16_t rssi,
+    float snr,
+    const uint8_t* data,
+    size_t dataLen) {
+  if (len < 28) return true;
+  if (rssi <= -127 && snr == 0.0f && hasExtremeRepeatedPrefix(data, dataLen, 16)) {
+    return true;
+  }
+  return false;
+}
+
+static inline bool looksLikeInvalidRepeatedPattern(
+    const uint8_t* nonce,
+    size_t nonceLen,
+    const uint8_t* cipher,
+    size_t cipherLen,
+    const uint8_t* tag,
+    size_t tagLen) {
+  return hasExtremeRepeatedPrefix(nonce, nonceLen, 12) &&
+      hasExtremeRepeatedPrefix(cipher, cipherLen, 8) &&
+      hasExtremeRepeatedPrefix(tag, tagLen, 8);
+}
+
+static inline void noteRawRxSeen(
+    RawRxSnapshot* snapshot,
+    uint16_t len,
+    int16_t rssi,
+    float snr) {
+  if (!snapshot) return;
+  snapshot->rawRxSeenCount++;
+  snapshot->lastRawCandidateLen = len;
+  snapshot->lastRawCandidateRssi = rssi;
+  snapshot->lastRawCandidateSnr = snr;
+}
+
+static inline void noteRawNoiseDrop(
+    RawRxSnapshot* snapshot,
+    const char* reason,
+    const char* patternHex) {
+  if (!snapshot) return;
+  snapshot->rawRxNoiseDropCount++;
+  copyText(snapshot->lastRawNoiseReason, sizeof(snapshot->lastRawNoiseReason), reason);
+  copyText(snapshot->lastRawPatternHex, sizeof(snapshot->lastRawPatternHex), patternHex);
+}
+
+static inline void noteRawPatternDrop(
+    RawRxSnapshot* snapshot,
+    const char* reason,
+    const char* patternHex) {
+  if (!snapshot) return;
+  snapshot->rawRxInvalidPatternDropCount++;
+  copyText(snapshot->lastRawNoiseReason, sizeof(snapshot->lastRawNoiseReason), reason);
+  copyText(snapshot->lastRawPatternHex, sizeof(snapshot->lastRawPatternHex), patternHex);
+}
+
+static inline void noteRawDecryptAttempt(RawRxSnapshot* snapshot) {
+  if (!snapshot) return;
+  snapshot->rawRxDecryptAttemptCount++;
+}
+
+static inline void noteRawDecryptFailed(RawRxSnapshot* snapshot) {
+  if (!snapshot) return;
+  snapshot->rawRxDecryptFailedCount++;
+}
+
+static inline void noteRawAccepted(RawRxSnapshot* snapshot) {
+  if (!snapshot) return;
+  snapshot->rawRxAcceptedCount++;
 }
 
 static inline void noteDecryptFail(

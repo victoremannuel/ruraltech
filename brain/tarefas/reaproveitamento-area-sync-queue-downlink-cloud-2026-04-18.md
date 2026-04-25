@@ -411,6 +411,10 @@ Historico adicional desta rodada:
 - 2026-04-25: soft timeout deixou de apagar o contexto consumivel do attempt anterior; agora ele apenas agenda retry e move a sessao para `PAGING_RETRY_GRACE`, mantendo o ACK tardio elegivel ate o hard timeout
 - 2026-04-25: a matriz passou a aceitar `RTR_PAGE_ACK` dentro da grace window com logs `RTR_PAGE_ACK_ACCEPTED_WITHIN_GRACE` e `RTR_PAGE_RETRY_CANCELLED_BY_ACK`, alem de expor em `/status` `inFlightPage*`, `retryPending`, `retryCampaignCount`, `lastAckMatchedInGrace` e `lastAckRejectedReason`
 - 2026-04-25: a coleira ganhou logs explicitos de pre-start curto (`RTR_PRESTART_HOLD` e `RTR_PRESTART_TIMEOUT`) para separar espera de `BEGIN` do timeout longo de chunks
+- 2026-04-25: o RX da matriz ganhou pre-filtro antes do decrypt para ruído bruto e padrões inválidos, separando `raw_noise_drop`, `pattern_drop`, `decrypt_attempt`, `decrypt_failed` e `accepted`
+- 2026-04-25: a matriz agora prioriza `RTR_PAGE_ACK` no loop principal antes de `scopeMatchesBinding`, reduzindo a chance de o ACK válido ficar atrás de flood de ruído
+- 2026-04-25: `/status` da matriz passou a expor `rawRxSeenCount`, `rawRxNoiseDropCount`, `rawRxInvalidPatternDropCount`, `rawRxDecryptAttemptCount`, `rawRxDecryptFailedCount`, `rawRxAcceptedCount`, `lastRawNoiseReason`, `lastRawPatternHex`, `lastRawCandidateLen`, `lastRawCandidateRssi` e `lastRawCandidateSnr`
+- 2026-04-25: logs novos da matriz nesta fase: `LORA_RX_NOISE_DROP`, `LORA_RX_PATTERN_DROP`, `LORA_RX_DECRYPT_ATTEMPT`, `LORA_RX_DECRYPT_FAIL_CONTEXT`, `LORA_RX_ACCEPT_CONTEXT` e sumários throttled por janela
 
 ## Next step
 
@@ -441,6 +445,8 @@ Historico adicional desta rodada:
    - coleira: `sleepGraceWindowMs`, `sleepGraceHoldCount`, `lastSleepGraceHoldAtMs`
    - novos campos de attempt persistente:
    - matriz: `inFlightPageValid`, `inFlightPageSessionId`, `inFlightPageMessageId`, `inFlightPageHardDeadlineAtMs`, `retryPending`, `retryAtMs`, `lastAckMatchedInGrace`, `lastAckRejectedReason`
+   - novos campos de pre-filtro RX:
+   - matriz: `rawRxSeenCount`, `rawRxNoiseDropCount`, `rawRxInvalidPatternDropCount`, `rawRxDecryptAttemptCount`, `rawRxDecryptFailedCount`, `rawRxAcceptedCount`, `lastRawNoiseReason`, `lastRawPatternHex`
 4. Se a bancada ainda ficar inconclusiva por timing, habilitar temporariamente um dos overrides da coleira:
    - `RTR_BENCH_HOLD_AFTER_UPLINK_MS`
    - `RTR_BENCH_SECONDARY_WINDOW_MS`

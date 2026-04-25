@@ -49,6 +49,7 @@ class LoRaGateway {
   const rtrdiag::DecryptFailSnapshot& lastDecryptFail() const {
     return lastDecryptFail_;
   }
+  const rtrdiag::RawRxSnapshot& rawRxDiag() const { return rawRxDiag_; }
 
  private:
   SX1276 radio_;
@@ -73,11 +74,22 @@ class LoRaGateway {
   uint32_t replayRejectCount_ = 0;
   uint32_t lastAcceptedSeq_ = 0;
   rtrdiag::DecryptFailSnapshot lastDecryptFail_{};
+  rtrdiag::RawRxSnapshot rawRxDiag_{};
+  uint32_t rawNoiseLogWindowStartedAtMs_ = 0;
+  uint32_t rawPatternLogWindowStartedAtMs_ = 0;
+  uint32_t decryptFailLogWindowStartedAtMs_ = 0;
+  uint16_t rawNoiseLogWindowCount_ = 0;
+  uint16_t rawPatternLogWindowCount_ = 0;
+  uint16_t decryptFailLogWindowCount_ = 0;
   uint32_t lastSeqPerDevice_[cfg::LORA_REPLAY_TRACKED_DEVICES]{};
   uint32_t deviceIds_[cfg::LORA_REPLAY_TRACKED_DEVICES]{};
   void loadReplayState();
   void persistReplayState();
   uint8_t idxForDevice(uint32_t id);
   bool armContinuousReceive();
+  bool shouldEmitThrottledLog(
+      uint32_t nowMs,
+      uint32_t* windowStartedAtMs,
+      uint16_t* windowCount);
   void setRadioState(const char* state) { lastRadioState_ = state; }
 };

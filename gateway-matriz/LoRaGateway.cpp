@@ -39,6 +39,21 @@ static void bytesToHex(
 }
 }  // namespace
 
+bool LoRaGateway::shouldEmitThrottledLog(
+    uint32_t nowMs,
+    uint32_t* windowStartedAtMs,
+    uint16_t* windowCount) {
+  if (!windowStartedAtMs || !windowCount) return true;
+  constexpr uint32_t kLogWindowMs = 2000;
+  constexpr uint16_t kVerboseBurst = 3;
+  if (*windowStartedAtMs == 0 || (uint32_t)(nowMs - *windowStartedAtMs) >= kLogWindowMs) {
+    *windowStartedAtMs = nowMs;
+    *windowCount = 0;
+  }
+  (*windowCount)++;
+  return *windowCount <= kVerboseBurst;
+}
+
 void LoRaGateway::loadReplayState() {
   if (cfg::DISABLE_LORA_REPLAY_FOR_TESTS) {
     memset(deviceIds_, 0, sizeof(deviceIds_));
@@ -184,9 +199,20 @@ bool LoRaGateway::receive(LoRaFrame& frame) {
   }
   if (len < 28) {
     setRadioState("rx_short");
+    rtrdiag::noteRawRxSeen(
+        &rawRxDiag_,
+        static_cast<uint16_t>(packetLen),
+        static_cast<int16_t>(lastRssi_),
+        lastSnr_);
+    rtrdiag::noteRawNoiseDrop(&rawRxDiag_, "frame_too_short", "");
     LOGW("LoRa RX curto len=%u", (unsigned)packetLen);
     return false;
   }
+  rtrdiag::noteRawRxSeen(
+      &rawRxDiag_,
+      static_cast<uint16_t>(packetLen),
+      static_cast<int16_t>(lastRssi_),
+      lastSnr_);
   LOGI(
       "LoRa RX raw len=%u rssi=%d snr=%.1f",
       (unsigned)packetLen,
@@ -197,9 +223,72 @@ bool LoRaGateway::receive(LoRaFrame& frame) {
   const size_t cipherLen = len - 28;
   const uint8_t* cipher = buf + 12;
   const uint8_t* tag = buf + 12 + cipherLen;
+  char noiseHeadHex[17] = {};
+  bytesToHex(buf, len < 8 ? len : 8, noiseHeadHex, sizeof(noiseHeadHex));
+  if (rtrdiag::looksLikeRawNoise(
+          static_cast<uint16_t>(packetLen),
+          static_cast<int16_t>(lastRssi_),
+          lastSnr_,
+          buf,
+          len)) {
+    setRadioState("rx_noise_drop");
+    rtrdiag::noteRawNoiseDrop(&rawRxDiag_, "implausible_raw_signal", noiseHeadHex);
+    if (shouldEmitThrottledLog(
+            lastRawRxAtMs_,
+            &rawNoiseLogWindowStartedAtMs_,
+            &rawNoiseLogWindowCount_)) {
+      LOGW(
+          "LORA_RX_NOISE_DROP len=%u rssi=%d snr=%.1f reason=%s head=%s count=%lu",
+          (unsigned)packetLen,
+          lastRssi_,
+          lastSnr_,
+          rawRxDiag_.lastRawNoiseReason,
+          rawRxDiag_.lastRawPatternHex,
+          (unsigned long)rawRxDiag_.rawRxNoiseDropCount);
+    } else if (rawNoiseLogWindowCount_ == 4) {
+      LOGW(
+          "LORA_RX_NOISE_DROP_SUMMARY windowMs=2000 noiseDrops=%u lastReason=%s head=%s",
+          (unsigned)rawNoiseLogWindowCount_,
+          rawRxDiag_.lastRawNoiseReason,
+          rawRxDiag_.lastRawPatternHex);
+    }
+    return false;
+  }
+  if (rtrdiag::looksLikeInvalidRepeatedPattern(nonce, 12, cipher, cipherLen, tag, 8)) {
+    setRadioState("rx_pattern_drop");
+    rtrdiag::noteRawPatternDrop(&rawRxDiag_, "repeated_pattern", noiseHeadHex);
+    if (shouldEmitThrottledLog(
+            lastRawRxAtMs_,
+            &rawPatternLogWindowStartedAtMs_,
+            &rawPatternLogWindowCount_)) {
+      LOGW(
+          "LORA_RX_PATTERN_DROP len=%u rssi=%d snr=%.1f reason=%s head=%s count=%lu",
+          (unsigned)packetLen,
+          lastRssi_,
+          lastSnr_,
+          rawRxDiag_.lastRawNoiseReason,
+          rawRxDiag_.lastRawPatternHex,
+          (unsigned long)rawRxDiag_.rawRxInvalidPatternDropCount);
+    } else if (rawPatternLogWindowCount_ == 4) {
+      LOGW(
+          "LORA_RX_PATTERN_DROP_SUMMARY windowMs=2000 patternDrops=%u lastReason=%s head=%s",
+          (unsigned)rawPatternLogWindowCount_,
+          rawRxDiag_.lastRawNoiseReason,
+          rawRxDiag_.lastRawPatternHex);
+    }
+    return false;
+  }
+  rtrdiag::noteRawDecryptAttempt(&rawRxDiag_);
+  LOGI(
+      "LORA_RX_DECRYPT_ATTEMPT len=%u rssi=%d snr=%.1f attempts=%lu",
+      (unsigned)packetLen,
+      lastRssi_,
+      lastSnr_,
+      (unsigned long)rawRxDiag_.rawRxDecryptAttemptCount);
   uint8_t plain[256];
   if (!crypto_.verifyAndDecrypt(cipher, cipherLen, tag, plain, nonce)) {
     decryptFailCount_++;
+    rtrdiag::noteRawDecryptFailed(&rawRxDiag_);
     setRadioState("rx_decrypt_failed");
     char nonceHex[25] = {};
     char tagHex[17] = {};
@@ -220,31 +309,42 @@ bool LoRaGateway::receive(LoRaFrame& frame) {
         headHex,
         nonceHex,
         tagHex);
-    LOGW(
-        "LoRa RX decrypt_failed len=%u cipher_len=%u irq=0x%04X state=%s rssi=%d snr=%.1f nonce=%s tag=%s head=%s fail_count=%lu",
-        (unsigned)packetLen,
-        (unsigned)cipherLen,
-        (unsigned)lastIrqFlags_,
-        lastRadioState_,
-        lastRssi_,
-        lastSnr_,
-        nonceHex,
-        tagHex,
-        headHex,
-        (unsigned long)decryptFailCount_);
-    LOGW(
-        "LORA_RX_DECRYPT_FAIL_CONTEXT millis=%lu len=%u rssi=%d snr=%.1f irq=0x%04X state=%s head=%s nonce=%s tag=%s reason=%s count=%lu",
-        (unsigned long)lastDecryptFail_.atMs,
-        (unsigned)lastDecryptFail_.len,
-        (int)lastDecryptFail_.rssi,
-        lastDecryptFail_.snr,
-        (unsigned)lastDecryptFail_.irqFlags,
-        lastDecryptFail_.radioState,
-        lastDecryptFail_.headHex,
-        lastDecryptFail_.nonceHex,
-        lastDecryptFail_.tagHex,
-        lastDecryptFail_.reason,
-        (unsigned long)lastDecryptFail_.count);
+    if (shouldEmitThrottledLog(
+            lastRawRxAtMs_,
+            &decryptFailLogWindowStartedAtMs_,
+            &decryptFailLogWindowCount_)) {
+      LOGW(
+          "LoRa RX decrypt_failed len=%u cipher_len=%u irq=0x%04X state=%s rssi=%d snr=%.1f nonce=%s tag=%s head=%s fail_count=%lu",
+          (unsigned)packetLen,
+          (unsigned)cipherLen,
+          (unsigned)lastIrqFlags_,
+          lastRadioState_,
+          lastRssi_,
+          lastSnr_,
+          nonceHex,
+          tagHex,
+          headHex,
+          (unsigned long)decryptFailCount_);
+      LOGW(
+          "LORA_RX_DECRYPT_FAIL_CONTEXT millis=%lu len=%u rssi=%d snr=%.1f irq=0x%04X state=%s head=%s nonce=%s tag=%s reason=%s count=%lu",
+          (unsigned long)lastDecryptFail_.atMs,
+          (unsigned)lastDecryptFail_.len,
+          (int)lastDecryptFail_.rssi,
+          lastDecryptFail_.snr,
+          (unsigned)lastDecryptFail_.irqFlags,
+          lastDecryptFail_.radioState,
+          lastDecryptFail_.headHex,
+          lastDecryptFail_.nonceHex,
+          lastDecryptFail_.tagHex,
+          lastDecryptFail_.reason,
+          (unsigned long)lastDecryptFail_.count);
+    } else if (decryptFailLogWindowCount_ == 4) {
+      LOGW(
+          "LORA_RX_DECRYPT_FAIL_SUMMARY windowMs=2000 decryptFails=%u lastReason=%s head=%s",
+          (unsigned)decryptFailLogWindowCount_,
+          lastDecryptFail_.reason,
+          lastDecryptFail_.headHex);
+    }
     LOGW("LoRa RX descartado: decrypt_or_hmac_failed len=%u", (unsigned)len);
     return false;
   }
@@ -286,12 +386,14 @@ bool LoRaGateway::receive(LoRaFrame& frame) {
         (unsigned long)lastSeqPerDevice_[idx]);
   }
   setRadioState("rx_ok");
+  rtrdiag::noteRawAccepted(&rawRxDiag_);
   LOGI(
-      "LoRa RX aceito device=%lu type=%u seq=%lu scope=%016llX",
+      "LORA_RX_ACCEPT_CONTEXT device=%lu type=%u seq=%lu scope=%016llX accepted=%lu",
       (unsigned long)frame.deviceId,
       (unsigned)frame.msgType,
       (unsigned long)frame.seq,
-      (unsigned long long)frame.scopeId);
+      (unsigned long long)frame.scopeId,
+      (unsigned long)rawRxDiag_.rawRxAcceptedCount);
   lastAcceptedRxAtMs_ = millis();
   lastAcceptedSeq_ = frame.seq;
   if (!cfg::DISABLE_LORA_REPLAY_FOR_TESTS) {

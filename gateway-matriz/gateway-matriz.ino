@@ -7098,7 +7098,9 @@ void loop() {
 
   LoRaFrame rx;
   if (lora.receive(rx)) {
-    if (!scopeMatchesBinding(rx.scopeId)) {
+    if (tryHandlePendingWakePageAckFastPath(rx)) {
+      feedWatchdogIfEnabled();
+    } else if (!scopeMatchesBinding(rx.scopeId)) {
       LOGW(
           "scope_reject device=%lu msg=%u seq=%lu scope=%s ready=%d",
           (unsigned long)rx.deviceId,
@@ -7127,13 +7129,9 @@ void loop() {
           }
         }
       }
-      if (tryHandlePendingWakePageAckFastPath(rx)) {
-        feedWatchdogIfEnabled();
-      } else {
       enqueueAcceptedUplink(rx);
       if (activeSimpleCommand.active) {
         scheduleActiveSimpleCommandRetryForRx(rx);
-      }
       }
     }
   }
