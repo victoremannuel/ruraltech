@@ -1,0 +1,8 @@
+$ arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs --build-path /tmp/ruraltech-build-matriz gateway-matriz
+started_at=2026-04-25T21:33:38Z
+Sketch uses 1395623 bytes (70%) of program storage space. Maximum is 1966080 bytes.
+Global variables use 87316 bytes (26%) of dynamic memory, leaving 240364 bytes for local variables. Maximum is 327680 bytes.
+
+exit_code=0
+timed_out=0
+finished_at=2026-04-25T21:36:23Z

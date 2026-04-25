@@ -1,0 +1,12 @@
+$ strings /tmp/ruraltech-build-coleira/coleira.ino.bin
+56b2b40c6ea2a68262fb680ff62b4502941222e8
+56b2b40
+exit_code=0
+$ strings /tmp/ruraltech-build-coleira/coleira.ino.bootloader.bin
+exit_code=0
+$ strings /tmp/ruraltech-build-coleira/coleira.ino.merged.bin
+56b2b40c6ea2a68262fb680ff62b4502941222e8
+56b2b40
+exit_code=0
+$ strings /tmp/ruraltech-build-coleira/coleira.ino.partitions.bin
+exit_code=0

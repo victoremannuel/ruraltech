@@ -1,0 +1,6 @@
+$ arduino-cli cache clean
+started_at=2026-04-25T21:33:37Z
+
+exit_code=0
+timed_out=0
+finished_at=2026-04-25T21:33:38Z
