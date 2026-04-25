@@ -8,6 +8,7 @@
 #include "config.h"
 #include "LoRaProtocol.h"
 #include "CryptoEngine.h"
+#include "../firmware/shared/rtr_diag_support.h"
 
 class LoRaManager {
  public:

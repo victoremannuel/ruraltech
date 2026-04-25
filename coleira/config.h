@@ -101,6 +101,8 @@ constexpr uint32_t DAILY_HEALTH_FALLBACK_MS = 86400000UL;
 constexpr bool RTR_BENCH_MODE = false;
 constexpr bool RTR_DISABLE_DEEP_SLEEP_FOR_BENCH = false;
 constexpr bool RTR_FORCE_DISCOVERY_RX_OPEN = false;
+constexpr uint32_t RTR_BENCH_HOLD_AFTER_UPLINK_MS = 0;
+constexpr uint32_t RTR_BENCH_SECONDARY_WINDOW_MS = 0;
 
 // Segurança animal
 constexpr uint8_t MAX_PULSES_PER_10_MIN = 3;

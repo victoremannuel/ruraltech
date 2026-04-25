@@ -47,6 +47,7 @@
 #include "../firmware/shared/radio_transport_v1_constants.h"
 #include "../firmware/shared/radio_transport_v1_reason_codes.h"
 #include "../firmware/shared/radio_transport_v1_session_id.h"
+#include "../firmware/shared/rtr_diag_support.h"
 #include "../firmware/shared/radio_proto_v2_codec.h"
 #include "../firmware/shared/radio_proto_v2_crc.h"
 #include "../firmware/shared/radio_proto_v2_id.h"
@@ -302,6 +303,7 @@ constexpr uint8_t kMaxDevicePresenceEntries = cfg::MAX_HERD_OPERATION_DEVICES;
 constexpr uint32_t kRecentWakeHintMs = 4000;
 PendingWakeSession pendingWakeSessions[kMaxPendingWakeSessions]{};
 rtrwake::Presence devicePresence[kMaxDevicePresenceEntries]{};
+rtrdiag::PageSnapshot lastPageDiag{};
 
 struct CloudPublishContext {
   uint32_t nowSec = 0;
@@ -3248,7 +3250,17 @@ static void notePendingWakeHintFromUplink(const LoRaFrame& rx) {
   const char* fromState = pendingWakeStateLabel(session.core.state);
   const uint32_t nowMs = millis();
   session.core.uplinkSeq = rx.seq;
-  if (!rtrwake::noteUplinkHint(&session.core, rx.deviceId, nowMs)) return;
+  const bool accepted = rtrwake::noteUplinkHint(&session.core, rx.deviceId, nowMs);
+  rtrdiag::noteWakeHint(&lastPageDiag, nowMs, rx.seq, accepted);
+  LOGI(
+      "RTR_WAKE_HINT_CAPTURED deviceId=%lu commandId=%s uplinkSeq=%lu accepted=%d stateBefore=%s atMs=%lu",
+      (unsigned long)rx.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long)rx.seq,
+      accepted ? 1 : 0,
+      fromState,
+      (unsigned long)nowMs);
+  if (!accepted) return;
   publishFenceTransportState(session.core.deviceId, "paging_ready");
   LOGI(
       "RTR_WAKE_HINT_FROM_UPLINK deviceId=%lu commandId=%s stateBefore=%s lastSeenAtMs=%lu campaignCount=%u",
@@ -3374,6 +3386,7 @@ static bool trySendRtrPage(
           "trySendRtrPage",
           nullptr,
           session.commandId)) {
+    rtrdiag::notePageOutcome(&lastPageDiag, "not_sent");
     setPendingWakeReason(
         session,
         rtrv1::REASON_PAGE_SEND_FAILED,
@@ -3388,6 +3401,14 @@ static bool trySendRtrPage(
   }
   publishFenceTransportState(session.core.deviceId, "paging_sent");
   rtrwake::markPageAttempt(&session.core, millis(), rtrv1::PAGE_ACK_TIMEOUT_MS);
+  rtrdiag::notePageTx(
+      &lastPageDiag,
+      session.core.deviceId,
+      session.core.pageSessionId,
+      session.core.pageMessageId,
+      session.core.campaignCount,
+      session.core.lastPageSentAtMs,
+      session.core.pageAckDeadlineAtMs);
   transitionPendingWakeState(session, rtrwake::State::PAGING_AWAITING_ACK, "page_tx_ok");
   publishFenceTransportState(session.core.deviceId, "awaiting_page_ack");
   appendPropertyCommandEvent(
@@ -3410,6 +3431,16 @@ static bool trySendRtrPage(
         (unsigned long)rtrv1::FAST_PAGE_DEADLINE_MS,
         fastPathMetric.deadlineMet ? 1 : 0);
   }
+  LOGI(
+      "RTR_PAGE_TX_CONTEXT deviceId=%lu commandId=%s sessionId=%llu messageId=%lu campaignCount=%u sentAtMs=%lu ackDeadlineAtMs=%lu outcome=%s",
+      (unsigned long)lastPageDiag.lastPageTargetDeviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)lastPageDiag.lastPageSessionId,
+      (unsigned long)lastPageDiag.lastPageMessageId,
+      (unsigned)lastPageDiag.lastPageCampaignCount,
+      (unsigned long)lastPageDiag.lastPageSentAtMs,
+      (unsigned long)lastPageDiag.lastPageAckDeadlineAtMs,
+      lastPageDiag.lastPageOutcome);
   LOGI(
       "RTR_PAGE_TX_OK deviceId=%lu commandId=%s sessionId=%llu messageId=%lu campaignCount=%u",
       (unsigned long)session.core.deviceId,
@@ -3539,6 +3570,7 @@ static bool handlePendingWakePageAck(const LoRaFrame& rx) {
     return true;
   }
   rtrwake::markPageAcked(&session.core);
+  rtrdiag::notePageOutcome(&lastPageDiag, "ack_rx");
   transitionPendingWakeState(session, rtrwake::State::PAGE_ACKED, "page_ack_ok");
   publishFenceTransportState(session.core.deviceId, "page_acked");
   appendPropertyCommandEvent(
@@ -4486,6 +4518,7 @@ static bool prepareFenceWakeSession(
   session->estimatedFragments = static_cast<uint16_t>(plan.totalChunks + 2);
   session->rpv2PlanReady = true;
   session->plan = plan;
+  rtrdiag::notePageOutcome(&lastPageDiag, "none");
   setPendingWakeReason(*session, rtrv1::REASON_NONE, "");
 
   publishFenceTransportState(
@@ -4575,12 +4608,23 @@ static void processPendingWakeSessions() {
         }
         if (rtrwake::pageAckTimedOut(session.core, nowMs)) {
           if (rtrwake::canRetryAfterTimeout(session.core)) {
+            rtrdiag::notePageOutcome(&lastPageDiag, "timeout_retry");
             LOGW(
                 "RTR_PAGE_TIMEOUT_RETRY deviceId=%lu commandId=%s campaignCount=%u pageSent=%d lastPageSentAtMs=%lu ackDeadlineAtMs=%lu",
                 (unsigned long)session.core.deviceId,
                 session.commandId[0] ? session.commandId : "-",
                 (unsigned)session.core.campaignCount,
                 session.core.pageSent ? 1 : 0,
+                (unsigned long)session.core.lastPageSentAtMs,
+                (unsigned long)session.core.pageAckDeadlineAtMs);
+            LOGW(
+                "RTR_PAGE_TERMINAL_CONTEXT deviceId=%lu commandId=%s sessionId=%llu messageId=%lu outcome=%s campaignCount=%u sentAtMs=%lu ackDeadlineAtMs=%lu",
+                (unsigned long)session.core.deviceId,
+                session.commandId[0] ? session.commandId : "-",
+                (unsigned long long)session.core.pageSessionId,
+                (unsigned long)session.core.pageMessageId,
+                lastPageDiag.lastPageOutcome,
+                (unsigned)session.core.campaignCount,
                 (unsigned long)session.core.lastPageSentAtMs,
                 (unsigned long)session.core.pageAckDeadlineAtMs);
             transitionPendingWakeState(
@@ -4598,12 +4642,23 @@ static void processPendingWakeSessions() {
                 false,
                 false);
           } else {
+            rtrdiag::notePageOutcome(&lastPageDiag, "timeout_final");
             LOGW(
                 "RTR_PAGE_TIMEOUT_FINAL deviceId=%lu commandId=%s campaignCount=%u pageSent=%d lastPageSentAtMs=%lu ackDeadlineAtMs=%lu",
                 (unsigned long)session.core.deviceId,
                 session.commandId[0] ? session.commandId : "-",
                 (unsigned)session.core.campaignCount,
                 session.core.pageSent ? 1 : 0,
+                (unsigned long)session.core.lastPageSentAtMs,
+                (unsigned long)session.core.pageAckDeadlineAtMs);
+            LOGW(
+                "RTR_PAGE_TERMINAL_CONTEXT deviceId=%lu commandId=%s sessionId=%llu messageId=%lu outcome=%s campaignCount=%u sentAtMs=%lu ackDeadlineAtMs=%lu",
+                (unsigned long)session.core.deviceId,
+                session.commandId[0] ? session.commandId : "-",
+                (unsigned long long)session.core.pageSessionId,
+                (unsigned long)session.core.pageMessageId,
+                lastPageDiag.lastPageOutcome,
+                (unsigned)session.core.campaignCount,
                 (unsigned long)session.core.lastPageSentAtMs,
                 (unsigned long)session.core.pageAckDeadlineAtMs);
             appendPropertyCommandEvent(

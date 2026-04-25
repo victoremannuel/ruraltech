@@ -399,6 +399,11 @@ Historico adicional desta rodada:
 - 2026-04-21: o checklist cirurgico pre-teste foi automatizado em script para evitar nova bancada invalida com matriz em perfil errado
 - 2026-04-21: a observabilidade da matriz foi reforcada no boot e em `/status` para distinguir `cloudConfigured` de `queuePollingConfigured`
 - 2026-04-21: verificado novamente contra o plano externo `plano_cirurgico_impl_fastpath_page_rxstatus_codex.md`; o repositorio atual permaneceu consistente com a implementacao descrita e os testes host-chave passaram sem novas mudancas
+- 2026-04-25: rodada cirurgica de radio/cripto/page adicionou snapshot estruturado do ultimo `decrypt_failed` na matriz, exposto em `/status` e em log `LORA_RX_DECRYPT_FAIL_CONTEXT`
+- 2026-04-25: a matriz passou a manter snapshot do ultimo ciclo `wake hint -> page -> ack/timeout`, com `lastPageOutcome`, `lastWakeHint*` e logs `RTR_WAKE_HINT_CAPTURED`, `RTR_PAGE_TX_CONTEXT` e `RTR_PAGE_TERMINAL_CONTEXT`
+- 2026-04-25: a coleira ganhou contadores e snapshots de janela/discovery/raw downlink/page, expostos em `/status`, com logs `RTR_WINDOW_ARMED`, `RTR_WINDOW_CLOSED_CONTEXT`, `RTR_RAW_DOWNLINK_SEEN`, `RTR_RAW_DOWNLINK_REJECT_CONTEXT` e `RTR_PAGE_RX_CONTEXT`
+- 2026-04-25: overrides de bancada opt-in foram adicionados na coleira para separar timing de radio/cripto sem alterar o default de producao: `RTR_BENCH_HOLD_AFTER_UPLINK_MS` e `RTR_BENCH_SECONDARY_WINDOW_MS`
+- 2026-04-25: helper compartilhado `firmware/shared/rtr_diag_support.h` e teste host `rtr_diag_support_test.cpp` passaram junto com os testes existentes do wake/page
 
 ## Next step
 
@@ -421,12 +426,19 @@ Historico adicional desta rodada:
    - `RTR_SESSION_MODE_ENTER`
    - `RTR_TO_RPV2_START`
    - sequência `RPV2_*`
-3. Confirmar que a coleira permanece acordada por wake lock e não entra em `deep sleep` antes do término ou timeout da sessão
-4. Confirmar no backend:
+3. Capturar `/status` da matriz e da coleira antes e depois do comando, com foco em:
+   - matriz: `lastDecryptFail*`, `lastPageOutcome`, `lastWakeHint*`, `lastPageSentAtMs`, `lastPageAckDeadlineAtMs`
+   - coleira: `rawDownlinkSeenCount`, `rawDownlinkRejectedCount`, `lastDownlinkDropReason`, `pageRxCount`, `lastPageRxAtMs`, `lastPageAckTxAtMs`
+4. Se a bancada ainda ficar inconclusiva por timing, habilitar temporariamente um dos overrides da coleira:
+   - `RTR_BENCH_HOLD_AFTER_UPLINK_MS`
+   - `RTR_BENCH_SECONDARY_WINDOW_MS`
+   e registrar os logs `BENCH_WAKE_HOLD_ACTIVE` ou `BENCH_SECONDARY_WINDOW_OVERRIDE`
+5. Confirmar que a coleira permanece acordada por wake lock e não entra em `deep sleep` antes do término ou timeout da sessão
+6. Confirmar no backend:
    - `transport=radio_fence_v2`
    - `transportState=applied`
    - falha, se houver, com `reasonCode`/`reasonLabel` ligados ao page
-5. Se ainda falhar, identificar se o próximo gargalo está em:
+7. Se ainda falhar, identificar se o próximo gargalo está em:
    - ausência de uplink útil após o comando
    - page não recebido pela coleira
    - page ack não correlacionado na matriz

@@ -7,6 +7,8 @@
 #include "../firmware/shared/radio_transport_v1_reason_codes.h"
 #include <cstring>
 
+extern rtrdiag::CollarWindowSnapshot rtrWindowDiag_;
+
 namespace {
 constexpr uint32_t kReplayPersistStride = 16;
 
@@ -153,6 +155,19 @@ bool LoRaManager::receiveFrame(LoRaFrame& frame, uint32_t windowMs) {
       if (len < 28) continue;
       lastRssi_ = radio_.getRSSI();
       lastSnr_ = radio_.getSNR();
+      rtrdiag::noteRawDownlinkSeen(
+          &rtrWindowDiag_,
+          millis(),
+          static_cast<uint16_t>(len),
+          lastRssi_,
+          lastSnr_,
+          0);
+      LOGI(
+          "RTR_RAW_DOWNLINK_SEEN rawLen=%u rssi=%d snr=%.1f seenCount=%lu",
+          (unsigned)len,
+          (int)lastRssi_,
+          lastSnr_,
+          (unsigned long)rtrWindowDiag_.rawDownlinkSeenCount);
       LOGI(
           "LoRa RX raw len=%u rssi=%d snr=%.1f",
           (unsigned)len,
@@ -187,6 +202,14 @@ bool LoRaManager::receiveFrame(LoRaFrame& frame, uint32_t windowMs) {
             (int)lastRssi_,
             lastSnr_,
             rtrv1::rawDropReasonLabel(rtrv1::RawDropReason::DECRYPT_FAILED));
+        rtrdiag::noteRawDownlinkRejected(
+            &rtrWindowDiag_,
+            rtrv1::rawDropReasonLabel(rtrv1::RawDropReason::DECRYPT_FAILED));
+        LOGW(
+            "RTR_RAW_DOWNLINK_REJECT_CONTEXT rawLen=%u msgType=0 reason=%s rejectedCount=%lu",
+            (unsigned)len,
+            rtrWindowDiag_.lastDownlinkDropReason,
+            (unsigned long)rtrWindowDiag_.rawDownlinkRejectedCount);
         LOGW("LoRa RX descartado: decrypt_or_hmac_failed len=%u", (unsigned)len);
         continue;
       }
@@ -198,9 +221,18 @@ bool LoRaManager::receiveFrame(LoRaFrame& frame, uint32_t windowMs) {
             (int)lastRssi_,
             lastSnr_,
             rtrv1::rawDropReasonLabel(rtrv1::RawDropReason::INVALID_HEADER));
+        rtrdiag::noteRawDownlinkRejected(
+            &rtrWindowDiag_,
+            rtrv1::rawDropReasonLabel(rtrv1::RawDropReason::INVALID_HEADER));
+        LOGW(
+            "RTR_RAW_DOWNLINK_REJECT_CONTEXT rawLen=%u msgType=0 reason=%s rejectedCount=%lu",
+            (unsigned)len,
+            rtrWindowDiag_.lastDownlinkDropReason,
+            (unsigned long)rtrWindowDiag_.rawDownlinkRejectedCount);
         LOGW("LoRa RX descartado: invalid_plain_frame len=%u", (unsigned)len);
         continue;
       }
+      rtrWindowDiag_.lastDownlinkRawMsgType = static_cast<uint8_t>(frame.msgType);
       if (memcmp(frame.nonce, nonce, sizeof(frame.nonce)) != 0) {
         nonceMismatchCount_++;
         char externalHex[25] = {};
@@ -212,6 +244,15 @@ bool LoRaManager::receiveFrame(LoRaFrame& frame, uint32_t windowMs) {
             externalHex,
             internalHex,
             (unsigned long)nonceMismatchCount_);
+        rtrdiag::noteRawDownlinkRejected(
+            &rtrWindowDiag_,
+            "nonce_mismatch");
+        LOGW(
+            "RTR_RAW_DOWNLINK_REJECT_CONTEXT rawLen=%u msgType=%u reason=%s rejectedCount=%lu",
+            (unsigned)len,
+            (unsigned)frame.msgType,
+            rtrWindowDiag_.lastDownlinkDropReason,
+            (unsigned long)rtrWindowDiag_.rawDownlinkRejectedCount);
         continue;
       }
 
@@ -235,6 +276,15 @@ bool LoRaManager::receiveFrame(LoRaFrame& frame, uint32_t windowMs) {
             (unsigned long)frame.deviceId,
             (unsigned long long)frame.scopeId,
             rtrv1::rawDropReasonLabel(rtrv1::RawDropReason::TARGET_MISMATCH));
+        rtrdiag::noteRawDownlinkRejected(
+            &rtrWindowDiag_,
+            rtrv1::rawDropReasonLabel(rtrv1::RawDropReason::TARGET_MISMATCH));
+        LOGW(
+            "RTR_RAW_DOWNLINK_REJECT_CONTEXT rawLen=%u msgType=%u reason=%s rejectedCount=%lu",
+            (unsigned)len,
+            (unsigned)frame.msgType,
+            rtrWindowDiag_.lastDownlinkDropReason,
+            (unsigned long)rtrWindowDiag_.rawDownlinkRejectedCount);
         LOGI(
             "LoRa RX ignorado: target=%lu self=%lu",
             (unsigned long)frame.deviceId,
@@ -259,6 +309,15 @@ bool LoRaManager::receiveFrame(LoRaFrame& frame, uint32_t windowMs) {
             (unsigned long)frame.deviceId,
             (unsigned long long)frame.scopeId,
             rtrv1::rawDropReasonLabel(rtrv1::RawDropReason::UNKNOWN_TYPE));
+        rtrdiag::noteRawDownlinkRejected(
+            &rtrWindowDiag_,
+            rtrv1::rawDropReasonLabel(rtrv1::RawDropReason::UNKNOWN_TYPE));
+        LOGW(
+            "RTR_RAW_DOWNLINK_REJECT_CONTEXT rawLen=%u msgType=%u reason=%s rejectedCount=%lu",
+            (unsigned)len,
+            (unsigned)frame.msgType,
+            rtrWindowDiag_.lastDownlinkDropReason,
+            (unsigned long)rtrWindowDiag_.rawDownlinkRejectedCount);
         LOGI("LoRa RX ignorado: unsupported_type=%u", (unsigned)frame.msgType);
         continue;
       }
@@ -274,9 +333,19 @@ bool LoRaManager::receiveFrame(LoRaFrame& frame, uint32_t windowMs) {
             (unsigned long)frame.deviceId,
             (unsigned long long)frame.scopeId,
             rtrv1::rawDropReasonLabel(rtrv1::RawDropReason::REPLAY_BLOCKED));
+        rtrdiag::noteRawDownlinkRejected(
+            &rtrWindowDiag_,
+            rtrv1::rawDropReasonLabel(rtrv1::RawDropReason::REPLAY_BLOCKED));
+        LOGW(
+            "RTR_RAW_DOWNLINK_REJECT_CONTEXT rawLen=%u msgType=%u reason=%s rejectedCount=%lu",
+            (unsigned)len,
+            (unsigned)frame.msgType,
+            rtrWindowDiag_.lastDownlinkDropReason,
+            (unsigned long)rtrWindowDiag_.rawDownlinkRejectedCount);
         LOGW("Replay detectado seq=%lu", frame.seq);
         continue;
       }
+      rtrdiag::noteRawDownlinkAccepted(&rtrWindowDiag_);
       LOGI(
           "RTR_RAW_DOWNLINK_ACCEPT rawLen=%u msgType=%u rssi=%d snr=%.1f targetDeviceId=%lu scopeId=%016llX reason=accepted",
           (unsigned)len,

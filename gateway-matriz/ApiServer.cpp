@@ -32,6 +32,7 @@ extern uint32_t simpleAckWaitDeadlineAtMs;
 extern char simpleAckWaitCommandId[48];
 extern char lastSimpleCommandFeedbackOutcome[24];
 extern uint32_t lastSimpleCommandAckMatchedAtMs;
+extern rtrdiag::PageSnapshot lastPageDiag;
 void fillBackhaulDiagJson(JsonObject obj);
 void runBackhaulManualDiagnostic();
 
@@ -108,7 +109,7 @@ void ApiServer::begin() {
   g_server = this;
   if (cfg::FEATURE_HTTP) {
     http_.on("/status", HTTP_GET, [this]() {
-      StaticJsonDocument<2048> doc;
+      StaticJsonDocument<3072> doc;
       const buildinfo::BuildInfo build = buildinfo::current();
       doc["ok"] = true;
       doc["service"] = "gateway_matrix";
@@ -183,6 +184,34 @@ void ApiServer::begin() {
       doc["lastAcceptedSeq"] = lora.lastAcceptedSeq();
       doc["lastLoraIrqFlags"] = lora.lastIrqFlags();
       doc["lastLoraState"] = lora.lastRadioState();
+      const rtrdiag::DecryptFailSnapshot& decryptFail = lora.lastDecryptFail();
+      doc["lastDecryptFailAtMs"] = decryptFail.atMs;
+      doc["lastDecryptFailLen"] = decryptFail.len;
+      doc["lastDecryptFailRssi"] = decryptFail.rssi;
+      doc["lastDecryptFailSnr"] = decryptFail.snr;
+      doc["lastDecryptFailIrqFlags"] = decryptFail.irqFlags;
+      doc["lastDecryptFailRadioState"] = decryptFail.radioState;
+      doc["lastDecryptFailReason"] = decryptFail.reason;
+      doc["lastDecryptFailHeadHex"] = decryptFail.headHex;
+      doc["lastDecryptFailNonceHex"] = decryptFail.nonceHex;
+      doc["lastDecryptFailTagHex"] = decryptFail.tagHex;
+      doc["lastDecryptFailCount"] = decryptFail.count;
+      char lastPageSessionId[24]{};
+      snprintf(
+          lastPageSessionId,
+          sizeof(lastPageSessionId),
+          "%llu",
+          (unsigned long long)lastPageDiag.lastPageSessionId);
+      doc["lastPageTargetDeviceId"] = lastPageDiag.lastPageTargetDeviceId;
+      doc["lastPageSessionId"] = lastPageSessionId;
+      doc["lastPageMessageId"] = lastPageDiag.lastPageMessageId;
+      doc["lastPageCampaignCount"] = lastPageDiag.lastPageCampaignCount;
+      doc["lastPageSentAtMs"] = lastPageDiag.lastPageSentAtMs;
+      doc["lastPageAckDeadlineAtMs"] = lastPageDiag.lastPageAckDeadlineAtMs;
+      doc["lastPageOutcome"] = lastPageDiag.lastPageOutcome;
+      doc["lastWakeHintAtMs"] = lastPageDiag.lastWakeHintAtMs;
+      doc["lastWakeHintSeq"] = lastPageDiag.lastWakeHintSeq;
+      doc["lastWakeHintAccepted"] = lastPageDiag.lastWakeHintAccepted;
       doc["acceptedUplinkQueueDepth"] = acceptedUplinkQueueCount;
       doc["acceptedUplinkDropCount"] = acceptedUplinkDropCount;
       doc["acceptedUplinkLastDrainAtMs"] = acceptedUplinkLastDrainAtMs;

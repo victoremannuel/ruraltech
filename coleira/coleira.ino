@@ -41,6 +41,7 @@
 #include "../firmware/shared/command_contract.h"
 #include "../firmware/shared/AreaSyncLogger.h"
 #include "../firmware/shared/build_info.h"
+#include "../firmware/shared/rtr_diag_support.h"
 #include "../firmware/shared/radio_transport_v1_codec.h"
 #include "../firmware/shared/radio_transport_v1_collar_policy.h"
 #include "../firmware/shared/radio_transport_v1_constants.h"
@@ -106,6 +107,8 @@ uint32_t bootMinFreeHeap_ = 0xFFFFFFFFUL;
 esp_reset_reason_t lastResetReason_ = ESP_RST_UNKNOWN;
 bool maintenanceWindowActive_ = false;
 char bootStage_[32] = "boot";
+rtrdiag::CollarWindowSnapshot rtrWindowDiag_;
+uint32_t lastUplinkTxAtMs_ = 0;
 static void logEvent(EventType type, int32_t d1, int32_t d2);
 static void logPolygonApplyResult(
     MsgType commandType,
@@ -797,7 +800,7 @@ static String collarApSsid() {
 static void configureStatusServerRoutes() {
   if (statusServerRoutesConfigured_) return;
   statusServer.on("/status", HTTP_GET, []() {
-    StaticJsonDocument<1024> doc;
+    StaticJsonDocument<2048> doc;
     const buildinfo::BuildInfo build = buildinfo::current();
     doc["ok"] = true;
     doc["service"] = "collar";
@@ -836,6 +839,28 @@ static void configureStatusServerRoutes() {
     doc["loraNonceMismatchCount"] = lora.nonceMismatchCount();
     doc["loraReplayRejectCount"] = lora.replayRejectCount();
     doc["lastAcceptedSeq"] = lora.lastAcceptedSeq();
+    doc["discoveryWindowOpenCount"] = rtrWindowDiag_.discoveryWindowOpenCount;
+    doc["secondaryWindowOpenCount"] = rtrWindowDiag_.secondaryWindowOpenCount;
+    doc["lastDiscoveryWindowOpenAtMs"] = rtrWindowDiag_.lastDiscoveryWindowOpenAtMs;
+    doc["lastSecondaryWindowOpenAtMs"] = rtrWindowDiag_.lastSecondaryWindowOpenAtMs;
+    doc["lastDiscoveryWindowMs"] = rtrWindowDiag_.lastDiscoveryWindowMs;
+    doc["lastSecondaryWindowMs"] = rtrWindowDiag_.lastSecondaryWindowMs;
+    doc["lastWindowCloseAtMs"] = rtrWindowDiag_.lastWindowCloseAtMs;
+    doc["lastWindowHandled"] = rtrWindowDiag_.lastWindowHandled;
+    doc["lastDownlinkRawSeenAtMs"] = rtrWindowDiag_.lastDownlinkRawSeenAtMs;
+    doc["lastDownlinkRawLen"] = rtrWindowDiag_.lastDownlinkRawLen;
+    doc["lastDownlinkRawRssi"] = rtrWindowDiag_.lastDownlinkRawRssi;
+    doc["lastDownlinkRawSnr"] = rtrWindowDiag_.lastDownlinkRawSnr;
+    doc["lastDownlinkRawMsgType"] = rtrWindowDiag_.lastDownlinkRawMsgType;
+    doc["lastDownlinkDropReason"] = rtrWindowDiag_.lastDownlinkDropReason;
+    doc["lastPageRxAtMs"] = rtrWindowDiag_.lastPageRxAtMs;
+    doc["lastPageAckTxAtMs"] = rtrWindowDiag_.lastPageAckTxAtMs;
+    doc["pageRxCount"] = rtrWindowDiag_.pageRxCount;
+    doc["rawDownlinkSeenCount"] = rtrWindowDiag_.rawDownlinkSeenCount;
+    doc["rawDownlinkAcceptedCount"] = rtrWindowDiag_.rawDownlinkAcceptedCount;
+    doc["rawDownlinkRejectedCount"] = rtrWindowDiag_.rawDownlinkRejectedCount;
+    doc["benchHoldAfterUplinkMs"] = cfg::RTR_BENCH_HOLD_AFTER_UPLINK_MS;
+    doc["benchSecondaryWindowMs"] = cfg::RTR_BENCH_SECONDARY_WINDOW_MS;
     if (bindingPropertyId_[0]) doc["propertyId"] = bindingPropertyId_;
     if (bindingPropertyScopeId_[0]) doc["propertyScopeId"] = bindingPropertyScopeId_;
     if (bindingMatrixGatewayId_[0]) doc["matrixGatewayId"] = bindingMatrixGatewayId_;
@@ -2585,6 +2610,14 @@ static bool handleRtrControlDownlink(const LoRaFrame& frame) {
       (unsigned)page.commandType,
       (unsigned)page.estimatedFragments,
       (unsigned long)page.wakeLockSec);
+  rtrdiag::notePageRx(&rtrWindowDiag_, millis());
+  LOGI(
+      "RTR_PAGE_RX_CONTEXT sessionId=%llu messageId=%lu commandType=%u atMs=%lu pageRxCount=%lu",
+      (unsigned long long)header.sessionId,
+      (unsigned long)header.messageId,
+      (unsigned)page.commandType,
+      (unsigned long)rtrWindowDiag_.lastPageRxAtMs,
+      (unsigned long)rtrWindowDiag_.pageRxCount);
 
   rtrSessionMode_.active = true;
   rtrSessionMode_.sessionId = header.sessionId;
@@ -2640,6 +2673,7 @@ static bool handleRtrControlDownlink(const LoRaFrame& frame) {
     return true;
   }
   const uint32_t ackTxAtMs = millis();
+  rtrdiag::notePageAckTx(&rtrWindowDiag_, ackTxAtMs);
   LOGI(
       "RTR_PAGE_ACK_TX targetDeviceId=%lu sessionId=%llu messageId=%lu suggestedRxWindowMs=%u",
       (unsigned long)cfg::DEVICE_ID,
@@ -3357,6 +3391,9 @@ void loop() {
 
     logLoopCheckpoint("before_lora_send");
     lastLoRaTxOk_ = uplink.payloadLen > 0 && lora.sendFrame(uplink);
+    if (lastLoRaTxOk_) {
+      lastUplinkTxAtMs_ = millis();
+    }
     logLoopCheckpoint("after_lora_send");
     if (!lastLoRaTxOk_) {
       LOGW("Falha envio telemetria; permanece em fila local.");
@@ -3382,6 +3419,13 @@ void loop() {
   }
   bool handledDownlink = false;
   logLoopCheckpoint("before_lora_receive");
+  rtrdiag::noteDiscoveryWindowOpen(&rtrWindowDiag_, false, millis(), rxWindowMs);
+  LOGI(
+      "RTR_WINDOW_ARMED window=discovery atMs=%lu windowMs=%lu sessionActive=%d bench=%d",
+      (unsigned long)rtrWindowDiag_.lastDiscoveryWindowOpenAtMs,
+      (unsigned long)rtrWindowDiag_.lastDiscoveryWindowMs,
+      rtrSessionActive ? 1 : 0,
+      cfg::RTR_BENCH_MODE ? 1 : 0);
   LOGI(
       "RTR_DISCOVERY_WINDOW_OPEN windowMs=%lu sessionActive=%d bench=%d",
       (unsigned long)rxWindowMs,
@@ -3391,10 +3435,18 @@ void loop() {
     applyDownlink(down);
     handledDownlink = true;
   }
+  rtrdiag::noteWindowClosed(&rtrWindowDiag_, millis(), handledDownlink);
   LOGI(
       "RTR_DISCOVERY_WINDOW_CLOSE handled=%d sessionActive=%d",
       handledDownlink ? 1 : 0,
       isRtrSessionModeActive() ? 1 : 0);
+  LOGI(
+      "RTR_WINDOW_CLOSED_CONTEXT window=discovery atMs=%lu handled=%d rawSeen=%lu rawRejected=%lu pageRxCount=%lu",
+      (unsigned long)rtrWindowDiag_.lastWindowCloseAtMs,
+      handledDownlink ? 1 : 0,
+      (unsigned long)rtrWindowDiag_.rawDownlinkSeenCount,
+      (unsigned long)rtrWindowDiag_.rawDownlinkRejectedCount,
+      (unsigned long)rtrWindowDiag_.pageRxCount);
 
   if (handledDownlink && cfg::LORA_POST_COMMAND_EVENT_HOLDOFF_MS > 0) {
     delay(cfg::LORA_POST_COMMAND_EVENT_HOLDOFF_MS);
@@ -3485,17 +3537,40 @@ void loop() {
 
   const bool sessionModeNow = isRtrSessionModeActive();
   if (rtrv1::shouldOpenSecondaryRxWindow(handledDownlink, sessionModeNow)) {
+    const uint32_t secondaryWindowMs = rtrdiag::secondaryWindowMs(
+        cfg::RTR_SECONDARY_RX_WINDOW_MS,
+        cfg::RTR_BENCH_SECONDARY_WINDOW_MS);
+    if (secondaryWindowMs != cfg::RTR_SECONDARY_RX_WINDOW_MS) {
+      LOGW(
+          "BENCH_SECONDARY_WINDOW_OVERRIDE baseMs=%lu overrideMs=%lu",
+          (unsigned long)cfg::RTR_SECONDARY_RX_WINDOW_MS,
+          (unsigned long)secondaryWindowMs);
+    }
+    rtrdiag::noteDiscoveryWindowOpen(&rtrWindowDiag_, true, millis(), secondaryWindowMs);
+    LOGI(
+        "RTR_WINDOW_ARMED window=secondary atMs=%lu windowMs=%lu sessionActive=%d",
+        (unsigned long)rtrWindowDiag_.lastSecondaryWindowOpenAtMs,
+        (unsigned long)rtrWindowDiag_.lastSecondaryWindowMs,
+        sessionModeNow ? 1 : 0);
     LOGI(
         "RTR_DISCOVERY_WINDOW_SECONDARY_OPEN windowMs=%lu",
-        (unsigned long)cfg::RTR_SECONDARY_RX_WINDOW_MS);
+        (unsigned long)secondaryWindowMs);
     bool secondaryHandled = false;
-    if (lora.receiveFrame(down, cfg::RTR_SECONDARY_RX_WINDOW_MS)) {
+    if (lora.receiveFrame(down, secondaryWindowMs)) {
       applyDownlink(down);
       secondaryHandled = true;
     }
+    rtrdiag::noteWindowClosed(&rtrWindowDiag_, millis(), secondaryHandled);
     LOGI(
         "RTR_DISCOVERY_WINDOW_SECONDARY_CLOSE handled=%d",
         secondaryHandled ? 1 : 0);
+    LOGI(
+        "RTR_WINDOW_CLOSED_CONTEXT window=secondary atMs=%lu handled=%d rawSeen=%lu rawRejected=%lu pageRxCount=%lu",
+        (unsigned long)rtrWindowDiag_.lastWindowCloseAtMs,
+        secondaryHandled ? 1 : 0,
+        (unsigned long)rtrWindowDiag_.rawDownlinkSeenCount,
+        (unsigned long)rtrWindowDiag_.rawDownlinkRejectedCount,
+        (unsigned long)rtrWindowDiag_.pageRxCount);
     handledDownlink = handledDownlink || secondaryHandled;
   }
 
@@ -3507,6 +3582,19 @@ void loop() {
 
   if (cfg::RTR_BENCH_MODE || cfg::RTR_DISABLE_DEEP_SLEEP_FOR_BENCH) {
     LOGW("RTR_BENCH_MODE ativo; deep sleep desabilitado");
+    delay(50);
+    return;
+  }
+
+  if (rtrdiag::benchWakeHoldActive(
+          millis(),
+          lastUplinkTxAtMs_,
+          cfg::RTR_BENCH_HOLD_AFTER_UPLINK_MS)) {
+    const uint32_t holdElapsedMs = millis() - lastUplinkTxAtMs_;
+    LOGW(
+        "BENCH_WAKE_HOLD_ACTIVE elapsedMs=%lu remainingMs=%lu",
+        (unsigned long)holdElapsedMs,
+        (unsigned long)(cfg::RTR_BENCH_HOLD_AFTER_UPLINK_MS - holdElapsedMs));
     delay(50);
     return;
   }

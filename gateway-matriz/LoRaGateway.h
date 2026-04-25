@@ -8,6 +8,7 @@
 #include "config.h"
 #include "LoRaProtocol.h"
 #include "CryptoEngine.h"
+#include "../firmware/shared/rtr_diag_support.h"
 
 struct SecureWireMetrics {
   bool ok = false;
@@ -45,6 +46,9 @@ class LoRaGateway {
   uint32_t nonceMismatchCount() const { return nonceMismatchCount_; }
   uint32_t replayRejectCount() const { return replayRejectCount_; }
   uint32_t lastAcceptedSeq() const { return lastAcceptedSeq_; }
+  const rtrdiag::DecryptFailSnapshot& lastDecryptFail() const {
+    return lastDecryptFail_;
+  }
 
  private:
   SX1276 radio_;
@@ -68,6 +72,7 @@ class LoRaGateway {
   uint32_t nonceMismatchCount_ = 0;
   uint32_t replayRejectCount_ = 0;
   uint32_t lastAcceptedSeq_ = 0;
+  rtrdiag::DecryptFailSnapshot lastDecryptFail_{};
   uint32_t lastSeqPerDevice_[cfg::LORA_REPLAY_TRACKED_DEVICES]{};
   uint32_t deviceIds_[cfg::LORA_REPLAY_TRACKED_DEVICES]{};
   void loadReplayState();

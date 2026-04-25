@@ -207,6 +207,19 @@ bool LoRaGateway::receive(LoRaFrame& frame) {
     bytesToHex(nonce, 12, nonceHex, sizeof(nonceHex));
     bytesToHex(cipher, cipherLen < 8 ? cipherLen : 8, headHex, sizeof(headHex));
     bytesToHex(tag, 8, tagHex, sizeof(tagHex));
+    rtrdiag::noteDecryptFail(
+        &lastDecryptFail_,
+        lastRawRxAtMs_,
+        decryptFailCount_,
+        static_cast<uint16_t>(packetLen),
+        static_cast<int16_t>(lastRssi_),
+        lastSnr_,
+        lastIrqFlags_,
+        lastRadioState_,
+        "decrypt_or_hmac_failed",
+        headHex,
+        nonceHex,
+        tagHex);
     LOGW(
         "LoRa RX decrypt_failed len=%u cipher_len=%u irq=0x%04X state=%s rssi=%d snr=%.1f nonce=%s tag=%s head=%s fail_count=%lu",
         (unsigned)packetLen,
@@ -219,6 +232,19 @@ bool LoRaGateway::receive(LoRaFrame& frame) {
         tagHex,
         headHex,
         (unsigned long)decryptFailCount_);
+    LOGW(
+        "LORA_RX_DECRYPT_FAIL_CONTEXT millis=%lu len=%u rssi=%d snr=%.1f irq=0x%04X state=%s head=%s nonce=%s tag=%s reason=%s count=%lu",
+        (unsigned long)lastDecryptFail_.atMs,
+        (unsigned)lastDecryptFail_.len,
+        (int)lastDecryptFail_.rssi,
+        lastDecryptFail_.snr,
+        (unsigned)lastDecryptFail_.irqFlags,
+        lastDecryptFail_.radioState,
+        lastDecryptFail_.headHex,
+        lastDecryptFail_.nonceHex,
+        lastDecryptFail_.tagHex,
+        lastDecryptFail_.reason,
+        (unsigned long)lastDecryptFail_.count);
     LOGW("LoRa RX descartado: decrypt_or_hmac_failed len=%u", (unsigned)len);
     return false;
   }
