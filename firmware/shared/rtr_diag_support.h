@@ -13,6 +13,7 @@ static constexpr size_t kReasonSize = 32;
 static constexpr size_t kStateSize = 24;
 static constexpr size_t kOutcomeSize = 20;
 static constexpr size_t kPatternHexSize = 17;
+static constexpr size_t kWakeStageSize = 32;
 
 struct DecryptFailSnapshot {
   uint32_t atMs = 0;
@@ -40,6 +41,19 @@ struct RawRxSnapshot {
   float lastRawCandidateSnr = 0.0f;
   char lastRawNoiseReason[kReasonSize]{};
   char lastRawPatternHex[kPatternHexSize]{};
+};
+
+struct WakeLoopSnapshot {
+  uint32_t lastWakeLoopStageAtMs = 0;
+  uint64_t lastWakeLoopStageSessionId = 0;
+  uint32_t lastWakeLoopStageDeviceId = 0;
+  uint32_t wakeLoopIterationCount = 0;
+  uint32_t wakeLoopBudgetHitCount = 0;
+  uint32_t wakeLoopYieldCount = 0;
+  uint32_t lastSoftTimeoutAtMs = 0;
+  uint32_t lastRetryScheduleAtMs = 0;
+  uint32_t lastBeginDispatchAtMs = 0;
+  char lastWakeLoopStage[kWakeStageSize]{};
 };
 
 struct PageSnapshot {
@@ -192,6 +206,19 @@ static inline void noteRawDecryptFailed(RawRxSnapshot* snapshot) {
 static inline void noteRawAccepted(RawRxSnapshot* snapshot) {
   if (!snapshot) return;
   snapshot->rawRxAcceptedCount++;
+}
+
+static inline void noteWakeLoopStage(
+    WakeLoopSnapshot* snapshot,
+    const char* stage,
+    uint32_t atMs,
+    uint64_t sessionId,
+    uint32_t deviceId) {
+  if (!snapshot) return;
+  snapshot->lastWakeLoopStageAtMs = atMs;
+  snapshot->lastWakeLoopStageSessionId = sessionId;
+  snapshot->lastWakeLoopStageDeviceId = deviceId;
+  copyText(snapshot->lastWakeLoopStage, sizeof(snapshot->lastWakeLoopStage), stage);
 }
 
 static inline void noteDecryptFail(

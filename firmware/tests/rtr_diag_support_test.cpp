@@ -101,6 +101,13 @@ int main() {
   assert(strcmp(raw.lastRawNoiseReason, "repeated_pattern") == 0);
   assert(strcmp(raw.lastRawPatternHex, "70707070") == 0);
 
+  rtrdiag::WakeLoopSnapshot wake{};
+  rtrdiag::noteWakeLoopStage(&wake, "soft_timeout_mark", 123, 0xAA55ULL, 77);
+  assert(wake.lastWakeLoopStageAtMs == 123);
+  assert(wake.lastWakeLoopStageSessionId == 0xAA55ULL);
+  assert(wake.lastWakeLoopStageDeviceId == 77);
+  assert(strcmp(wake.lastWakeLoopStage, "soft_timeout_mark") == 0);
+
   rtrdiag::CollarWindowSnapshot collar{};
   rtrdiag::noteDiscoveryWindowOpen(&collar, false, 100, 2500);
   rtrdiag::noteRawDownlinkSeen(&collar, 140, 92, -88, 5.5f, 4);

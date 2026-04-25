@@ -33,6 +33,7 @@ extern char simpleAckWaitCommandId[48];
 extern char lastSimpleCommandFeedbackOutcome[24];
 extern uint32_t lastSimpleCommandAckMatchedAtMs;
 extern rtrdiag::PageSnapshot lastPageDiag;
+extern rtrdiag::WakeLoopSnapshot wakeLoopDiag;
 void fillBackhaulDiagJson(JsonObject obj);
 void runBackhaulManualDiagnostic();
 
@@ -243,6 +244,22 @@ void ApiServer::begin() {
       doc["retryCampaignCount"] = lastPageDiag.retryCampaignCount;
       doc["lastAckMatchedInGrace"] = lastPageDiag.lastAckMatchedInGrace;
       doc["lastAckRejectedReason"] = lastPageDiag.lastAckRejectedReason;
+      doc["lastWakeLoopStage"] = wakeLoopDiag.lastWakeLoopStage;
+      doc["lastWakeLoopStageAtMs"] = wakeLoopDiag.lastWakeLoopStageAtMs;
+      char lastWakeLoopStageSessionId[24]{};
+      snprintf(
+          lastWakeLoopStageSessionId,
+          sizeof(lastWakeLoopStageSessionId),
+          "%llu",
+          (unsigned long long)wakeLoopDiag.lastWakeLoopStageSessionId);
+      doc["lastWakeLoopStageSessionId"] = lastWakeLoopStageSessionId;
+      doc["lastWakeLoopStageDeviceId"] = wakeLoopDiag.lastWakeLoopStageDeviceId;
+      doc["wakeLoopIterationCount"] = wakeLoopDiag.wakeLoopIterationCount;
+      doc["wakeLoopBudgetHitCount"] = wakeLoopDiag.wakeLoopBudgetHitCount;
+      doc["wakeLoopYieldCount"] = wakeLoopDiag.wakeLoopYieldCount;
+      doc["lastSoftTimeoutAtMs"] = wakeLoopDiag.lastSoftTimeoutAtMs;
+      doc["lastRetryScheduleAtMs"] = wakeLoopDiag.lastRetryScheduleAtMs;
+      doc["lastBeginDispatchAtMs"] = wakeLoopDiag.lastBeginDispatchAtMs;
       doc["lastPageOutcome"] = lastPageDiag.lastPageOutcome;
       doc["lastWakeHintAtMs"] = lastPageDiag.lastWakeHintAtMs;
       doc["lastWakeHintSeq"] = lastPageDiag.lastWakeHintSeq;

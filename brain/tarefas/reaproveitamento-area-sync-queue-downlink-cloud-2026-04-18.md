@@ -415,6 +415,10 @@ Historico adicional desta rodada:
 - 2026-04-25: a matriz agora prioriza `RTR_PAGE_ACK` no loop principal antes de `scopeMatchesBinding`, reduzindo a chance de o ACK válido ficar atrás de flood de ruído
 - 2026-04-25: `/status` da matriz passou a expor `rawRxSeenCount`, `rawRxNoiseDropCount`, `rawRxInvalidPatternDropCount`, `rawRxDecryptAttemptCount`, `rawRxDecryptFailedCount`, `rawRxAcceptedCount`, `lastRawNoiseReason`, `lastRawPatternHex`, `lastRawCandidateLen`, `lastRawCandidateRssi` e `lastRawCandidateSnr`
 - 2026-04-25: logs novos da matriz nesta fase: `LORA_RX_NOISE_DROP`, `LORA_RX_PATTERN_DROP`, `LORA_RX_DECRYPT_ATTEMPT`, `LORA_RX_DECRYPT_FAIL_CONTEXT`, `LORA_RX_ACCEPT_CONTEXT` e sumários throttled por janela
+- 2026-04-25: o wake/page retry da matriz passou a ser explicitamente incremental por tick, com orçamento global pequeno, `feedWatchdogIfEnabled()` e `delay(1)` após avanço relevante ou budget hit
+- 2026-04-25: o handoff `PAGE_ACKED -> SESSION_START_READY -> BEGIN` foi quebrado em ticks distintos, com `RTR_BEGIN_DISPATCH_DEFERRED` e `RTR_BEGIN_DISPATCH_START` antes do `executeFenceCommandRpv2Plan(...)`
+- 2026-04-25: a matriz agora expõe em `/status` diagnóstico de wake loop: `lastWakeLoopStage`, `lastWakeLoopStageAtMs`, `lastWakeLoopStageSessionId`, `lastWakeLoopStageDeviceId`, `wakeLoopIterationCount`, `wakeLoopBudgetHitCount`, `wakeLoopYieldCount`, `lastSoftTimeoutAtMs`, `lastRetryScheduleAtMs` e `lastBeginDispatchAtMs`
+- 2026-04-25: logs novos desta fase: `RTR_WAKE_LOOP_STAGE`, `RTR_WAKE_LOOP_BUDGET_HIT`, `RTR_WAKE_LOOP_YIELD`, `RTR_PAGE_SOFT_TIMEOUT_MARKED`, `RTR_RETRY_SCHEDULED_LIGHTWEIGHT`, `RTR_BEGIN_DISPATCH_DEFERRED` e `RTR_BEGIN_DISPATCH_START`
 
 ## Next step
 
@@ -447,6 +451,8 @@ Historico adicional desta rodada:
    - matriz: `inFlightPageValid`, `inFlightPageSessionId`, `inFlightPageMessageId`, `inFlightPageHardDeadlineAtMs`, `retryPending`, `retryAtMs`, `lastAckMatchedInGrace`, `lastAckRejectedReason`
    - novos campos de pre-filtro RX:
    - matriz: `rawRxSeenCount`, `rawRxNoiseDropCount`, `rawRxInvalidPatternDropCount`, `rawRxDecryptAttemptCount`, `rawRxDecryptFailedCount`, `rawRxAcceptedCount`, `lastRawNoiseReason`, `lastRawPatternHex`
+   - novos campos de wake loop:
+   - matriz: `lastWakeLoopStage`, `lastWakeLoopStageAtMs`, `lastWakeLoopStageSessionId`, `wakeLoopIterationCount`, `wakeLoopBudgetHitCount`, `wakeLoopYieldCount`, `lastSoftTimeoutAtMs`, `lastRetryScheduleAtMs`, `lastBeginDispatchAtMs`
 4. Se a bancada ainda ficar inconclusiva por timing, habilitar temporariamente um dos overrides da coleira:
    - `RTR_BENCH_HOLD_AFTER_UPLINK_MS`
    - `RTR_BENCH_SECONDARY_WINDOW_MS`

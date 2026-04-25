@@ -304,6 +304,7 @@ constexpr uint32_t kRecentWakeHintMs = 4000;
 PendingWakeSession pendingWakeSessions[kMaxPendingWakeSessions]{};
 rtrwake::Presence devicePresence[kMaxDevicePresenceEntries]{};
 rtrdiag::PageSnapshot lastPageDiag{};
+rtrdiag::WakeLoopSnapshot wakeLoopDiag{};
 
 struct CloudPublishContext {
   uint32_t nowSec = 0;
@@ -429,6 +430,8 @@ static const char* pendingWakeStateLabel(rtrwake::State state);
 static void transitionPendingWakeState(PendingWakeSession& session, rtrwake::State nextState, const char* reason);
 static void setPendingWakeReason(PendingWakeSession& session, uint16_t reasonCode, const char* reasonLabel);
 static void syncLastPageDiagFromSession(const PendingWakeSession& session);
+static void noteWakeLoopStage(const char* stage, const PendingWakeSession& session);
+static bool processPendingWakeSessionStep(uint8_t idx, PendingWakeSession& session, uint32_t nowMs);
 static void updateDevicePresenceFromAcceptedUplink(const LoRaFrame& rx);
 static rtrwake::Presence* findDevicePresence(uint32_t deviceId);
 static void notePendingWakeHintFromUplink(const LoRaFrame& rx);
@@ -3191,6 +3194,21 @@ static void syncLastPageDiagFromSession(const PendingWakeSession& session) {
   lastPageDiag.retryCampaignCount = session.core.scheduledRetry.nextCampaignCount;
 }
 
+static void noteWakeLoopStage(const char* stage, const PendingWakeSession& session) {
+  const uint32_t nowMs = millis();
+  rtrdiag::noteWakeLoopStage(
+      &wakeLoopDiag,
+      stage,
+      nowMs,
+      session.core.inFlightPage.valid ? session.core.inFlightPage.sessionId : session.core.pageSessionId,
+      session.core.deviceId);
+  LOGI(
+      "RTR_WAKE_LOOP_STAGE stage=%s deviceId=%lu sessionId=%llu",
+      stage ? stage : "-",
+      (unsigned long)wakeLoopDiag.lastWakeLoopStageDeviceId,
+      (unsigned long long)wakeLoopDiag.lastWakeLoopStageSessionId);
+}
+
 static rtrwake::Presence* findDevicePresence(uint32_t deviceId) {
   if (deviceId == 0) return nullptr;
   for (uint8_t i = 0; i < kMaxDevicePresenceEntries; ++i) {
@@ -4614,15 +4632,11 @@ static bool prepareFenceWakeSession(
   return true;
 }
 
-static void processPendingWakeSessions() {
-  const uint32_t nowMs = millis();
-  for (uint8_t i = 0; i < kMaxPendingWakeSessions; ++i) {
-    PendingWakeSession& session = pendingWakeSessions[i];
-    if (!session.core.active) continue;
-
+static bool processPendingWakeSessionStep(uint8_t idx, PendingWakeSession& session, uint32_t nowMs) {
     switch (session.core.state) {
       case rtrwake::State::PAGING_WAITING_UPLINK:
         if (rtrwake::predictedWakeReady(session.core, nowMs)) {
+          noteWakeLoopStage("predicted_wake", session);
           transitionPendingWakeState(
               session, rtrwake::State::PAGING_READY_TO_SEND, "predicted_wake");
           publishFenceTransportState(session.core.deviceId, "paging_ready");
@@ -4631,12 +4645,14 @@ static void processPendingWakeSessions() {
               (unsigned long)session.core.deviceId,
               session.commandId[0] ? session.commandId : "-",
               (unsigned)session.core.campaignCount);
+          return true;
         }
         break;
 
       case rtrwake::State::PAGING_READY_TO_SEND:
         if (session.core.nextPageAttemptAtMs == 0 ||
             (int32_t)(nowMs - session.core.nextPageAttemptAtMs) >= 0) {
+          noteWakeLoopStage("page_ready_send", session);
           const char* sendReason = nullptr;
           if (!trySendRtrPage(session, &sendReason)) {
             if (session.core.campaignCount < session.core.maxCampaigns) {
@@ -4659,11 +4675,13 @@ static void processPendingWakeSessions() {
                       : rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_SEND_FAILED));
             }
           }
+          return true;
         }
         break;
 
       case rtrwake::State::PAGING_AWAITING_ACK:
         if (rtrwake::awaitingAckWithoutPageSent(session.core)) {
+          noteWakeLoopStage("awaiting_ack_invalid", session);
           LOGW(
               "RTR_PAGE_TIMEOUT_STATE_INVALID deviceId=%lu commandId=%s campaignCount=%u pageSent=%d lastPageSentAtMs=%lu ackDeadlineAtMs=%lu",
               (unsigned long)session.core.deviceId,
@@ -4676,10 +4694,12 @@ static void processPendingWakeSessions() {
               session,
               rtrv1::REASON_PAGE_SEND_FAILED,
               "page_ack_state_without_page_tx");
-          break;
+          return true;
         }
         if (rtrwake::inFlightAttemptSoftTimedOut(session.core, nowMs)) {
           if (rtrwake::canRetryAfterTimeout(session.core)) {
+            noteWakeLoopStage("soft_timeout_mark", session);
+            wakeLoopDiag.lastSoftTimeoutAtMs = nowMs;
             const uint32_t retryAtMs = nowMs + rtrv1::PAGE_RETRY_GRACE_MS;
             rtrdiag::notePageRetry(
                 &lastPageDiag,
@@ -4696,12 +4716,23 @@ static void processPendingWakeSessions() {
                 (unsigned long)session.core.inFlightPage.softDeadlineAtMs,
                 (unsigned long)session.core.inFlightPage.hardDeadlineAtMs);
             LOGI(
+                "RTR_PAGE_SOFT_TIMEOUT_MARKED deviceId=%lu commandId=%s atMs=%lu",
+                (unsigned long)session.core.deviceId,
+                session.commandId[0] ? session.commandId : "-",
+                (unsigned long)nowMs);
+            LOGI(
                 "RTR_PAGE_RETRY_SCHEDULED deviceId=%lu commandId=%s retryAtMs=%lu graceMs=%lu nextCampaign=%u",
                 (unsigned long)session.core.deviceId,
                 session.commandId[0] ? session.commandId : "-",
                 (unsigned long)retryAtMs,
                 (unsigned long)rtrv1::PAGE_RETRY_GRACE_MS,
                 (unsigned)(session.core.campaignCount + 1));
+            wakeLoopDiag.lastRetryScheduleAtMs = nowMs;
+            LOGI(
+                "RTR_RETRY_SCHEDULED_LIGHTWEIGHT deviceId=%lu commandId=%s retryAtMs=%lu",
+                (unsigned long)session.core.deviceId,
+                session.commandId[0] ? session.commandId : "-",
+                (unsigned long)retryAtMs);
             transitionPendingWakeState(
                 session, rtrwake::State::PAGING_RETRY_GRACE, "page_soft_timeout");
             rtrwake::scheduleRetryReadyToSend(
@@ -4720,10 +4751,12 @@ static void processPendingWakeSessions() {
                 rtrv1::REASON_PAGE_TIMEOUT,
                 false,
                 false);
+            return true;
           }
         }
         if (!session.core.scheduledRetry.pending &&
             rtrwake::inFlightAttemptHardTimedOut(session.core, nowMs)) {
+          noteWakeLoopStage("hard_timeout_final", session);
           LOGW(
               "RTR_PAGE_HARD_TIMEOUT deviceId=%lu commandId=%s campaignCount=%u sessionId=%llu messageId=%lu hardDeadlineAtMs=%lu nowMs=%lu",
               (unsigned long)session.core.deviceId,
@@ -4752,11 +4785,13 @@ static void processPendingWakeSessions() {
               session,
               rtrv1::REASON_PAGE_TIMEOUT_FINAL,
               rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_TIMEOUT_FINAL));
+          return true;
         }
         break;
 
       case rtrwake::State::PAGING_RETRY_GRACE:
         if (rtrwake::inFlightAttemptHardTimedOut(session.core, nowMs)) {
+          noteWakeLoopStage("retry_grace_expire", session);
           LOGW(
               "RTR_PAGE_HARD_TIMEOUT deviceId=%lu commandId=%s campaignCount=%u sessionId=%llu messageId=%lu hardDeadlineAtMs=%lu nowMs=%lu",
               (unsigned long)session.core.deviceId,
@@ -4785,6 +4820,7 @@ static void processPendingWakeSessions() {
                 session,
                 rtrwake::State::PAGING_READY_TO_SEND,
                 "page_hard_timeout_retry_ready");
+            return true;
           } else {
             rtrdiag::notePageOutcome(&lastPageDiag, "timeout_final");
             appendPropertyCommandEvent(
@@ -4797,19 +4833,39 @@ static void processPendingWakeSessions() {
                 session,
                 rtrv1::REASON_PAGE_TIMEOUT_FINAL,
                 rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_TIMEOUT_FINAL));
+            return true;
           }
         }
         break;
 
       case rtrwake::State::PAGE_ACKED:
+        noteWakeLoopStage("page_acked", session);
         transitionPendingWakeState(
             session, rtrwake::State::SESSION_START_READY, "page_ack_ok");
-        break;
+        return true;
 
-      case rtrwake::State::SESSION_START_READY: {
+      case rtrwake::State::SESSION_START_READY:
+        noteWakeLoopStage("begin_dispatch_deferred", session);
         publishFenceTransportState(session.core.deviceId, "session_starting");
+        session.core.beginDispatchPending = true;
         transitionPendingWakeState(
             session, rtrwake::State::SESSION_IN_PROGRESS, "rpv2_start");
+        LOGI(
+            "RTR_BEGIN_DISPATCH_DEFERRED deviceId=%lu commandId=%s campaignCount=%u",
+            (unsigned long)session.core.deviceId,
+            session.commandId[0] ? session.commandId : "-",
+            (unsigned)session.core.campaignCount);
+        return true;
+
+      case rtrwake::State::SESSION_IN_PROGRESS:
+        if (!session.core.beginDispatchPending || session.core.sessionStarted) break;
+        noteWakeLoopStage("begin_dispatch_start", session);
+        wakeLoopDiag.lastBeginDispatchAtMs = nowMs;
+        LOGI(
+            "RTR_BEGIN_DISPATCH_START deviceId=%lu commandId=%s campaignCount=%u",
+            (unsigned long)session.core.deviceId,
+            session.commandId[0] ? session.commandId : "-",
+            (unsigned)session.core.campaignCount);
         LOGI(
             "RPV2_SESSION_BEGIN_DISPATCH deviceId=%lu commandId=%s radioCommandId=%llu",
             (unsigned long)session.core.deviceId,
@@ -4820,7 +4876,10 @@ static void processPendingWakeSessions() {
             (unsigned long)session.core.deviceId,
             session.commandId[0] ? session.commandId : "-",
             (unsigned)session.core.campaignCount);
+        feedWatchdogIfEnabled();
+        delay(1);
         session.core.sessionStarted = true;
+        session.core.beginDispatchPending = false;
         const char* sessionReason = nullptr;
         if (executeFenceCommandRpv2Plan(
                 session.core.deviceId,
@@ -4859,20 +4918,58 @@ static void processPendingWakeSessions() {
                   : rtrv1::reasonCodeLabel(
                         rtrv1::REASON_SESSION_NOT_STARTED_AFTER_PAGE_ACK));
         }
-        break;
-      }
+        return true;
 
       case rtrwake::State::COMPLETED:
-        clearPendingWakeSession(i, "completed");
-        break;
+        noteWakeLoopStage("session_completed", session);
+        clearPendingWakeSession(idx, "completed");
+        return true;
 
       case rtrwake::State::FAILED:
-        clearPendingWakeSession(i, session.lastReasonLabel);
-        break;
+        noteWakeLoopStage("session_failed", session);
+        clearPendingWakeSession(idx, session.lastReasonLabel);
+        return true;
 
       default:
         break;
     }
+    return false;
+}
+
+static void processPendingWakeSessions() {
+  constexpr uint8_t kWakeSessionBudgetPerTick = 2;
+  const uint32_t nowMs = millis();
+  wakeLoopDiag.wakeLoopIterationCount++;
+  uint8_t processedCount = 0;
+  bool shouldYield = false;
+  for (uint8_t i = 0; i < kMaxPendingWakeSessions; ++i) {
+    PendingWakeSession& session = pendingWakeSessions[i];
+    if (!session.core.active) continue;
+    feedWatchdogIfEnabled();
+    processedCount++;
+    const bool advanced = processPendingWakeSessionStep(i, session, nowMs);
+    if (advanced) {
+      shouldYield = true;
+      break;
+    }
+    if (processedCount >= kWakeSessionBudgetPerTick) {
+      wakeLoopDiag.wakeLoopBudgetHitCount++;
+      LOGI(
+          "RTR_WAKE_LOOP_BUDGET_HIT processed=%u activeBudget=%u",
+          (unsigned)processedCount,
+          (unsigned)kWakeSessionBudgetPerTick);
+      shouldYield = true;
+      break;
+    }
+  }
+  if (shouldYield) {
+    wakeLoopDiag.wakeLoopYieldCount++;
+    LOGI(
+        "RTR_WAKE_LOOP_YIELD yields=%lu budgetHits=%lu",
+        (unsigned long)wakeLoopDiag.wakeLoopYieldCount,
+        (unsigned long)wakeLoopDiag.wakeLoopBudgetHitCount);
+    feedWatchdogIfEnabled();
+    delay(1);
   }
 }
 

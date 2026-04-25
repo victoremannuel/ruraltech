@@ -65,6 +65,7 @@ struct SessionCore {
   bool pageSent = false;
   bool pageAcked = false;
   bool cloudTxDeferred = false;
+  bool beginDispatchPending = false;
   bool sessionStarted = false;
   bool finished = false;
   InFlightPageAttempt inFlightPage{};
