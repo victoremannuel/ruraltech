@@ -14,6 +14,7 @@ static constexpr size_t kStateSize = 24;
 static constexpr size_t kOutcomeSize = 20;
 static constexpr size_t kPatternHexSize = 17;
 static constexpr size_t kWakeStageSize = 32;
+static constexpr size_t kSourceSize = 20;
 
 struct DecryptFailSnapshot {
   uint32_t atMs = 0;
@@ -89,6 +90,7 @@ struct PageSnapshot {
   bool lastAckMatchedInGrace = false;
   bool lastCloudDeferredForPage = false;
   char lastImmediateResult[kOutcomeSize] = "none";
+  char lastImmediateSource[kSourceSize] = "none";
   char lastOrderViolation[kReasonSize] = "none";
   char lastPageOutcome[kOutcomeSize] = "none";
   char lastAckRejectedReason[kReasonSize]{};
@@ -271,11 +273,16 @@ static inline void noteImmediateEnter(
     PageSnapshot* snapshot,
     uint32_t atMs,
     uint32_t deviceId,
-    uint32_t uplinkSeq) {
+    uint32_t uplinkSeq,
+    const char* source) {
   if (!snapshot) return;
   snapshot->lastImmediateEnterAtMs = atMs;
   snapshot->lastImmediateDeviceId = deviceId;
   snapshot->lastImmediateUplinkSeq = uplinkSeq;
+  copyText(
+      snapshot->lastImmediateSource,
+      sizeof(snapshot->lastImmediateSource),
+      source && source[0] ? source : "unknown");
 }
 
 static inline void noteImmediateResult(
@@ -285,13 +292,18 @@ static inline void noteImmediateResult(
     uint32_t uplinkSeq,
     uint32_t ageMs,
     const char* result,
-    bool cloudDeferred) {
+    bool cloudDeferred,
+    const char* source) {
   if (!snapshot) return;
   snapshot->lastImmediateResultAtMs = atMs;
   snapshot->lastImmediateDeviceId = deviceId;
   snapshot->lastImmediateUplinkSeq = uplinkSeq;
   snapshot->lastImmediateAgeMs = ageMs;
   snapshot->lastCloudDeferredForPage = cloudDeferred;
+  copyText(
+      snapshot->lastImmediateSource,
+      sizeof(snapshot->lastImmediateSource),
+      source && source[0] ? source : "unknown");
   copyText(
       snapshot->lastImmediateResult,
       sizeof(snapshot->lastImmediateResult),

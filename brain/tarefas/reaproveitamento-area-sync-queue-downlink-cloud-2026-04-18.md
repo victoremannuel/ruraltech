@@ -128,6 +128,13 @@ Estado de partida consolidado nesta rodada:
     - capturar boot serial
     - validar `FW_PROVENANCE`, `/status` e bench opcional
     - emitir `validation_report.md` em `tools/audit/output/<run>/`
+- [x] Implementar a classificação auditável do fast-path de wake/page no callsite real de RX aceito:
+  - `tryHandleWakePageImmediatelyAfterAcceptedUplink(...)` passou a receber `source`
+  - callsite principal do `loop()` identificado explicitamente como `source=main_lora_rx`
+  - `ACK_WAIT`, `waitForRtrPageAck()` e `waitForRpv2Response()` ficaram distinguidos por origem própria
+  - novo marcador `RTR_WAKE_FAST_PATH_MAIN_RX_CALLSITE` adicionado entre `RTR_WAKE_HINT_CAPTURED` e `RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER`
+  - fallback do wake loop renomeado para `RTR_WAKE_FAST_PATH_FALLBACK_*`, evitando mascarar caminho tardio como `IMMEDIATE`
+  - `/status` passou a expor `wakeFastPath.lastImmediateSource`
 
 ## Status
 
@@ -218,6 +225,19 @@ Nova rodada aplicada em 2026-04-25 (wake hint vencido bloqueando `RTR_PAGE`):
 - o limiar adotado nesta rodada reaproveita `rtrv1::FAST_PAGE_DEADLINE_MS` (`300 ms`), mantendo coerência com o diagnóstico existente `RTR_PAGE_SOFT_DEADLINE_MISSED`
 - teste host novo `firmware/tests/rtrv1_stale_wake_hint_test.cpp` cobre:
   - hint fresco no limite de `300 ms`
+
+Nova rodada aplicada em 2026-04-26 (auditoria do callsite real de RX aceito):
+- o helper `tryHandleWakePageImmediatelyAfterAcceptedUplink(...)` foi mantido no caminho principal do `lora.receive(...)`, mas agora com telemetria explícita de origem por callsite
+- o log `LORA_UPLINK_ACCEPTED` passou a incluir `source`, e o callsite real do loop principal agora também emite `RTR_WAKE_FAST_PATH_MAIN_RX_CALLSITE`
+- `RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER` e `RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT` passaram a carregar `source`, distinguindo claramente `main_lora_rx`, `ack_wait`, `page_ack_wait` e `rpv2_wait`
+- o snapshot `/status` da matriz agora expõe `wakeFastPath.lastImmediateSource`, permitindo verificar se o último fast-path realmente veio do RX principal
+- o wake loop assíncrono passou a usar logs próprios `RTR_WAKE_FAST_PATH_FALLBACK_ENTER` e `RTR_WAKE_FAST_PATH_FALLBACK_RESULT`, removendo ambiguidade entre tentativa síncrona imediata e fallback tardio
+- `rtrdiag::noteImmediateEnter(...)` passou a registrar `rxAcceptedAtMs` real no fast-path, em vez do `nowMs` tardio do helper
+- `tools/audit/generate_build_info.py` foi executado e atualizou `firmware/shared/generated_build_info.h` para `git=7f96aa5 dirty=1`
+- validação desta rodada:
+  - verificação estrutural dos callsites `tryHandleWakePageImmediatelyAfterAcceptedUplink(...)`: ok
+  - diff local dos arquivos `gateway-matriz/gateway-matriz.ino`, `gateway-matriz/ApiServer.cpp` e `firmware/shared/rtr_diag_support.h`: ok
+  - `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz`: inconclusivo neste host por retorno ao padrão histórico de hang silencioso
   - hint vencido com `301 ms`
   - retorno para `PAGING_WAITING_UPLINK`
   - nova promoção imediata para `PAGING_READY_TO_SEND` quando chega outro uplink

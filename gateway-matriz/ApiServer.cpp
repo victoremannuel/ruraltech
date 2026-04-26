@@ -325,6 +325,7 @@ void ApiServer::begin() {
       wakeFastPath["lastImmediateUplinkSeq"] = lastPageDiag.lastImmediateUplinkSeq;
       wakeFastPath["lastImmediateAgeMs"] = lastPageDiag.lastImmediateAgeMs;
       wakeFastPath["lastImmediateResult"] = lastPageDiag.lastImmediateResult;
+      wakeFastPath["lastImmediateSource"] = lastPageDiag.lastImmediateSource;
       wakeFastPath["lastOrderViolation"] = lastPageDiag.lastOrderViolation;
       wakeFastPath["lastCloudDeferredForPage"] = lastPageDiag.lastCloudDeferredForPage;
       doc["acceptedUplinkQueueDepth"] = acceptedUplinkQueueCount;

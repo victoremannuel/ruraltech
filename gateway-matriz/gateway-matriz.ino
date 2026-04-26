@@ -428,7 +428,8 @@ static rtrwake::Presence* findDevicePresence(uint32_t deviceId);
 static bool notePendingWakeHintFromUplink(const LoRaFrame& rx, uint32_t rxAcceptedAtMs);
 static bool tryHandleWakePageImmediatelyAfterAcceptedUplink(
     const LoRaFrame& rx,
-    uint32_t rxAcceptedAtMs);
+    uint32_t rxAcceptedAtMs,
+    const char* source);
 static bool handlePendingWakePageAck(const LoRaFrame& rx);
 static bool tryHandlePendingWakePageAckFastPath(const LoRaFrame& rx);
 static bool trySendRtrPage(PendingWakeSession& session, const char** reason = nullptr);
@@ -2896,7 +2897,10 @@ static void handleUplinkDuringAckWait(const LoRaFrame& rx) {
 
   // Even while ACK_WAIT is active, target uplinks for pending wake/page sessions
   // must go through the radio-critical fast-path before any deferred queueing.
-  tryHandleWakePageImmediatelyAfterAcceptedUplink(rx, lora.lastAcceptedRxAtMs());
+  tryHandleWakePageImmediatelyAfterAcceptedUplink(
+      rx,
+      lora.lastAcceptedRxAtMs(),
+      "ack_wait");
 
   if (activeSimpleCommand.active &&
       rx.deviceId == activeSimpleCommand.feedbackDeviceId) {
@@ -3386,26 +3390,35 @@ static bool reschedulePendingWakeForFreshUplink(
 
 static bool tryHandleWakePageImmediatelyAfterAcceptedUplink(
     const LoRaFrame& rx,
-    uint32_t rxAcceptedAtMs) {
+    uint32_t rxAcceptedAtMs,
+    const char* source) {
+  const char* fastPathSource = source && source[0] ? source : "unknown";
   LOGI(
-      "LORA_UPLINK_ACCEPTED deviceId=%lu msgType=%u seq=%lu scopeId=%016llX",
+      "LORA_UPLINK_ACCEPTED deviceId=%lu msgType=%u seq=%lu scopeId=%016llX source=%s",
       (unsigned long)rx.deviceId,
       (unsigned)rx.msgType,
       (unsigned long)rx.seq,
-      (unsigned long long)rx.scopeId);
+      (unsigned long long)rx.scopeId,
+      fastPathSource);
   updateDevicePresenceFromAcceptedUplink(rx, rxAcceptedAtMs);
 
   const int wakeIdx = findPendingWakeSessionByDeviceId(rx.deviceId);
   if (wakeIdx < 0) {
-    rtrdiag::noteImmediateEnter(&lastPageDiag, rxAcceptedAtMs, rx.deviceId, rx.seq);
+    rtrdiag::noteImmediateEnter(
+        &lastPageDiag,
+        rxAcceptedAtMs,
+        rx.deviceId,
+        rx.seq,
+        fastPathSource);
     rtrdiag::noteImmediateResult(
         &lastPageDiag,
         millis(),
         rx.deviceId,
         rx.seq,
         0xFFFFFFFFUL,
-        "no_session",
-        false);
+        "no_pending_session",
+        false,
+        fastPathSource);
     return false;
   }
 
@@ -3415,9 +3428,26 @@ static bool tryHandleWakePageImmediatelyAfterAcceptedUplink(
   notePendingWakeHintFromUplink(rx, rxAcceptedAtMs);
   const uint32_t nowMs = millis();
   const uint32_t ageMs = rtrwake::wakeHintAgeMs(session.core, nowMs);
-  rtrdiag::noteImmediateEnter(&lastPageDiag, nowMs, rx.deviceId, rx.seq);
+  if (strcmp(fastPathSource, "main_lora_rx") == 0) {
+    LOGI(
+        "RTR_WAKE_FAST_PATH_MAIN_RX_CALLSITE deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu nowMs=%lu ageMs=%lu stateBefore=%s source=%s",
+        (unsigned long)rx.deviceId,
+        commandId,
+        (unsigned long)rx.seq,
+        (unsigned long)rxAcceptedAtMs,
+        (unsigned long)nowMs,
+        (unsigned long)ageMs,
+        stateBefore,
+        fastPathSource);
+  }
+  rtrdiag::noteImmediateEnter(
+      &lastPageDiag,
+      rxAcceptedAtMs,
+      rx.deviceId,
+      rx.seq,
+      fastPathSource);
   LOGI(
-      "RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu nowMs=%lu ageMs=%lu stateBefore=%s stateAfter=%s",
+      "RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu nowMs=%lu ageMs=%lu stateBefore=%s stateAfter=%s source=%s",
       (unsigned long)rx.deviceId,
       commandId,
       (unsigned long)rx.seq,
@@ -3425,7 +3455,8 @@ static bool tryHandleWakePageImmediatelyAfterAcceptedUplink(
       (unsigned long)nowMs,
       (unsigned long)ageMs,
       stateBefore,
-      pendingWakeStateLabel(session.core.state));
+      pendingWakeStateLabel(session.core.state),
+      fastPathSource);
 
   if (session.core.cloudTxDeferred) {
     LOGI(
@@ -3446,9 +3477,10 @@ static bool tryHandleWakePageImmediatelyAfterAcceptedUplink(
         rx.seq,
         ageMs,
         "state_not_pageable",
-        session.core.cloudTxDeferred);
+        session.core.cloudTxDeferred,
+        fastPathSource);
     LOGI(
-        "RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu nowMs=%lu ageMs=%lu result=%s stateAfter=%s",
+        "RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu nowMs=%lu ageMs=%lu result=%s stateAfter=%s source=%s",
         (unsigned long)rx.deviceId,
         commandId,
         (unsigned long)rx.seq,
@@ -3456,7 +3488,8 @@ static bool tryHandleWakePageImmediatelyAfterAcceptedUplink(
         (unsigned long)nowMs,
         (unsigned long)ageMs,
         "state_not_pageable",
-        pendingWakeStateLabel(session.core.state));
+        pendingWakeStateLabel(session.core.state),
+        fastPathSource);
     return false;
   }
 
@@ -3472,9 +3505,10 @@ static bool tryHandleWakePageImmediatelyAfterAcceptedUplink(
         rx.seq,
         ageMs,
         "stale",
-        session.core.cloudTxDeferred);
+        session.core.cloudTxDeferred,
+        fastPathSource);
     LOGI(
-        "RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu nowMs=%lu ageMs=%lu result=%s stateAfter=%s",
+        "RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu nowMs=%lu ageMs=%lu result=%s stateAfter=%s source=%s",
         (unsigned long)rx.deviceId,
         commandId,
         (unsigned long)rx.seq,
@@ -3482,14 +3516,15 @@ static bool tryHandleWakePageImmediatelyAfterAcceptedUplink(
         (unsigned long)nowMs,
         (unsigned long)ageMs,
         "stale",
-        pendingWakeStateLabel(session.core.state));
+        pendingWakeStateLabel(session.core.state),
+        fastPathSource);
     return false;
   }
 
   const char* fastPathReason = nullptr;
   if (!trySendRtrPage(session, &fastPathReason)) {
     const char* result =
-        fastPathReason && strstr(fastPathReason, "busy") ? "radio_busy" : "page_send_failed";
+        fastPathReason && strstr(fastPathReason, "busy") ? "radio_busy" : "send_failed";
     const uint32_t resultNowMs = millis();
     const uint32_t resultAgeMs = rtrwake::wakeHintAgeMs(session.core, resultNowMs);
     rtrdiag::noteImmediateResult(
@@ -3499,9 +3534,10 @@ static bool tryHandleWakePageImmediatelyAfterAcceptedUplink(
         rx.seq,
         resultAgeMs,
         result,
-        session.core.cloudTxDeferred);
+        session.core.cloudTxDeferred,
+        fastPathSource);
     LOGW(
-        "RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu nowMs=%lu ageMs=%lu result=%s reason=%s stateAfter=%s",
+        "RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu nowMs=%lu ageMs=%lu result=%s reason=%s stateAfter=%s source=%s",
         (unsigned long)rx.deviceId,
         commandId,
         (unsigned long)rx.seq,
@@ -3510,7 +3546,8 @@ static bool tryHandleWakePageImmediatelyAfterAcceptedUplink(
         (unsigned long)resultAgeMs,
         result,
         fastPathReason && fastPathReason[0] ? fastPathReason : "page_send_failed",
-        pendingWakeStateLabel(session.core.state));
+        pendingWakeStateLabel(session.core.state),
+        fastPathSource);
     return false;
   }
 
@@ -3523,9 +3560,10 @@ static bool tryHandleWakePageImmediatelyAfterAcceptedUplink(
       rx.seq,
       resultAgeMs,
       "page_tx_ok",
-      session.core.cloudTxDeferred);
+      session.core.cloudTxDeferred,
+      fastPathSource);
   LOGI(
-      "RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu nowMs=%lu ageMs=%lu result=%s stateAfter=%s",
+      "RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu nowMs=%lu ageMs=%lu result=%s stateAfter=%s source=%s",
       (unsigned long)rx.deviceId,
       commandId,
       (unsigned long)rx.seq,
@@ -3533,7 +3571,8 @@ static bool tryHandleWakePageImmediatelyAfterAcceptedUplink(
       (unsigned long)resultNowMs,
       (unsigned long)resultAgeMs,
       "page_tx_ok",
-      pendingWakeStateLabel(session.core.state));
+      pendingWakeStateLabel(session.core.state),
+      fastPathSource);
   return true;
 }
 
@@ -3910,12 +3949,18 @@ static bool waitForRtrPageAck(
       continue;
     }
     if (rx.deviceId != deviceId) {
-      tryHandleWakePageImmediatelyAfterAcceptedUplink(rx, lora.lastAcceptedRxAtMs());
+      tryHandleWakePageImmediatelyAfterAcceptedUplink(
+          rx,
+          lora.lastAcceptedRxAtMs(),
+          "page_ack_wait");
       enqueueAcceptedUplink(rx);
       continue;
     }
     if (decodeRtrPageAckFrame(rx, sessionId, messageId, outBody)) return true;
-    tryHandleWakePageImmediatelyAfterAcceptedUplink(rx, lora.lastAcceptedRxAtMs());
+    tryHandleWakePageImmediatelyAfterAcceptedUplink(
+        rx,
+        lora.lastAcceptedRxAtMs(),
+        "page_ack_wait");
     enqueueAcceptedUplink(rx);
   }
   return false;
@@ -4122,13 +4167,19 @@ static bool waitForRpv2Response(
       continue;
     }
     if (rx.deviceId != deviceId) {
-      tryHandleWakePageImmediatelyAfterAcceptedUplink(rx, lora.lastAcceptedRxAtMs());
+      tryHandleWakePageImmediatelyAfterAcceptedUplink(
+          rx,
+          lora.lastAcceptedRxAtMs(),
+          "rpv2_wait");
       enqueueAcceptedUplink(rx);
       delay(1);
       continue;
     }
     if (decodeRpv2ResponseFrame(rx, radioCommandId, sessionNonce, out)) return true;
-    tryHandleWakePageImmediatelyAfterAcceptedUplink(rx, lora.lastAcceptedRxAtMs());
+    tryHandleWakePageImmediatelyAfterAcceptedUplink(
+        rx,
+        lora.lastAcceptedRxAtMs(),
+        "rpv2_wait");
     enqueueAcceptedUplink(rx);
     delay(1);
   }
@@ -4937,8 +4988,32 @@ static bool processPendingWakeSessionStep(uint8_t idx, PendingWakeSession& sessi
             return true;
           }
           noteWakeLoopStage("page_ready_send", session);
+          const uint32_t ageMs = rtrwake::wakeHintAgeMs(session.core, nowMs);
+          LOGI(
+              "RTR_WAKE_FAST_PATH_FALLBACK_ENTER deviceId=%lu commandId=%s uplinkSeq=%lu lastSeenAtMs=%lu nowMs=%lu ageMs=%lu stateBefore=%s source=%s",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              (unsigned long)session.core.uplinkSeq,
+              (unsigned long)session.core.lastUplinkAtMs,
+              (unsigned long)nowMs,
+              (unsigned long)ageMs,
+              pendingWakeStateLabel(session.core.state),
+              "wake_loop");
           const char* sendReason = nullptr;
           if (!trySendRtrPage(session, &sendReason)) {
+            const uint32_t resultNowMs = millis();
+            const uint32_t resultAgeMs = rtrwake::wakeHintAgeMs(session.core, resultNowMs);
+            LOGW(
+                "RTR_WAKE_FAST_PATH_FALLBACK_RESULT deviceId=%lu commandId=%s uplinkSeq=%lu nowMs=%lu ageMs=%lu result=%s reason=%s stateAfter=%s source=%s",
+                (unsigned long)session.core.deviceId,
+                session.commandId[0] ? session.commandId : "-",
+                (unsigned long)session.core.uplinkSeq,
+                (unsigned long)resultNowMs,
+                (unsigned long)resultAgeMs,
+                sendReason && strstr(sendReason, "busy") ? "radio_busy" : "send_failed",
+                sendReason ? sendReason : "page_send_failed",
+                pendingWakeStateLabel(session.core.state),
+                "wake_loop");
             if (session.core.campaignCount < session.core.maxCampaigns) {
               transitionPendingWakeState(
                   session, rtrwake::State::PAGING_WAITING_UPLINK, "page_send_failed_retry");
@@ -4958,6 +5033,19 @@ static bool processPendingWakeSessionStep(uint8_t idx, PendingWakeSession& sessi
                       ? session.lastReasonLabel
                       : rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_SEND_FAILED));
             }
+          } else {
+            const uint32_t resultNowMs = millis();
+            const uint32_t resultAgeMs = rtrwake::wakeHintAgeMs(session.core, resultNowMs);
+            LOGI(
+                "RTR_WAKE_FAST_PATH_FALLBACK_RESULT deviceId=%lu commandId=%s uplinkSeq=%lu nowMs=%lu ageMs=%lu result=%s stateAfter=%s source=%s",
+                (unsigned long)session.core.deviceId,
+                session.commandId[0] ? session.commandId : "-",
+                (unsigned long)session.core.uplinkSeq,
+                (unsigned long)resultNowMs,
+                (unsigned long)resultAgeMs,
+                "page_tx_ok",
+                pendingWakeStateLabel(session.core.state),
+                "wake_loop");
           }
           return true;
         }
@@ -7517,7 +7605,10 @@ void loop() {
           }
         }
       }
-      tryHandleWakePageImmediatelyAfterAcceptedUplink(rx, lora.lastAcceptedRxAtMs());
+      tryHandleWakePageImmediatelyAfterAcceptedUplink(
+          rx,
+          lora.lastAcceptedRxAtMs(),
+          "main_lora_rx");
       enqueueAcceptedUplink(rx);
       if (activeSimpleCommand.active) {
         scheduleActiveSimpleCommandRetryForRx(rx);
