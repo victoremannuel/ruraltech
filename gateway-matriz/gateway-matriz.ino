@@ -288,6 +288,7 @@ constexpr uint8_t kMaxPendingWakeSessions = cfg::MAX_HERD_OPERATION_DEVICES;
 constexpr uint8_t kMaxDevicePresenceEntries = cfg::MAX_HERD_OPERATION_DEVICES;
 constexpr uint32_t kRecentWakeHintMs = 4000;
 constexpr uint32_t kSetFenceLocalStallTimeoutMs = 30000UL;
+constexpr uint32_t kPendingWakeWaitingUplinkTimeoutMs = 180000UL;
 PendingWakeSession pendingWakeSessions[kMaxPendingWakeSessions]{};
 rtrwake::Presence devicePresence[kMaxDevicePresenceEntries]{};
 rtrdiag::PageSnapshot lastPageDiag{};
@@ -4765,6 +4766,28 @@ static bool prepareFenceWakeSession(
 static bool processPendingWakeSessionStep(uint8_t idx, PendingWakeSession& session, uint32_t nowMs) {
     switch (session.core.state) {
       case rtrwake::State::PAGING_WAITING_UPLINK:
+        if (session.core.createdAtMs != 0 &&
+            (uint32_t)(nowMs - session.core.createdAtMs) >= kPendingWakeWaitingUplinkTimeoutMs) {
+          noteWakeLoopStage("waiting_uplink_timeout", session);
+          LOGW(
+              "RTR_WAITING_UPLINK_TIMEOUT deviceId=%lu commandId=%s createdAtMs=%lu nowMs=%lu timeoutMs=%lu",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              (unsigned long)session.core.createdAtMs,
+              (unsigned long)nowMs,
+              (unsigned long)kPendingWakeWaitingUplinkTimeoutMs);
+          appendPropertyCommandEvent(
+              activeSimpleCommand.propertyId,
+              activeSimpleCommand.commandId,
+              "rtr_waiting_uplink_timeout",
+              nullptr,
+              nullptr);
+          failPendingWakeSession(
+              session,
+              rtrv1::REASON_PAGE_TIMEOUT_FINAL,
+              "waiting_uplink_timeout");
+          return true;
+        }
         if (rtrwake::predictedWakeReady(session.core, nowMs)) {
           noteWakeLoopStage("predicted_wake", session);
           transitionPendingWakeState(
