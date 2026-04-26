@@ -331,6 +331,13 @@ void ApiServer::begin() {
       wakeFastPath["lastPrePageBlockedBy"] = lastPageDiag.lastPrePageBlockedBy;
       wakeFastPath["lastOrderViolation"] = lastPageDiag.lastOrderViolation;
       wakeFastPath["lastCloudDeferredForPage"] = lastPageDiag.lastCloudDeferredForPage;
+      JsonObject pageAck = doc["pageAck"].to<JsonObject>();
+      pageAck["lastPagePostTxFastDurationMs"] = lastPageDiag.lastPagePostTxFastDurationMs;
+      pageAck["lastAckRxWindowBeginAtMs"] = lastPageDiag.lastAckRxWindowBeginAtMs;
+      pageAck["lastAckRxWindowEndAtMs"] = lastPageDiag.lastAckRxWindowEndAtMs;
+      pageAck["lastAckRxWindowResult"] = lastPageDiag.lastAckRxWindowResult;
+      pageAck["lastPageTxToAckRxLatencyMs"] = lastPageDiag.lastPageTxToAckRxLatencyMs;
+      pageAck["lastAckLateReason"] = lastPageDiag.lastAckLateReason;
       doc["acceptedUplinkQueueDepth"] = acceptedUplinkQueueCount;
       doc["acceptedUplinkDropCount"] = acceptedUplinkDropCount;
       doc["acceptedUplinkLastDrainAtMs"] = acceptedUplinkLastDrainAtMs;

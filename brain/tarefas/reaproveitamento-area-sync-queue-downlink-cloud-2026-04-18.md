@@ -891,6 +891,42 @@ Historico adicional desta rodada:
 - `rtrv1_wake_scheduler_test.cpp`: `PASS`
 - `rtrv1_terminal_failure_status_test.cpp`: `PASS`
 
+### Nova rodada aplicada em 2026-04-26 (janela síncrona de ACK logo após `RTR_PAGE_TX_OK`)
+
+- `gateway-matriz/gateway-matriz.ino` agora trata o pós-TX do `RTR_PAGE` como caminho rádio-crítico:
+- captura `txOkAtMs` imediatamente após `sendLoRaBinaryFrame(...)`
+- faz `markPageAttempt(...)` com o timestamp real de TX
+- faz `RTR_STATE_TRANSITION ... toState=paging_awaiting_ack` antes de side effects lentos
+- registra `RTR_PAGE_TX_CONTEXT` e `RTR_PAGE_TX_OK` antes de qualquer progresso lento
+- abre `waitForRtrPageAckImmediatelyAfterPageTx(...)` com logs:
+- `RTR_PAGE_POST_TX_FAST_BEGIN`
+- `RTR_PAGE_ACK_RX_WINDOW_BEGIN`
+- `RTR_PAGE_ACK_RX_WINDOW_FRAME`
+- `RTR_PAGE_ACK_RX_WINDOW_END`
+- o correlator existente de ACK foi reaproveitado em `tryHandlePendingWakePageAckFastPath(...)`, agora com `rxAtMs` e `source` explícitos para reduzir falsos `late`
+- frames não-ACK vistos durante a janela de ACK não disparam cloud/backhaul; eles são apenas empilhados em `deferredUplinkQueue` para processamento posterior
+- `SET_FENCE_PROGRESS stage=paging_sent`, `SET_FENCE_PROGRESS stage=awaiting_page_ack`, `COMMAND_MARK_DISPATCHING_BEGIN` e `appendPropertyCommandEvent("rtr_page_sent")` foram empurrados para depois da janela imediata de ACK
+- `RTR_WAKE_TO_PAGE_LATENCY` passa a refletir o `pageTxAtMs` real do `LoRa TX ok`, porque o `markPageAttempt(...)` agora usa `txOkAtMs`
+- `firmware/shared/rtr_diag_support.h` e `/status` da matriz agora expõem:
+- `pageAck.lastPagePostTxFastDurationMs`
+- `pageAck.lastAckRxWindowBeginAtMs`
+- `pageAck.lastAckRxWindowEndAtMs`
+- `pageAck.lastAckRxWindowResult`
+- `pageAck.lastPageTxToAckRxLatencyMs`
+- `pageAck.lastAckLateReason`
+- `tools/audit/flash_and_validate_firmware.py` foi endurecido para falhar quando:
+- `RTR_PAGE_POST_TX_FAST_DONE durationMs > 100`
+- `SET_FENCE_PROGRESS stage=paging_sent` ou `stage=awaiting_page_ack` aparece antes da janela de ACK
+- `COMMAND_MARK_DISPATCHING_BEGIN`, `CLOUD_TX_BEGIN` ou `QUEUE_POLL_START` aparecem antes de `RTR_PAGE_ACK_RX_WINDOW_BEGIN`
+- `RTR_PAGE_ACK_FAST_PATH_MATCH` ainda é seguido por `RTR_PAGE_ACK_LATE`
+- validação local desta rodada:
+- `python3 -m py_compile tools/audit/flash_and_validate_firmware.py`: `PASS`
+- `rtrv1_fast_path_priority_test.cpp`: `PASS`
+- `rtrv1_page_ack_window_diag_test.cpp`: `PASS`
+- `rtrv1_page_ack_correlation_test.cpp`: `PASS`
+- `rtrv1_wake_scheduler_test.cpp`: `PASS`
+- `rtrv1_terminal_failure_status_test.cpp`: `PASS`
+
 ### Próxima ação desta task após a implementação
 
 - recompilar a matriz em um host/rodada que consiga concluir o `arduino-cli compile` até `.bin/.elf`
@@ -902,7 +938,7 @@ Historico adicional desta rodada:
 - `lastWakeHint*`
 - `lastPageOutcome`
 - `wakeFastPath.*`
-- `RTR_PAGE_TX_OK`, `RTR_PAGE_ACK_RX`, `RTR_WAKE_HINT_FAST_DONE`, `RTR_WAKE_PRE_PAGE_GAP_MS`, sequência `RPV2_*` e `APPLY_STATUS`
+- `RTR_PAGE_TX_OK`, `RTR_PAGE_POST_TX_FAST_BEGIN`, `RTR_PAGE_ACK_RX_WINDOW_BEGIN`, `RTR_PAGE_ACK_RX`, `RTR_WAKE_HINT_FAST_DONE`, `RTR_WAKE_PRE_PAGE_GAP_MS`, sequência `RPV2_*` e `APPLY_STATUS`
 
 ## Related
 

@@ -437,8 +437,15 @@ static bool tryHandleWakePageImmediatelyAfterAcceptedUplink(
     const LoRaFrame& rx,
     uint32_t rxAcceptedAtMs,
     const char* source);
-static bool handlePendingWakePageAck(const LoRaFrame& rx);
-static bool tryHandlePendingWakePageAckFastPath(const LoRaFrame& rx);
+static bool handlePendingWakePageAck(const LoRaFrame& rx, uint32_t rxAtMs = 0);
+static bool tryHandlePendingWakePageAckFastPath(
+    const LoRaFrame& rx,
+    uint32_t rxAtMs = 0,
+    const char* source = nullptr);
+static bool waitForRtrPageAckImmediatelyAfterPageTx(
+    PendingWakeSession& session,
+    uint32_t txOkAtMs,
+    uint32_t ackDeadlineAtMs);
 static bool trySendRtrPage(PendingWakeSession& session, const char** reason = nullptr);
 static bool executeFenceCommandRpv2Plan(
     uint32_t deviceId,
@@ -3806,8 +3813,19 @@ static bool trySendRtrPage(
         session.lastReasonLabel[0] ? session.lastReasonLabel : "page_send_failed");
     return false;
   }
-  publishFenceTransportState(session.core.deviceId, "paging_sent");
-  rtrwake::markPageAttempt(&session.core, millis(), rtrv1::PAGE_ACK_TIMEOUT_MS);
+  const uint32_t txOkAtMs = millis();
+  const uint32_t postTxBeginMs = txOkAtMs;
+  LOGI(
+      "RTR_PAGE_POST_TX_FAST_BEGIN deviceId=%lu commandId=%s sessionId=%llu messageId=%lu campaignCount=%u txOkAtMs=%lu beginMs=%lu",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.core.pageSessionId,
+      (unsigned long)session.core.pageMessageId,
+      (unsigned)session.core.campaignCount,
+      (unsigned long)txOkAtMs,
+      (unsigned long)postTxBeginMs);
+  rtrwake::markPageAttempt(&session.core, txOkAtMs, rtrv1::PAGE_ACK_TIMEOUT_MS);
+  transitionPendingWakeState(session, rtrwake::State::PAGING_AWAITING_ACK, "page_tx_ok");
   rtrdiag::notePageTx(
       &lastPageDiag,
       session.core.deviceId,
@@ -3817,14 +3835,6 @@ static bool trySendRtrPage(
       session.core.lastPageSentAtMs,
       session.core.pageAckDeadlineAtMs);
   syncLastPageDiagFromSession(session);
-  transitionPendingWakeState(session, rtrwake::State::PAGING_AWAITING_ACK, "page_tx_ok");
-  publishFenceTransportState(session.core.deviceId, "awaiting_page_ack");
-  appendPropertyCommandEvent(
-      activeSimpleCommand.propertyId,
-      activeSimpleCommand.commandId,
-      "rtr_page_sent",
-      nullptr,
-      nullptr);
   const rtrwake::FastPathMetric fastPathMetric =
       rtrwake::computeFastPathMetric(session.core, rtrv1::FAST_PAGE_DEADLINE_MS);
   if (fastPathMetric.valid) {
@@ -3870,7 +3880,36 @@ static bool trySendRtrPage(
       (unsigned long long)session.core.pageSessionId,
       (unsigned long)session.core.pageMessageId,
       (unsigned)session.core.campaignCount);
+  const bool ackReceived = waitForRtrPageAckImmediatelyAfterPageTx(
+      session,
+      txOkAtMs,
+      session.core.pageAckDeadlineAtMs);
+  const uint32_t postTxDoneMs = millis();
+  const uint32_t postTxDurationMs = postTxDoneMs - postTxBeginMs;
+  rtrdiag::notePagePostTxFast(&lastPageDiag, postTxDurationMs);
+  LOGI(
+      "RTR_PAGE_POST_TX_FAST_DONE deviceId=%lu commandId=%s sessionId=%llu messageId=%lu campaignCount=%u txOkAtMs=%lu beginMs=%lu doneMs=%lu durationMs=%lu result=%s",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.core.pageSessionId,
+      (unsigned long)session.core.pageMessageId,
+      (unsigned)session.core.campaignCount,
+      (unsigned long)txOkAtMs,
+      (unsigned long)postTxBeginMs,
+      (unsigned long)postTxDoneMs,
+      (unsigned long)postTxDurationMs,
+      ackReceived ? "ack_rx" : "timeout");
+  appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      "rtr_page_sent",
+      nullptr,
+      nullptr);
   markFenceCommandDispatchingBegin();
+  if (session.core.state == rtrwake::State::PAGING_AWAITING_ACK) {
+    publishFenceTransportState(session.core.deviceId, "paging_sent");
+    publishFenceTransportState(session.core.deviceId, "awaiting_page_ack");
+  }
   return true;
 }
 
@@ -3888,34 +3927,39 @@ static bool decodeRtrPageAckFrame(
   return true;
 }
 
-static bool tryHandlePendingWakePageAckFastPath(const LoRaFrame& rx) {
+static bool tryHandlePendingWakePageAckFastPath(
+    const LoRaFrame& rx,
+    uint32_t rxAtMs,
+    const char* source) {
   if (rx.msgType != MsgType::RTR_CONTROL) return false;
   rtrv1::Header header{};
   rtrv1::PageAckBody ack{};
   if (!rtrv1::decodePageAck(rx.payload, rx.payloadLen, &header, &ack)) return false;
+  const uint32_t observedAtMs = rxAtMs != 0 ? rxAtMs : millis();
+  const char* ackSource = source && source[0] ? source : "unspecified";
   const int idx = findPendingWakeSessionByPageCorrelation(
       rx.deviceId, header.sessionId, header.messageId);
   if (idx < 0) return false;
   PendingWakeSession& session = pendingWakeSessions[idx];
   if (!rtrwake::canConsumePageAckFastPath(session.core)) {
-    const uint32_t nowMs = millis();
-    const bool lateAck = rtrwake::isLatePageAck(session.core, nowMs);
+    const bool lateAck = rtrwake::isLatePageAck(session.core, observedAtMs);
     rtrdiag::noteAckRejected(&lastPageDiag, lateAck ? "ack_after_hard_timeout" : "ack_not_consumable");
     if (lateAck) {
       LOGW(
-          "RTR_PAGE_ACK_FAST_PATH_LATE deviceId=%lu commandId=%s sessionId=%llu messageId=%lu state=%s hardDeadlineAtMs=%lu nowMs=%lu accepted=%u sessionModeActive=%u",
+          "RTR_PAGE_ACK_FAST_PATH_LATE deviceId=%lu commandId=%s sessionId=%llu messageId=%lu state=%s hardDeadlineAtMs=%lu nowMs=%lu accepted=%u sessionModeActive=%u source=%s",
           (unsigned long)rx.deviceId,
           session.commandId[0] ? session.commandId : "-",
           (unsigned long long)header.sessionId,
           (unsigned long)header.messageId,
           pendingWakeStateLabel(session.core.state),
           (unsigned long)session.core.inFlightPage.hardDeadlineAtMs,
-          (unsigned long)nowMs,
+          (unsigned long)observedAtMs,
           (unsigned)ack.accepted,
-          (unsigned)ack.sessionModeActive);
+          (unsigned)ack.sessionModeActive,
+          ackSource);
     } else {
       LOGW(
-          "RTR_PAGE_ACK_FAST_PATH_SKIP deviceId=%lu commandId=%s sessionId=%llu messageId=%lu state=%s inFlightValid=%d pageSent=%d hardDeadlineAtMs=%lu accepted=%u sessionModeActive=%u",
+          "RTR_PAGE_ACK_FAST_PATH_SKIP deviceId=%lu commandId=%s sessionId=%llu messageId=%lu state=%s inFlightValid=%d pageSent=%d hardDeadlineAtMs=%lu accepted=%u sessionModeActive=%u source=%s",
           (unsigned long)rx.deviceId,
           session.commandId[0] ? session.commandId : "-",
           (unsigned long long)header.sessionId,
@@ -3925,27 +3969,30 @@ static bool tryHandlePendingWakePageAckFastPath(const LoRaFrame& rx) {
           session.core.inFlightPage.pageSent ? 1 : 0,
           (unsigned long)session.core.inFlightPage.hardDeadlineAtMs,
           (unsigned)ack.accepted,
-          (unsigned)ack.sessionModeActive);
+          (unsigned)ack.sessionModeActive,
+          ackSource);
     }
     return false;
   }
   LOGI(
-      "RTR_PAGE_ACK_FAST_PATH_MATCH deviceId=%lu commandId=%s sessionId=%llu messageId=%lu state=%s accepted=%u sessionModeActive=%u",
+      "RTR_PAGE_ACK_FAST_PATH_MATCH deviceId=%lu commandId=%s sessionId=%llu messageId=%lu state=%s accepted=%u sessionModeActive=%u source=%s",
       (unsigned long)rx.deviceId,
       session.commandId[0] ? session.commandId : "-",
       (unsigned long long)header.sessionId,
       (unsigned long)header.messageId,
       pendingWakeStateLabel(session.core.state),
       (unsigned)ack.accepted,
-      (unsigned)ack.sessionModeActive);
-  return handlePendingWakePageAck(rx);
+      (unsigned)ack.sessionModeActive,
+      ackSource);
+  return handlePendingWakePageAck(rx, observedAtMs);
 }
 
-static bool handlePendingWakePageAck(const LoRaFrame& rx) {
+static bool handlePendingWakePageAck(const LoRaFrame& rx, uint32_t rxAtMs) {
   if (rx.msgType != MsgType::RTR_CONTROL) return false;
   rtrv1::Header header{};
   rtrv1::PageAckBody ack{};
   if (!rtrv1::decodePageAck(rx.payload, rx.payloadLen, &header, &ack)) return false;
+  const uint32_t observedAtMs = rxAtMs != 0 ? rxAtMs : millis();
   const int idx = findPendingWakeSessionByPageCorrelation(
       rx.deviceId, header.sessionId, header.messageId);
   if (idx < 0) {
@@ -3963,11 +4010,10 @@ static bool handlePendingWakePageAck(const LoRaFrame& rx) {
       session.core.state == rtrwake::State::PAGING_RETRY_GRACE &&
       session.core.inFlightPage.valid &&
       session.core.inFlightPage.hardDeadlineAtMs != 0 &&
-      (int32_t)(millis() - session.core.inFlightPage.hardDeadlineAtMs) < 0;
+      (int32_t)(observedAtMs - session.core.inFlightPage.hardDeadlineAtMs) < 0;
   if (session.core.state != rtrwake::State::PAGING_AWAITING_ACK &&
       !ackWithinGrace) {
-    const uint32_t nowMs = millis();
-    const bool lateAck = rtrwake::isLatePageAck(session.core, nowMs);
+    const bool lateAck = rtrwake::isLatePageAck(session.core, observedAtMs);
     rtrdiag::noteAckRejected(
         &lastPageDiag,
         lateAck ? "ack_after_hard_timeout" : "state_not_awaiting_ack");
@@ -3980,7 +4026,7 @@ static bool handlePendingWakePageAck(const LoRaFrame& rx) {
           (unsigned long long)header.sessionId,
           (unsigned long)header.messageId,
           (unsigned long)session.core.inFlightPage.hardDeadlineAtMs,
-          (unsigned long)nowMs);
+          (unsigned long)observedAtMs);
     } else {
       LOGW(
           "RTR_PAGE_ACK_INVALID deviceId=%lu commandId=%s state=%s sessionId=%llu messageId=%lu",
@@ -4004,6 +4050,12 @@ static bool handlePendingWakePageAck(const LoRaFrame& rx) {
     return true;
   }
   rtrwake::markPageAcked(&session.core);
+  if (session.core.inFlightPage.sentAtMs != 0 &&
+      (int32_t)(observedAtMs - session.core.inFlightPage.sentAtMs) >= 0) {
+    rtrdiag::noteAckLatency(
+        &lastPageDiag,
+        observedAtMs - session.core.inFlightPage.sentAtMs);
+  }
   if (ackWithinGrace) {
     LOGI(
         "RTR_PAGE_ACK_ACCEPTED_WITHIN_GRACE deviceId=%lu commandId=%s sessionId=%llu messageId=%lu retryAtMs=%lu",
@@ -4041,6 +4093,65 @@ static bool handlePendingWakePageAck(const LoRaFrame& rx) {
       (unsigned)ack.suggestedRxWindowMs,
       (unsigned long)ack.wakeLockUntilSec);
   return true;
+}
+
+static bool waitForRtrPageAckImmediatelyAfterPageTx(
+    PendingWakeSession& session,
+    uint32_t txOkAtMs,
+    uint32_t ackDeadlineAtMs) {
+  rtrdiag::noteAckRxWindowBegin(&lastPageDiag, txOkAtMs);
+  LOGI(
+      "RTR_PAGE_ACK_RX_WINDOW_BEGIN deviceId=%lu commandId=%s sessionId=%llu messageId=%lu txOkAtMs=%lu ackDeadlineAtMs=%lu",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.core.pageSessionId,
+      (unsigned long)session.core.pageMessageId,
+      (unsigned long)txOkAtMs,
+      (unsigned long)ackDeadlineAtMs);
+  while ((int32_t)(millis() - ackDeadlineAtMs) <= 0) {
+    feedWatchdogIfEnabled();
+    LoRaFrame rx{};
+    if (!lora.receive(rx)) {
+      delay(1);
+      continue;
+    }
+    const uint32_t rxAcceptedAtMs = lora.lastAcceptedRxAtMs();
+    LOGI(
+        "RTR_PAGE_ACK_RX_WINDOW_FRAME deviceId=%lu msgType=%u seq=%lu rxAcceptedAtMs=%lu",
+        (unsigned long)rx.deviceId,
+        (unsigned)rx.msgType,
+        (unsigned long)rx.seq,
+        (unsigned long)rxAcceptedAtMs);
+    if (tryHandlePendingWakePageAckFastPath(rx, rxAcceptedAtMs, "page_ack_window")) {
+      const bool pageAcked = session.core.state == rtrwake::State::PAGE_ACKED;
+      const char* windowResult = pageAcked ? "ack_rx" : "ack_invalid";
+      rtrdiag::noteAckRxWindowEnd(&lastPageDiag, rxAcceptedAtMs, windowResult);
+      LOGI(
+          "RTR_PAGE_ACK_RX_WINDOW_END deviceId=%lu commandId=%s sessionId=%llu messageId=%lu result=%s atMs=%lu",
+          (unsigned long)session.core.deviceId,
+          session.commandId[0] ? session.commandId : "-",
+          (unsigned long long)session.core.pageSessionId,
+          (unsigned long)session.core.pageMessageId,
+          windowResult,
+          (unsigned long)rxAcceptedAtMs);
+      return pageAcked;
+    }
+    enqueueDeferredUplink(rx);
+    delay(1);
+  }
+  const uint32_t timeoutAtMs = millis();
+  rtrdiag::noteAckRxWindowEnd(&lastPageDiag, timeoutAtMs, "timeout");
+  rtrdiag::notePageOutcome(&lastPageDiag, "ack_timeout_window");
+  LOGW(
+      "RTR_PAGE_ACK_RX_WINDOW_END deviceId=%lu commandId=%s sessionId=%llu messageId=%lu result=%s atMs=%lu ackDeadlineAtMs=%lu",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.core.pageSessionId,
+      (unsigned long)session.core.pageMessageId,
+      "timeout",
+      (unsigned long)timeoutAtMs,
+      (unsigned long)ackDeadlineAtMs);
+  return false;
 }
 
 static bool waitForRtrPageAck(

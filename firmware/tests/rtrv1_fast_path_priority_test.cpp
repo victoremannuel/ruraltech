@@ -37,5 +37,17 @@ int main() {
   assert(core.lastPageSentAtMs == 5120);
   assert(rtrwake::canConsumePageAckFastPath(core));
 
+  rtrdiag::noteAckRxWindowBegin(&page, 5120);
+  rtrdiag::noteAckLatency(&page, 88);
+  rtrdiag::noteAckRxWindowEnd(&page, 5208, "ack_rx");
+  rtrdiag::notePagePostTxFast(&page, 9);
+  rtrdiag::noteAckMatched(&page, false);
+  assert(page.lastAckRxWindowBeginAtMs == 5120);
+  assert(page.lastAckRxWindowEndAtMs == 5208);
+  assert(page.lastPageTxToAckRxLatencyMs == 88);
+  assert(page.lastPagePostTxFastDurationMs == 9);
+  assert(strcmp(page.lastAckRxWindowResult, "ack_rx") == 0);
+  assert(strcmp(page.lastAckLateReason, "none") == 0);
+
   return 0;
 }

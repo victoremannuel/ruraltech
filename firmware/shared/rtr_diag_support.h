@@ -74,6 +74,10 @@ struct PageSnapshot {
   uint32_t lastPageAckDeadlineAtMs = 0;
   uint32_t lastPageRetryAtMs = 0;
   uint32_t lastWakeToPageLatencyMs = 0;
+  uint32_t lastPagePostTxFastDurationMs = 0;
+  uint32_t lastAckRxWindowBeginAtMs = 0;
+  uint32_t lastAckRxWindowEndAtMs = 0;
+  uint32_t lastPageTxToAckRxLatencyMs = 0;
   uint32_t lastSoftDeadlineMs = 0;
   uint64_t inFlightPageSessionId = 0;
   uint32_t inFlightPageMessageId = 0;
@@ -96,6 +100,8 @@ struct PageSnapshot {
   char lastPrePageBlockedBy[kReasonSize] = "none";
   char lastOrderViolation[kReasonSize] = "none";
   char lastPageOutcome[kOutcomeSize] = "none";
+  char lastAckRxWindowResult[kOutcomeSize] = "not_started";
+  char lastAckLateReason[kReasonSize] = "none";
   char lastAckRejectedReason[kReasonSize]{};
 };
 
@@ -388,6 +394,43 @@ static inline void notePageLatency(
   snapshot->lastSoftDeadlineMet = deadlineMet;
 }
 
+static inline void notePagePostTxFast(
+    PageSnapshot* snapshot,
+    uint32_t durationMs) {
+  if (!snapshot) return;
+  snapshot->lastPagePostTxFastDurationMs = durationMs;
+}
+
+static inline void noteAckRxWindowBegin(
+    PageSnapshot* snapshot,
+    uint32_t atMs) {
+  if (!snapshot) return;
+  snapshot->lastAckRxWindowBeginAtMs = atMs;
+  copyText(
+      snapshot->lastAckRxWindowResult,
+      sizeof(snapshot->lastAckRxWindowResult),
+      "waiting");
+}
+
+static inline void noteAckRxWindowEnd(
+    PageSnapshot* snapshot,
+    uint32_t atMs,
+    const char* result) {
+  if (!snapshot) return;
+  snapshot->lastAckRxWindowEndAtMs = atMs;
+  copyText(
+      snapshot->lastAckRxWindowResult,
+      sizeof(snapshot->lastAckRxWindowResult),
+      result && result[0] ? result : "unknown");
+}
+
+static inline void noteAckLatency(
+    PageSnapshot* snapshot,
+    uint32_t deltaMs) {
+  if (!snapshot) return;
+  snapshot->lastPageTxToAckRxLatencyMs = deltaMs;
+}
+
 static inline void notePageRetry(
     PageSnapshot* snapshot,
     uint32_t retryAtMs,
@@ -431,11 +474,16 @@ static inline void noteAckMatched(PageSnapshot* snapshot, bool matchedInGrace) {
   snapshot->retryPending = false;
   snapshot->retryAtMs = 0;
   snapshot->retryCampaignCount = 0;
+  copyText(snapshot->lastAckLateReason, sizeof(snapshot->lastAckLateReason), "none");
   snapshot->lastAckRejectedReason[0] = '\0';
 }
 
 static inline void noteAckRejected(PageSnapshot* snapshot, const char* reason) {
   if (!snapshot) return;
+  copyText(
+      snapshot->lastAckLateReason,
+      sizeof(snapshot->lastAckLateReason),
+      reason && reason[0] ? reason : "unknown");
   copyText(
       snapshot->lastAckRejectedReason,
       sizeof(snapshot->lastAckRejectedReason),
