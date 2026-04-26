@@ -60,6 +60,8 @@ struct WakeLoopSnapshot {
 struct PageSnapshot {
   uint32_t lastWakeHintAtMs = 0;
   uint32_t lastWakeHintSeq = 0;
+  uint32_t lastWakeHintFastDurationMs = 0;
+  uint32_t lastPrePageGapMs = 0;
   uint32_t lastImmediateEnterAtMs = 0;
   uint32_t lastImmediateResultAtMs = 0;
   uint32_t lastImmediateDeviceId = 0;
@@ -91,6 +93,7 @@ struct PageSnapshot {
   bool lastCloudDeferredForPage = false;
   char lastImmediateResult[kOutcomeSize] = "none";
   char lastImmediateSource[kSourceSize] = "none";
+  char lastPrePageBlockedBy[kReasonSize] = "none";
   char lastOrderViolation[kReasonSize] = "none";
   char lastPageOutcome[kOutcomeSize] = "none";
   char lastAckRejectedReason[kReasonSize]{};
@@ -269,6 +272,20 @@ static inline void noteWakeHint(
   snapshot->lastWakeHintAccepted = accepted;
 }
 
+static inline void noteWakeHintFastPath(
+    PageSnapshot* snapshot,
+    uint32_t durationMs,
+    uint32_t gapMs,
+    const char* blockedBy = nullptr) {
+  if (!snapshot) return;
+  snapshot->lastWakeHintFastDurationMs = durationMs;
+  snapshot->lastPrePageGapMs = gapMs;
+  copyText(
+      snapshot->lastPrePageBlockedBy,
+      sizeof(snapshot->lastPrePageBlockedBy),
+      blockedBy && blockedBy[0] ? blockedBy : "none");
+}
+
 static inline void noteImmediateEnter(
     PageSnapshot* snapshot,
     uint32_t atMs,
@@ -315,6 +332,14 @@ static inline void noteOrderViolation(PageSnapshot* snapshot, const char* reason
   copyText(
       snapshot->lastOrderViolation,
       sizeof(snapshot->lastOrderViolation),
+      reason && reason[0] ? reason : "unknown");
+}
+
+static inline void notePrePageBlockedBy(PageSnapshot* snapshot, const char* reason) {
+  if (!snapshot) return;
+  copyText(
+      snapshot->lastPrePageBlockedBy,
+      sizeof(snapshot->lastPrePageBlockedBy),
       reason && reason[0] ? reason : "unknown");
 }
 

@@ -324,8 +324,11 @@ void ApiServer::begin() {
       wakeFastPath["lastImmediateDeviceId"] = lastPageDiag.lastImmediateDeviceId;
       wakeFastPath["lastImmediateUplinkSeq"] = lastPageDiag.lastImmediateUplinkSeq;
       wakeFastPath["lastImmediateAgeMs"] = lastPageDiag.lastImmediateAgeMs;
+      wakeFastPath["lastWakeHintFastDurationMs"] = lastPageDiag.lastWakeHintFastDurationMs;
+      wakeFastPath["lastPrePageGapMs"] = lastPageDiag.lastPrePageGapMs;
       wakeFastPath["lastImmediateResult"] = lastPageDiag.lastImmediateResult;
       wakeFastPath["lastImmediateSource"] = lastPageDiag.lastImmediateSource;
+      wakeFastPath["lastPrePageBlockedBy"] = lastPageDiag.lastPrePageBlockedBy;
       wakeFastPath["lastOrderViolation"] = lastPageDiag.lastOrderViolation;
       wakeFastPath["lastCloudDeferredForPage"] = lastPageDiag.lastCloudDeferredForPage;
       doc["acceptedUplinkQueueDepth"] = acceptedUplinkQueueCount;

@@ -51,6 +51,9 @@ REQUIRED_SOURCE_MARKERS = [
     "fitsLimit",
     "RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER",
     "RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT",
+    "RTR_WAKE_HINT_FAST_BEGIN",
+    "RTR_WAKE_HINT_FAST_DONE",
+    "RTR_WAKE_PRE_PAGE_GAP_MS",
     "RTR_WAKE_CLOUD_TX_DEFERRED_UNTIL_PAGE",
     "RTR_WAKE_CLOUD_TX_RESUMED_AFTER_PAGE",
     "RTR_FAST_PATH_ORDER_VIOLATION",
@@ -69,6 +72,8 @@ REQUIRED_MATRIX_BINARY_MARKERS = [
     "planner_or_dispatch_stall",
     "RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER",
     "RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT",
+    "RTR_WAKE_HINT_FAST_DONE",
+    "RTR_WAKE_PRE_PAGE_GAP_MS",
     "RTR_WAKE_CLOUD_TX_DEFERRED_UNTIL_PAGE",
     "RTR_WAKE_CLOUD_TX_RESUMED_AFTER_PAGE",
 ]
@@ -434,6 +439,7 @@ def run_host_tests(out_dir: Path) -> tuple[StageResult, list[str]]:
         "firmware/tests/rtrv1_stale_wake_hint_test.cpp",
         "firmware/tests/rtrv1_wake_scheduler_test.cpp",
         "firmware/tests/rtrv1_fast_path_priority_test.cpp",
+        "firmware/tests/rtrv1_wake_hint_fast_path_split_diag_test.cpp",
         "firmware/tests/rtrv1_terminal_failure_status_test.cpp",
     ]
     log_path = out_dir / "host_tests.log"
@@ -790,12 +796,25 @@ def validate_bench_logs(matrix_log: Path, collar_log: Path) -> StageResult:
     simple_cleared = "SIMPLE_COMMAND_CLEARED" in matrix_text
     has_stale = "RTR_WAKE_HINT_STALE" in matrix_text
     has_waiting = "RTR_WAITING_FRESH_UPLINK" in matrix_text
+    fast_begin = "RTR_WAKE_HINT_FAST_BEGIN" in matrix_text
+    fast_done = "RTR_WAKE_HINT_FAST_DONE" in matrix_text
+    pre_page_gap = "RTR_WAKE_PRE_PAGE_GAP_MS" in matrix_text
     immediate_enter = "RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER" in matrix_text
     page_tx_ok = "RTR_PAGE_TX_OK" in matrix_text
     order_violation = "RTR_FAST_PATH_ORDER_VIOLATION" in matrix_text
     stale_after_immediate = False
     immediate_age_violation = False
+    fast_duration_violation = False
+    pre_page_gap_violation = False
     for line in matrix_text.splitlines():
+        if "RTR_WAKE_HINT_FAST_DONE" in line:
+            duration_match = re.search(r"durationMs=(\d+)", line)
+            if duration_match and int(duration_match.group(1)) > 50:
+                fast_duration_violation = True
+        if "RTR_WAKE_PRE_PAGE_GAP_MS" in line:
+            gap_match = re.search(r"gapMs=(\d+)", line)
+            if gap_match and int(gap_match.group(1)) > 300:
+                pre_page_gap_violation = True
         if "RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER" in line:
             age_match = re.search(r"ageMs=(\d+)", line)
             if age_match and int(age_match.group(1)) > 300:
@@ -817,6 +836,10 @@ def validate_bench_logs(matrix_log: Path, collar_log: Path) -> StageResult:
     collar_page = all(token in collar_text for token in ("RTR_RAW_DOWNLINK_SEEN", "RTR_RAW_DOWNLINK_ACCEPT", "RTR_PAGE_RX", "RTR_PAGE_ACK_TX"))
     if order_violation:
         return StageResult("FAIL", "violacao de ordem: cloud_tx_before_page")
+    if fast_done and fast_duration_violation:
+        return StageResult("FAIL", "wake hint fast path excedeu 50 ms")
+    if pre_page_gap and pre_page_gap_violation:
+        return StageResult("FAIL", "gap pre-page excedeu 300 ms")
     if immediate_age_violation:
         return StageResult("FAIL", "fast-path imediato entrou com ageMs > 300")
     if stale_after_immediate:
@@ -827,21 +850,36 @@ def validate_bench_logs(matrix_log: Path, collar_log: Path) -> StageResult:
         for token in (
             "LORA_UPLINK_ACCEPTED",
             "RTR_WAKE_HINT_CAPTURED",
+            "RTR_WAKE_HINT_FAST_DONE",
+            "RTR_WAKE_PRE_PAGE_GAP_MS",
             "RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER",
-            "RTR_PAGE_TX_OK",
         )
     )
     if target_flow:
         accepted_idx = matrix_text.find("LORA_UPLINK_ACCEPTED")
         hint_idx = matrix_text.find("RTR_WAKE_HINT_CAPTURED", accepted_idx)
-        immediate_idx = matrix_text.find("RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER", hint_idx)
+        fast_done_idx = matrix_text.find("RTR_WAKE_HINT_FAST_DONE", hint_idx)
+        gap_idx = matrix_text.find("RTR_WAKE_PRE_PAGE_GAP_MS", fast_done_idx)
+        immediate_idx = matrix_text.find("RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER", gap_idx)
         page_ok_idx = matrix_text.find("RTR_PAGE_TX_OK", immediate_idx)
+        immediate_result_idx = matrix_text.find("RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT", immediate_idx)
         cloud_idx = matrix_text.find("CLOUD_TX_BEGIN", accepted_idx)
-        if -1 not in (accepted_idx, hint_idx, immediate_idx, page_ok_idx):
-            if cloud_idx != -1 and cloud_idx < page_ok_idx:
-                return StageResult("FAIL", "CLOUD_TX_BEGIN apareceu antes de RTR_PAGE_TX_OK")
-            if accepted_idx < hint_idx < immediate_idx < page_ok_idx:
-                return StageResult("PASS", "fast-path imediato enviou page antes do cloud tx")
+        paging_ready_idx = matrix_text.find("SET_FENCE_PROGRESS", hint_idx)
+        if paging_ready_idx != -1:
+            paging_ready_line = next(
+                (line for line in matrix_text[paging_ready_idx:].splitlines() if "SET_FENCE_PROGRESS" in line),
+                "",
+            )
+            if "stage=paging_ready" not in paging_ready_line:
+                paging_ready_idx = matrix_text.find("stage=paging_ready", hint_idx)
+        page_attempt_end_idx = page_ok_idx if page_ok_idx != -1 else immediate_result_idx
+        if cloud_idx != -1 and page_attempt_end_idx != -1 and cloud_idx < page_attempt_end_idx:
+            return StageResult("FAIL", "CLOUD_TX_BEGIN apareceu antes do resultado do page")
+        if paging_ready_idx != -1 and page_attempt_end_idx != -1 and paging_ready_idx < page_attempt_end_idx:
+            return StageResult("FAIL", "SET_FENCE_PROGRESS stage=paging_ready apareceu antes do resultado do page")
+        if -1 not in (accepted_idx, hint_idx, fast_done_idx, gap_idx, immediate_idx, page_ok_idx):
+            if accepted_idx < hint_idx < fast_done_idx < gap_idx < immediate_idx < page_ok_idx:
+                return StageResult("PASS", "fast-path imediato enviou page antes do progresso/cloud")
 
     deadlock_after_reject = (
         chunk_reject

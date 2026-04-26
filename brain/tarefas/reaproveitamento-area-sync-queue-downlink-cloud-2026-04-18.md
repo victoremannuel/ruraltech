@@ -865,6 +865,32 @@ Historico adicional desta rodada:
 - `python3 -m py_compile tools/audit/flash_and_validate_firmware.py`: `PASS`
 - `rtrv1_fast_path_priority_test.cpp`: `PASS`
 
+### Nova rodada aplicada em 2026-04-26 (split do wake hint em fast path e post-page path)
+
+- `gateway-matriz/gateway-matriz.ino` deixou de publicar `paging_ready` durante o capture do uplink; `notePendingWakeHintFromUplinkFast(...)` agora faz apenas mutação em memória, atualização diagnóstica e promoção de estado local antes do `RTR_PAGE`
+- o fast-path imediato agora registra explicitamente:
+- `RTR_WAKE_HINT_FAST_BEGIN`
+- `RTR_WAKE_HINT_FAST_DONE`
+- `RTR_WAKE_PRE_PAGE_GAP_MS`
+- `RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT` passou a incluir também `gapMs`, permitindo separar atraso pré-page de falha de rádio/estado
+- `SET_FENCE_PROGRESS stage=paging_ready` foi movido para `publishWakeHintProgressAfterPageAttempt(...)`, ficando sempre depois de `RTR_PAGE_TX_OK` ou do resultado imediato equivalente
+- `firmware/shared/rtr_diag_support.h` e `/status` da matriz agora expõem:
+- `wakeFastPath.lastWakeHintFastDurationMs`
+- `wakeFastPath.lastPrePageGapMs`
+- `wakeFastPath.lastPrePageBlockedBy`
+- `tools/audit/flash_and_validate_firmware.py` foi endurecido para falhar quando:
+- `RTR_WAKE_HINT_FAST_DONE durationMs > 50`
+- `RTR_WAKE_PRE_PAGE_GAP_MS gapMs > 300`
+- `CLOUD_TX_BEGIN` aparecer antes do resultado do page
+- `SET_FENCE_PROGRESS stage=paging_ready` aparecer antes do resultado do page
+- validação local desta rodada:
+- `python3 -m py_compile tools/audit/flash_and_validate_firmware.py`: `PASS`
+- `rtrv1_fast_path_priority_test.cpp`: `PASS`
+- `rtrv1_wake_hint_fast_path_split_diag_test.cpp`: `PASS`
+- `rtrv1_stale_wake_hint_test.cpp`: `PASS`
+- `rtrv1_wake_scheduler_test.cpp`: `PASS`
+- `rtrv1_terminal_failure_status_test.cpp`: `PASS`
+
 ### Próxima ação desta task após a implementação
 
 - recompilar a matriz em um host/rodada que consiga concluir o `arduino-cli compile` até `.bin/.elf`
@@ -876,7 +902,7 @@ Historico adicional desta rodada:
 - `lastWakeHint*`
 - `lastPageOutcome`
 - `wakeFastPath.*`
-- `RTR_PAGE_TX_OK`, `RTR_PAGE_ACK_RX`, sequência `RPV2_*` e `APPLY_STATUS`
+- `RTR_PAGE_TX_OK`, `RTR_PAGE_ACK_RX`, `RTR_WAKE_HINT_FAST_DONE`, `RTR_WAKE_PRE_PAGE_GAP_MS`, sequência `RPV2_*` e `APPLY_STATUS`
 
 ## Related
 
