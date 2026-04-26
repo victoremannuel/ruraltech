@@ -6,12 +6,17 @@
 #include <SPI.h>
 
 namespace {
-constexpr uint32_t kReplayStateVersion = 1;
+constexpr uint32_t kReplayStateVersion = 2;
 
-struct ReplayStateBlob {
+struct ReplayStateBlobV1 {
   uint32_t version = 0;
   uint32_t deviceIds[cfg::LORA_REPLAY_TRACKED_DEVICES]{};
   uint32_t lastSeq[cfg::LORA_REPLAY_TRACKED_DEVICES]{};
+};
+
+struct ReplayStateBlob {
+  uint32_t version = 0;
+  rtmatrix::antireplay::ReplayEntry entries[cfg::LORA_REPLAY_TRACKED_DEVICES]{};
 };
 
 inline void prepareSpiBusForLoRa() {
@@ -56,14 +61,30 @@ bool LoRaGateway::shouldEmitThrottledLog(
 
 void LoRaGateway::loadReplayState() {
   if (cfg::DISABLE_LORA_REPLAY_FOR_TESTS) {
-    memset(deviceIds_, 0, sizeof(deviceIds_));
-    memset(lastSeqPerDevice_, 0, sizeof(lastSeqPerDevice_));
+    memset(replayEntries_, 0, sizeof(replayEntries_));
     LOGW("ANTI_REPLAY_TEST_MODE=1; estado anti-replay ignorado na inicializacao");
     return;
   }
   if (!replayPrefsReady_) return;
-  if (replayPrefs_.getBytesLength("state") != sizeof(ReplayStateBlob)) {
+  const size_t stateLen = replayPrefs_.getBytesLength("state");
+  if (stateLen == 0) {
     LOGI("Anti-replay sem estado salvo; iniciando tabela vazia.");
+    return;
+  }
+  if (stateLen == sizeof(ReplayStateBlobV1)) {
+    ReplayStateBlobV1 legacyBlob;
+    const size_t loaded =
+        replayPrefs_.getBytes("state", &legacyBlob, sizeof(legacyBlob));
+    if (loaded == sizeof(legacyBlob) && legacyBlob.version == 1) {
+      LOGW(
+          "ANTI_REPLAY_STATE_MIGRATION version=1 action=discard_legacy_device_only_state");
+      replayPrefs_.remove("state");
+      memset(replayEntries_, 0, sizeof(replayEntries_));
+      return;
+    }
+  }
+  if (stateLen != sizeof(ReplayStateBlob)) {
+    LOGW("Tamanho anti-replay invalido: %u", (unsigned)stateLen);
     return;
   }
 
@@ -79,8 +100,7 @@ void LoRaGateway::loadReplayState() {
     return;
   }
 
-  memcpy(deviceIds_, blob.deviceIds, sizeof(deviceIds_));
-  memcpy(lastSeqPerDevice_, blob.lastSeq, sizeof(lastSeqPerDevice_));
+  memcpy(replayEntries_, blob.entries, sizeof(replayEntries_));
 }
 
 void LoRaGateway::persistReplayState() {
@@ -89,8 +109,7 @@ void LoRaGateway::persistReplayState() {
 
   ReplayStateBlob blob;
   blob.version = kReplayStateVersion;
-  memcpy(blob.deviceIds, deviceIds_, sizeof(deviceIds_));
-  memcpy(blob.lastSeq, lastSeqPerDevice_, sizeof(lastSeqPerDevice_));
+  memcpy(blob.entries, replayEntries_, sizeof(replayEntries_));
 
   const size_t saved = replayPrefs_.putBytes("state", &blob, sizeof(blob));
   if (saved != sizeof(blob)) {
@@ -99,14 +118,16 @@ void LoRaGateway::persistReplayState() {
   }
 }
 
-uint8_t LoRaGateway::idxForDevice(uint32_t id) {
-  for (uint8_t i = 0; i < cfg::LORA_REPLAY_TRACKED_DEVICES; ++i) {
-    if (deviceIds_[i] == id || deviceIds_[i] == 0) {
-      deviceIds_[i] = id;
-      return i;
-    }
-  }
-  return 0;
+int LoRaGateway::replayEntrySlot(
+    uint32_t deviceId,
+    uint64_t scopeId,
+    uint16_t keyId) {
+  return rtmatrix::antireplay::findEntrySlot(
+      replayEntries_,
+      cfg::LORA_REPLAY_TRACKED_DEVICES,
+      deviceId,
+      scopeId,
+      keyId);
 }
 
 bool LoRaGateway::armContinuousReceive() {
@@ -369,21 +390,50 @@ bool LoRaGateway::receive(LoRaFrame& frame) {
     return false;
   }
 
-  const uint8_t idx = idxForDevice(frame.deviceId);
+  const uint16_t keyId = cfg::LORA_KEY_ID;
+  const int idx = replayEntrySlot(frame.deviceId, frame.scopeId, keyId);
   if (!cfg::DISABLE_LORA_REPLAY_FOR_TESTS &&
-      frame.seq <= lastSeqPerDevice_[idx]) {
+      idx >= 0 &&
+      frame.seq <= replayEntries_[idx].lastSeq) {
     replayRejectCount_++;
     setRadioState("rx_replay");
-    LOGW("Replay bloqueado device=%lu seq=%lu", frame.deviceId, frame.seq);
+    lastBlockedUplink_.valid = true;
+    lastBlockedUplink_.deviceId = frame.deviceId;
+    lastBlockedUplink_.scopeId = frame.scopeId;
+    lastBlockedUplink_.keyId = keyId;
+    lastBlockedUplink_.rxSeq = frame.seq;
+    lastBlockedUplink_.lastAcceptedSeq = replayEntries_[idx].lastSeq;
+    lastBlockedUplink_.delta = rtmatrix::antireplay::signedSeqDelta(
+        frame.seq, replayEntries_[idx].lastSeq);
+    lastBlockedUplink_.frameType = static_cast<uint8_t>(frame.msgType);
+    lastBlockedUplink_.protoVersion = cfg::LORA_PROTO_VERSION;
+    lastBlockedUplink_.radioProfile = cfg::LORA_RADIO_PROFILE_ID;
+    lastBlockedUplink_.atMs = millis();
+    lastBlockedUplink_.reason = "replay_or_old_seq";
+    char scopeHex[rtmatrix::antireplay::kScopeHexSize]{};
+    rtmatrix::antireplay::scopeIdToHex(
+        frame.scopeId, scopeHex, sizeof(scopeHex));
+    LOGW(
+        "ANTI_REPLAY_BLOCKED direction=uplink deviceId=%lu scopeId=%s keyId=%u rxSeq=%lu lastAcceptedSeq=%lu delta=%ld frameType=%u protoVersion=%u radioProfile=%u reason=replay_or_old_seq",
+        (unsigned long)frame.deviceId,
+        scopeHex,
+        (unsigned)keyId,
+        (unsigned long)frame.seq,
+        (unsigned long)replayEntries_[idx].lastSeq,
+        (long)lastBlockedUplink_.delta,
+        (unsigned)frame.msgType,
+        (unsigned)cfg::LORA_PROTO_VERSION,
+        (unsigned)cfg::LORA_RADIO_PROFILE_ID);
     return false;
   }
   if (cfg::DISABLE_LORA_REPLAY_FOR_TESTS &&
-      frame.seq <= lastSeqPerDevice_[idx]) {
+      idx >= 0 &&
+      frame.seq <= replayEntries_[idx].lastSeq) {
     LOGW(
         "ANTI_REPLAY_TEST_MODE=1 aceitando frame repetido device=%lu seq=%lu last_seq=%lu",
         (unsigned long)frame.deviceId,
         (unsigned long)frame.seq,
-        (unsigned long)lastSeqPerDevice_[idx]);
+        (unsigned long)replayEntries_[idx].lastSeq);
   }
   setRadioState("rx_ok");
   rtrdiag::noteRawAccepted(&rawRxDiag_);
@@ -396,10 +446,87 @@ bool LoRaGateway::receive(LoRaFrame& frame) {
       (unsigned long)rawRxDiag_.rawRxAcceptedCount);
   lastAcceptedRxAtMs_ = millis();
   lastAcceptedSeq_ = frame.seq;
-  if (!cfg::DISABLE_LORA_REPLAY_FOR_TESTS) {
-    lastSeqPerDevice_[idx] = frame.seq;
+  if (!cfg::DISABLE_LORA_REPLAY_FOR_TESTS && idx >= 0) {
+    replayEntries_[idx].deviceId = frame.deviceId;
+    replayEntries_[idx].scopeId = frame.scopeId;
+    replayEntries_[idx].keyId = keyId;
+    replayEntries_[idx].lastSeq = frame.seq;
     persistReplayState();
   }
+  return true;
+}
+
+bool LoRaGateway::resetUplinkAntiReplayForDevice(
+    uint32_t deviceId,
+    uint64_t scopeId,
+    uint16_t keyId,
+    const char* source,
+    AntiReplayResetResult* out) {
+  AntiReplayResetResult local;
+  local.deviceId = deviceId;
+  local.scopeId = scopeId;
+  local.keyId = keyId;
+  local.reason = "unknown";
+  char scopeHex[rtmatrix::antireplay::kScopeHexSize]{};
+  rtmatrix::antireplay::scopeIdToHex(scopeId, scopeHex, sizeof(scopeHex));
+
+  if (!cfg::DIAG_ANTI_REPLAY_RESET_ENABLED) {
+    local.reason = "diag_mode_required";
+    LOGW(
+        "ANTI_REPLAY_RESET_DENIED direction=uplink deviceId=%lu scopeId=%s keyId=%u source=%s reason=diag_mode_required",
+        (unsigned long)deviceId,
+        scopeHex,
+        (unsigned)keyId,
+        source ? source : "unknown");
+    if (out) *out = local;
+    return false;
+  }
+  if (deviceId == 0 || scopeId == 0 || keyId == 0) {
+    local.reason = "invalid_target";
+    LOGW(
+        "ANTI_REPLAY_RESET_DENIED direction=uplink deviceId=%lu scopeId=%s keyId=%u source=%s reason=invalid_target",
+        (unsigned long)deviceId,
+        scopeHex,
+        (unsigned)keyId,
+        source ? source : "unknown");
+    if (out) *out = local;
+    return false;
+  }
+
+  LOGI(
+      "ANTI_REPLAY_RESET_BEGIN direction=uplink deviceId=%lu scopeId=%s keyId=%u source=%s",
+      (unsigned long)deviceId,
+      scopeHex,
+      (unsigned)keyId,
+      source ? source : "unknown");
+  uint32_t lastBefore = 0;
+  uint32_t lastAfter = 0;
+  if (!rtmatrix::antireplay::resetEntry(
+          replayEntries_,
+          cfg::LORA_REPLAY_TRACKED_DEVICES,
+          deviceId,
+          scopeId,
+          keyId,
+          &lastBefore,
+          &lastAfter)) {
+    local.reason = "reset_failed";
+    if (out) *out = local;
+    return false;
+  }
+  persistReplayState();
+  local.ok = true;
+  local.lastSeqBefore = lastBefore;
+  local.lastSeqAfter = lastAfter;
+  local.reason = "ok";
+  LOGI(
+      "ANTI_REPLAY_RESET_DONE direction=uplink deviceId=%lu scopeId=%s keyId=%u lastSeqBefore=%lu lastSeqAfter=%lu source=%s",
+      (unsigned long)deviceId,
+      scopeHex,
+      (unsigned)keyId,
+      (unsigned long)lastBefore,
+      (unsigned long)lastAfter,
+      source ? source : "unknown");
+  if (out) *out = local;
   return true;
 }
 

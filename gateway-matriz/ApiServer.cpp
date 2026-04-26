@@ -2,6 +2,8 @@
 #include "ApiServer.h"
 #include "config.h"
 #include "LoRaGateway.h"
+#include "../firmware/shared/command_contract.h"
+#include "../firmware/shared/matrix_uplink_antireplay.h"
 #include "../firmware/shared/build_info.h"
 #include <ctype.h>
 #include <math.h>
@@ -106,11 +108,41 @@ static bool parseCoordinate(const JsonVariantConst& value, double& out) {
   return isfinite(out);
 }
 
+static bool parseKeyId(const JsonVariantConst& value, uint16_t& out) {
+  uint32_t parsed = 0;
+  if (value.is<uint32_t>() || value.is<int>() || value.is<long>()) {
+    parsed = value.as<uint32_t>();
+  } else if (value.is<const char*>()) {
+    const char* text = value.as<const char*>();
+    if (!text || !text[0]) return false;
+    char* end = nullptr;
+    parsed = (uint32_t)strtoul(text, &end, 10);
+    if (end == text) return false;
+  } else {
+    return false;
+  }
+  if (parsed == 0 || parsed > 0xFFFFu) return false;
+  out = static_cast<uint16_t>(parsed);
+  return true;
+}
+
+static bool parseScopeIdText(
+    const JsonVariantConst& value,
+    uint64_t& out,
+    String* normalizedText) {
+  if (!value.is<const char*>()) return false;
+  const String compact = compactIdentifier(value.as<const char*>());
+  if (!rtcmd::isValidScopeId(compact.c_str())) return false;
+  if (normalizedText) *normalizedText = compact;
+  out = strtoull(compact.c_str(), nullptr, 16);
+  return out != 0;
+}
+
 void ApiServer::begin() {
   g_server = this;
   if (cfg::FEATURE_HTTP) {
     http_.on("/status", HTTP_GET, [this]() {
-      StaticJsonDocument<3072> doc;
+      StaticJsonDocument<4096> doc;
       const buildinfo::BuildInfo build = buildinfo::current();
       doc["ok"] = true;
       doc["service"] = "gateway_matrix";
@@ -185,6 +217,28 @@ void ApiServer::begin() {
       doc["lastAcceptedSeq"] = lora.lastAcceptedSeq();
       doc["lastLoraIrqFlags"] = lora.lastIrqFlags();
       doc["lastLoraState"] = lora.lastRadioState();
+      JsonObject antiReplay = doc["antiReplay"].to<JsonObject>();
+      antiReplay["diagResetEnabled"] = cfg::DIAG_ANTI_REPLAY_RESET_ENABLED;
+      antiReplay["activeKeyId"] = cfg::LORA_KEY_ID;
+      const AntiReplayBlockedSnapshot& blocked = lora.lastBlockedUplink();
+      if (blocked.valid) {
+        JsonObject lastBlocked = antiReplay["lastBlocked"].to<JsonObject>();
+        char blockedScopeHex[rtmatrix::antireplay::kScopeHexSize]{};
+        rtmatrix::antireplay::scopeIdToHex(
+            blocked.scopeId, blockedScopeHex, sizeof(blockedScopeHex));
+        lastBlocked["direction"] = "uplink";
+        lastBlocked["deviceId"] = blocked.deviceId;
+        lastBlocked["scopeId"] = blockedScopeHex;
+        lastBlocked["keyId"] = blocked.keyId;
+        lastBlocked["rxSeq"] = blocked.rxSeq;
+        lastBlocked["lastAcceptedSeq"] = blocked.lastAcceptedSeq;
+        lastBlocked["delta"] = blocked.delta;
+        lastBlocked["frameType"] = blocked.frameType;
+        lastBlocked["protoVersion"] = blocked.protoVersion;
+        lastBlocked["radioProfile"] = blocked.radioProfile;
+        lastBlocked["reason"] = blocked.reason;
+        lastBlocked["atMs"] = blocked.atMs;
+      }
       const rtrdiag::DecryptFailSnapshot& decryptFail = lora.lastDecryptFail();
       const rtrdiag::RawRxSnapshot& rawRx = lora.rawRxDiag();
       doc["lastDecryptFailAtMs"] = decryptFail.atMs;
@@ -291,6 +345,9 @@ void ApiServer::begin() {
       serializeJson(doc, out);
       http_.send(200, "application/json", out);
     });
+    http_.on("/diag/anti-replay/reset-uplink", HTTP_POST, [this]() {
+      handleAntiReplayResetRequest();
+    });
     http_.on("/devices", HTTP_GET, [this]() { handleDevicesRequest(); });
     http_.on("/logs", HTTP_GET, [this]() { handleLogsRequest(); });
     http_.begin();
@@ -304,6 +361,91 @@ void ApiServer::begin() {
     });
     appendLogLine("WS_READY");
   }
+}
+
+void ApiServer::handleAntiReplayResetRequest() {
+  StaticJsonDocument<512> payload;
+  StaticJsonDocument<512> response;
+  const String body = http_.arg("plain");
+  if (body.isEmpty()) {
+    response["ok"] = false;
+    response["reason"] = "missing_body";
+    String out;
+    serializeJson(response, out);
+    http_.send(400, "application/json", out);
+    return;
+  }
+  if (deserializeJson(payload, body) != DeserializationError::Ok) {
+    response["ok"] = false;
+    response["reason"] = "invalid_json";
+    String out;
+    serializeJson(response, out);
+    http_.send(400, "application/json", out);
+    return;
+  }
+
+  uint32_t deviceId = 0;
+  uint64_t scopeId = 0;
+  uint16_t keyId = 0;
+  String scopeHex;
+  if (!parseDeviceId(payload["deviceId"], deviceId)) {
+    response["ok"] = false;
+    response["reason"] = "invalid_device_id";
+    String out;
+    serializeJson(response, out);
+    http_.send(400, "application/json", out);
+    return;
+  }
+  if (!parseScopeIdText(payload["scopeId"], scopeId, &scopeHex)) {
+    response["ok"] = false;
+    response["reason"] = "invalid_scope_id";
+    String out;
+    serializeJson(response, out);
+    http_.send(400, "application/json", out);
+    return;
+  }
+  if (!parseKeyId(payload["keyId"], keyId)) {
+    response["ok"] = false;
+    response["reason"] = "invalid_key_id";
+    String out;
+    serializeJson(response, out);
+    http_.send(400, "application/json", out);
+    return;
+  }
+  const char* confirm = payload["confirm"] | "";
+  if (strcmp(confirm, "RESET_UPLINK_ANTI_REPLAY") != 0) {
+    response["ok"] = false;
+    response["reason"] = "invalid_confirmation";
+    String out;
+    serializeJson(response, out);
+    http_.send(400, "application/json", out);
+    return;
+  }
+
+  AntiReplayResetResult result;
+  const bool ok = lora.resetUplinkAntiReplayForDevice(
+      deviceId, scopeId, keyId, "diag_http", &result);
+  response["ok"] = ok;
+  if (!ok) {
+    response["reason"] = result.reason;
+    String out;
+    serializeJson(response, out);
+    const int statusCode =
+        strcmp(result.reason, "diag_mode_required") == 0 ? 403 : 400;
+    http_.send(statusCode, "application/json", out);
+    return;
+  }
+
+  response["direction"] = "uplink";
+  response["deviceId"] = result.deviceId;
+  response["scopeId"] = scopeHex;
+  response["keyId"] = result.keyId;
+  response["lastSeqBefore"] = result.lastSeqBefore;
+  response["lastSeqAfter"] = result.lastSeqAfter;
+  response["mode"] = "diag_only";
+  String out;
+  serializeJson(response, out);
+  http_.send(200, "application/json", out);
 }
 
 void ApiServer::appendLogLine(const String& line) {

@@ -9,6 +9,7 @@
 #include "LoRaProtocol.h"
 #include "CryptoEngine.h"
 #include "../firmware/shared/rtr_diag_support.h"
+#include "../firmware/shared/matrix_uplink_antireplay.h"
 
 struct SecureWireMetrics {
   bool ok = false;
@@ -17,6 +18,31 @@ struct SecureWireMetrics {
   uint16_t packedLen = 0;
   uint16_t cipherPayloadLen = 0;
   uint16_t wireLenFinal = 0;
+};
+
+struct AntiReplayResetResult {
+  bool ok = false;
+  uint32_t deviceId = 0;
+  uint64_t scopeId = 0;
+  uint16_t keyId = 0;
+  uint32_t lastSeqBefore = 0;
+  uint32_t lastSeqAfter = 0;
+  const char* reason = "unknown";
+};
+
+struct AntiReplayBlockedSnapshot {
+  bool valid = false;
+  uint32_t deviceId = 0;
+  uint64_t scopeId = 0;
+  uint16_t keyId = 0;
+  uint32_t rxSeq = 0;
+  uint32_t lastAcceptedSeq = 0;
+  int32_t delta = 0;
+  uint8_t frameType = 0;
+  uint16_t protoVersion = 0;
+  uint16_t radioProfile = 0;
+  uint32_t atMs = 0;
+  const char* reason = "unknown";
 };
 
 class LoRaGateway {
@@ -46,10 +72,19 @@ class LoRaGateway {
   uint32_t nonceMismatchCount() const { return nonceMismatchCount_; }
   uint32_t replayRejectCount() const { return replayRejectCount_; }
   uint32_t lastAcceptedSeq() const { return lastAcceptedSeq_; }
+  const AntiReplayBlockedSnapshot& lastBlockedUplink() const {
+    return lastBlockedUplink_;
+  }
   const rtrdiag::DecryptFailSnapshot& lastDecryptFail() const {
     return lastDecryptFail_;
   }
   const rtrdiag::RawRxSnapshot& rawRxDiag() const { return rawRxDiag_; }
+  bool resetUplinkAntiReplayForDevice(
+      uint32_t deviceId,
+      uint64_t scopeId,
+      uint16_t keyId,
+      const char* source,
+      AntiReplayResetResult* out);
 
  private:
   SX1276 radio_;
@@ -73,6 +108,7 @@ class LoRaGateway {
   uint32_t nonceMismatchCount_ = 0;
   uint32_t replayRejectCount_ = 0;
   uint32_t lastAcceptedSeq_ = 0;
+  AntiReplayBlockedSnapshot lastBlockedUplink_{};
   rtrdiag::DecryptFailSnapshot lastDecryptFail_{};
   rtrdiag::RawRxSnapshot rawRxDiag_{};
   uint32_t rawNoiseLogWindowStartedAtMs_ = 0;
@@ -81,11 +117,11 @@ class LoRaGateway {
   uint16_t rawNoiseLogWindowCount_ = 0;
   uint16_t rawPatternLogWindowCount_ = 0;
   uint16_t decryptFailLogWindowCount_ = 0;
-  uint32_t lastSeqPerDevice_[cfg::LORA_REPLAY_TRACKED_DEVICES]{};
-  uint32_t deviceIds_[cfg::LORA_REPLAY_TRACKED_DEVICES]{};
+  rtmatrix::antireplay::ReplayEntry
+      replayEntries_[cfg::LORA_REPLAY_TRACKED_DEVICES]{};
   void loadReplayState();
   void persistReplayState();
-  uint8_t idxForDevice(uint32_t id);
+  int replayEntrySlot(uint32_t deviceId, uint64_t scopeId, uint16_t keyId);
   bool armContinuousReceive();
   bool shouldEmitThrottledLog(
       uint32_t nowMs,

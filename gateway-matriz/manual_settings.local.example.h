@@ -20,6 +20,10 @@
 //   5 = stage 4 + SD
 // #define RT_MATRIX_DIAG_STAGE 2
 
+// Libera o reset diagnostico de anti-replay mesmo fora do stage 4+.
+// Use apenas em bancada local e remova depois.
+// #define RT_MATRIX_ENABLE_DIAG_ANTI_REPLAY_RESET 1
+
 // Relay LoRa entre gateways (opcional)
 // #define RT_CFG_GATEWAY_RELAY_ENABLED 1
 

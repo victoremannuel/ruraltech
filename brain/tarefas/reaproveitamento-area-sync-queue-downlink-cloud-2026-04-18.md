@@ -779,6 +779,34 @@ Historico adicional desta rodada:
 - `rtrv1_terminal_failure_status_test.cpp`
 - dry-run do auditor gerou `tools/audit/output/20260425_213456_canonical_planner_physical_validation/validation_report.md` com resultado correto `INCONCLUSIVE` por ausência de compile/upload/serial/bench físicos.
 
+### Nova rodada aplicada em 2026-04-26 (reset/resync anti-replay uplink escopado na matriz)
+
+- o anti-replay uplink da matriz deixou de ser apenas por `deviceId` e passou a persistir a combinação `deviceId + scopeId + keyId`, alinhando o estado salvo com o handshake RTR real usado no `SET_FENCE`
+- `gateway-matriz/LoRaGateway.*` agora:
+- registra `ANTI_REPLAY_BLOCKED` com `direction=uplink`, `deviceId`, `scopeId`, `keyId`, `rxSeq`, `lastAcceptedSeq`, `delta`, `frameType`, `protoVersion` e `radioProfile`
+- migra o blob NVS de replay para `version=2`; ao encontrar o formato legado `device-only`, descarta o estado antigo com log `ANTI_REPLAY_STATE_MIGRATION`
+- expõe reset escopado via `resetUplinkAntiReplayForDevice(...)`, protegido por `cfg::DIAG_ANTI_REPLAY_RESET_ENABLED`
+- `gateway-matriz/ApiServer.*` agora expõe:
+- `POST /diag/anti-replay/reset-uplink`
+- `antiReplay.lastBlocked` em `/status`, com o último bloqueio relevante sem segredos
+- `gateway-matriz/config.h` ganhou o gate local `RT_MATRIX_ENABLE_DIAG_ANTI_REPLAY_RESET` para bancada; `manual_settings.local.example.h` documenta o override
+- foi criado o helper host-side `firmware/shared/matrix_uplink_antireplay.*` com teste nativo dedicado cobrindo lookup e reset escopado
+- CI host-side atualizada em `.github/workflows/pr-quality.yml` e `.github/workflows/nightly-regression.yml`
+- validação local concluída:
+- host tests do helper novos: `PASS`
+- compile ESP32 da matriz: `PASS`
+- upload físico da matriz: primeira tentativa falhou no stub em baud alto; segunda tentativa com `upload.speed=115200` concluiu com sucesso
+
+### Próxima ação desta task após a implementação
+
+- chamar `POST /diag/anti-replay/reset-uplink` com `deviceId=3222380545`, `scopeId=9FFFC95AA1624895`, `keyId=1` e `confirm=RESET_UPLINK_ANTI_REPLAY`
+- repetir o smoke físico `SET_FENCE`
+- capturar `/status` antes e depois para verificar:
+- `antiReplay.lastBlocked`
+- `lastWakeHint*`
+- `lastPageOutcome`
+- `RTR_PAGE_TX_OK`, `RTR_PAGE_ACK_RX`, sequência `RPV2_*` e `APPLY_STATUS`
+
 ## Related
 
 [[projetos/ruraltech]]

@@ -31,6 +31,10 @@
 #define RT_MATRIX_DIAG_STAGE 0
 #endif
 
+#ifndef RT_MATRIX_ENABLE_DIAG_ANTI_REPLAY_RESET
+#define RT_MATRIX_ENABLE_DIAG_ANTI_REPLAY_RESET 0
+#endif
+
 // BLE da matriz:
 // - em partições maiores que min_spiffs, padrão = 1 (onboarding BLE ativo);
 // - em min_spiffs, padrão = 0 para caber em flash sem trocar partição.
@@ -47,6 +51,8 @@ namespace cfg {
 constexpr char FW_VERSION[] = "gateway-matriz-1.0.0";
 constexpr uint8_t LOG_LEVEL = RT_MATRIX_LOG_LEVEL;
 constexpr uint8_t DIAG_STAGE = RT_MATRIX_DIAG_STAGE;
+constexpr bool DIAG_ANTI_REPLAY_RESET_ENABLED =
+    RT_MATRIX_ENABLE_DIAG_ANTI_REPLAY_RESET != 0 || DIAG_STAGE >= 4;
 constexpr bool DISABLE_LORA_REPLAY_FOR_TESTS =
     RT_MATRIX_DISABLE_LORA_REPLAY_FOR_TESTS != 0;
 constexpr uint32_t SERIAL_BAUD = 115200;
