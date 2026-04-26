@@ -793,6 +793,17 @@ def validate_bench_logs(matrix_log: Path, collar_log: Path) -> StageResult:
     immediate_enter = "RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER" in matrix_text
     page_tx_ok = "RTR_PAGE_TX_OK" in matrix_text
     order_violation = "RTR_FAST_PATH_ORDER_VIOLATION" in matrix_text
+    stale_after_immediate = False
+    immediate_age_violation = False
+    for line in matrix_text.splitlines():
+        if "RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER" in line:
+            age_match = re.search(r"ageMs=(\d+)", line)
+            if age_match and int(age_match.group(1)) > 300:
+                immediate_age_violation = True
+        if "RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER" in line:
+            stale_after_immediate = False
+        elif "RTR_WAKE_HINT_STALE" in line and immediate_enter and not page_tx_ok:
+            stale_after_immediate = True
     repeated_stale_only = has_stale and not has_waiting
     fresh_release = all(
         token in matrix_text
@@ -806,6 +817,10 @@ def validate_bench_logs(matrix_log: Path, collar_log: Path) -> StageResult:
     collar_page = all(token in collar_text for token in ("RTR_RAW_DOWNLINK_SEEN", "RTR_RAW_DOWNLINK_ACCEPT", "RTR_PAGE_RX", "RTR_PAGE_ACK_TX"))
     if order_violation:
         return StageResult("FAIL", "violacao de ordem: cloud_tx_before_page")
+    if immediate_age_violation:
+        return StageResult("FAIL", "fast-path imediato entrou com ageMs > 300")
+    if stale_after_immediate:
+        return StageResult("FAIL", "fast-path imediato ainda caiu em wake hint stale sem RTR_PAGE_TX_OK")
 
     target_flow = all(
         token in matrix_text

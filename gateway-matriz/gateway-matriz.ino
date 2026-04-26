@@ -2894,13 +2894,16 @@ static void handleUplinkDuringAckWait(const LoRaFrame& rx) {
     return;
   }
 
+  // Even while ACK_WAIT is active, target uplinks for pending wake/page sessions
+  // must go through the radio-critical fast-path before any deferred queueing.
+  tryHandleWakePageImmediatelyAfterAcceptedUplink(rx, lora.lastAcceptedRxAtMs());
+
   if (activeSimpleCommand.active &&
       rx.deviceId == activeSimpleCommand.feedbackDeviceId) {
     scheduleActiveSimpleCommandRetryForRx(rx);
     enqueueDeferredUplink(rx);
     return;
   }
-  tryHandleWakePageImmediatelyAfterAcceptedUplink(rx, lora.lastAcceptedRxAtMs());
   enqueueAcceptedUplink(rx);
 }
 

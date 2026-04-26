@@ -833,6 +833,18 @@ Historico adicional desta rodada:
 - compile ESP32 da matriz nesta rodada: `INCONCLUSIVE`
 - o `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz` voltou ao padrão histórico de hang silencioso deste host; houve pré-processamento/materialização em `/tmp/ruraltech-build-matriz`, mas sem artefato final `.bin/.elf`
 
+### Nova rodada aplicada em 2026-04-26 (correção do callsite real dentro de `ACK_WAIT`)
+
+- o novo plano `ruraltech_real_rx_callsite_rtr_page_fast_path_plan.md` apontou que ainda existia um desvio tardio no callsite real de RX aceito quando a matriz estava em `activeSimpleCommand.awaitingFeedback`
+- em `gateway-matriz/gateway-matriz.ino`, dentro de `handleUplinkDuringAckWait(...)`, o helper `tryHandleWakePageImmediatelyAfterAcceptedUplink(...)` foi movido para antes do branch que envia o uplink do alvo para `deferredUplinkQueue`
+- com isso, mesmo durante `ACK_WAIT`, o uplink aceito do alvo agora tenta `RTR_PAGE` imediatamente antes de qualquer defer/flush posterior da fila
+- `tools/audit/flash_and_validate_firmware.py` foi endurecido de novo para falhar explicitamente quando:
+- `RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER` aparece com `ageMs > 300`
+- o fast-path imediato ainda termina em `RTR_WAKE_HINT_STALE` sem `RTR_PAGE_TX_OK`
+- validação local desta micro-rodada:
+- `python3 -m py_compile tools/audit/flash_and_validate_firmware.py`: `PASS`
+- `rtrv1_fast_path_priority_test.cpp`: `PASS`
+
 ### Próxima ação desta task após a implementação
 
 - recompilar a matriz em um host/rodada que consiga concluir o `arduino-cli compile` até `.bin/.elf`
