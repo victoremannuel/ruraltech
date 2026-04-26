@@ -318,6 +318,15 @@ void ApiServer::begin() {
       doc["lastWakeHintAtMs"] = lastPageDiag.lastWakeHintAtMs;
       doc["lastWakeHintSeq"] = lastPageDiag.lastWakeHintSeq;
       doc["lastWakeHintAccepted"] = lastPageDiag.lastWakeHintAccepted;
+      JsonObject wakeFastPath = doc["wakeFastPath"].to<JsonObject>();
+      wakeFastPath["lastImmediateEnterAtMs"] = lastPageDiag.lastImmediateEnterAtMs;
+      wakeFastPath["lastImmediateResultAtMs"] = lastPageDiag.lastImmediateResultAtMs;
+      wakeFastPath["lastImmediateDeviceId"] = lastPageDiag.lastImmediateDeviceId;
+      wakeFastPath["lastImmediateUplinkSeq"] = lastPageDiag.lastImmediateUplinkSeq;
+      wakeFastPath["lastImmediateAgeMs"] = lastPageDiag.lastImmediateAgeMs;
+      wakeFastPath["lastImmediateResult"] = lastPageDiag.lastImmediateResult;
+      wakeFastPath["lastOrderViolation"] = lastPageDiag.lastOrderViolation;
+      wakeFastPath["lastCloudDeferredForPage"] = lastPageDiag.lastCloudDeferredForPage;
       doc["acceptedUplinkQueueDepth"] = acceptedUplinkQueueCount;
       doc["acceptedUplinkDropCount"] = acceptedUplinkDropCount;
       doc["acceptedUplinkLastDrainAtMs"] = acceptedUplinkLastDrainAtMs;

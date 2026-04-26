@@ -104,6 +104,34 @@ Sugestão: manter `http.version=HTTP/1.1` caso a rede continue instável para up
 
 ### Comando de gravação
 
+#### Coleira
+
+Compilação:
+
+```bash
+rtk arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs coleira
+```
+
+Upload:
+
+```bash
+rtk arduino-cli upload -p /dev/cu.usbserial-1420 --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs coleira
+```
+
+#### Gateway matriz
+
+Compilação:
+
+```bash
+rtk arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz
+```
+
+Upload:
+
+```bash
+rtk arduino-cli upload -p /dev/cu.usbserial-59470049741 --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs --upload-property upload.speed=115200 gateway-matriz
+```
+
 ```bash
 rtk bash -lc 'set -euo pipefail
 COLEIRA_PORT="/dev/cu.usbserial-1420"

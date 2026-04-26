@@ -59,6 +59,11 @@ struct WakeLoopSnapshot {
 struct PageSnapshot {
   uint32_t lastWakeHintAtMs = 0;
   uint32_t lastWakeHintSeq = 0;
+  uint32_t lastImmediateEnterAtMs = 0;
+  uint32_t lastImmediateResultAtMs = 0;
+  uint32_t lastImmediateDeviceId = 0;
+  uint32_t lastImmediateUplinkSeq = 0;
+  uint32_t lastImmediateAgeMs = 0;
   uint32_t lastPageTargetDeviceId = 0;
   uint64_t lastPageSessionId = 0;
   uint32_t lastPageMessageId = 0;
@@ -82,6 +87,9 @@ struct PageSnapshot {
   bool inFlightPageAckAccepted = false;
   bool retryPending = false;
   bool lastAckMatchedInGrace = false;
+  bool lastCloudDeferredForPage = false;
+  char lastImmediateResult[kOutcomeSize] = "none";
+  char lastOrderViolation[kReasonSize] = "none";
   char lastPageOutcome[kOutcomeSize] = "none";
   char lastAckRejectedReason[kReasonSize]{};
 };
@@ -257,6 +265,45 @@ static inline void noteWakeHint(
   snapshot->lastWakeHintAtMs = atMs;
   snapshot->lastWakeHintSeq = seq;
   snapshot->lastWakeHintAccepted = accepted;
+}
+
+static inline void noteImmediateEnter(
+    PageSnapshot* snapshot,
+    uint32_t atMs,
+    uint32_t deviceId,
+    uint32_t uplinkSeq) {
+  if (!snapshot) return;
+  snapshot->lastImmediateEnterAtMs = atMs;
+  snapshot->lastImmediateDeviceId = deviceId;
+  snapshot->lastImmediateUplinkSeq = uplinkSeq;
+}
+
+static inline void noteImmediateResult(
+    PageSnapshot* snapshot,
+    uint32_t atMs,
+    uint32_t deviceId,
+    uint32_t uplinkSeq,
+    uint32_t ageMs,
+    const char* result,
+    bool cloudDeferred) {
+  if (!snapshot) return;
+  snapshot->lastImmediateResultAtMs = atMs;
+  snapshot->lastImmediateDeviceId = deviceId;
+  snapshot->lastImmediateUplinkSeq = uplinkSeq;
+  snapshot->lastImmediateAgeMs = ageMs;
+  snapshot->lastCloudDeferredForPage = cloudDeferred;
+  copyText(
+      snapshot->lastImmediateResult,
+      sizeof(snapshot->lastImmediateResult),
+      result && result[0] ? result : "unknown");
+}
+
+static inline void noteOrderViolation(PageSnapshot* snapshot, const char* reason) {
+  if (!snapshot) return;
+  copyText(
+      snapshot->lastOrderViolation,
+      sizeof(snapshot->lastOrderViolation),
+      reason && reason[0] ? reason : "unknown");
 }
 
 static inline void notePageTx(

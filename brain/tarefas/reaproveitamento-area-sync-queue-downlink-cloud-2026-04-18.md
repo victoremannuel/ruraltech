@@ -797,14 +797,53 @@ Historico adicional desta rodada:
 - compile ESP32 da matriz: `PASS`
 - upload físico da matriz: primeira tentativa falhou no stub em baud alto; segunda tentativa com `upload.speed=115200` concluiu com sucesso
 
+### Nova rodada aplicada em 2026-04-26 (fast-path síncrono de `RTR_PAGE` após uplink aceito)
+
+- `gateway-matriz/gateway-matriz.ino` foi refatorado para tirar o wake/page fast-path do consumo tardio da fila `acceptedUplinkQueue` e executá-lo no momento do `lora.receive(...)`
+- o `LORA_UPLINK_ACCEPTED` agora alimenta imediatamente:
+- `RTR_DEVICE_PRESENCE_UPDATE`
+- `RTR_WAKE_HINT_CAPTURED` com `rxAcceptedAtMs` real de `lora.lastAcceptedRxAtMs()`
+- `RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER`
+- tentativa síncrona de `trySendRtrPage(...)` antes de qualquer `CLOUD_TX_BEGIN`
+- o caminho regular `processAcceptedUplink(...)` deixou de repetir `notePendingWakeHintFromUplink(...)` e `handlePendingWakePageAck(...)`, ficando responsável apenas por relay/telemetria/backhaul após o passo rádio-crítico
+- durante `ACK_WAIT` e também nos loops bloqueantes `waitForRtrPageAck(...)` e `waitForRpv2Response(...)`, uplinks aceitos de outros fluxos agora passam pelo mesmo helper imediato antes de eventual enfileiramento
+- o firmware da matriz agora registra:
+- `RTR_WAKE_CLOUD_TX_DEFERRED_UNTIL_PAGE`
+- `RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT`
+- `RTR_WAKE_CLOUD_TX_RESUMED_AFTER_PAGE`
+- `RTR_FAST_PATH_ORDER_VIOLATION reason=cloud_tx_before_page`
+- `firmware/shared/rtr_diag_support.h` e `/status` da matriz ganharam o bloco `wakeFastPath` com:
+- `lastImmediateEnterAtMs`
+- `lastImmediateResultAtMs`
+- `lastImmediateDeviceId`
+- `lastImmediateUplinkSeq`
+- `lastImmediateAgeMs`
+- `lastImmediateResult`
+- `lastOrderViolation`
+- `lastCloudDeferredForPage`
+- `tools/audit/flash_and_validate_firmware.py` foi endurecido para falhar quando:
+- `RTR_FAST_PATH_ORDER_VIOLATION` aparece
+- `CLOUD_TX_BEGIN` surge antes de `RTR_PAGE_TX_OK` no fluxo `LORA_UPLINK_ACCEPTED -> RTR_WAKE_HINT_CAPTURED -> RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER -> RTR_PAGE_TX_OK`
+- validação local desta rodada:
+- `python3 -m py_compile tools/audit/flash_and_validate_firmware.py`: `PASS`
+- `rtrv1_fast_path_priority_test.cpp`: `PASS`
+- `rtrv1_stale_wake_hint_test.cpp`: `PASS`
+- `rtrv1_wake_scheduler_test.cpp`: `PASS`
+- `rtrv1_terminal_failure_status_test.cpp`: `PASS`
+- compile ESP32 da matriz nesta rodada: `INCONCLUSIVE`
+- o `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz` voltou ao padrão histórico de hang silencioso deste host; houve pré-processamento/materialização em `/tmp/ruraltech-build-matriz`, mas sem artefato final `.bin/.elf`
+
 ### Próxima ação desta task após a implementação
 
+- recompilar a matriz em um host/rodada que consiga concluir o `arduino-cli compile` até `.bin/.elf`
+- gravar a matriz com o build que contenha o fast-path síncrono novo
 - chamar `POST /diag/anti-replay/reset-uplink` com `deviceId=3222380545`, `scopeId=9FFFC95AA1624895`, `keyId=1` e `confirm=RESET_UPLINK_ANTI_REPLAY`
 - repetir o smoke físico `SET_FENCE`
 - capturar `/status` antes e depois para verificar:
 - `antiReplay.lastBlocked`
 - `lastWakeHint*`
 - `lastPageOutcome`
+- `wakeFastPath.*`
 - `RTR_PAGE_TX_OK`, `RTR_PAGE_ACK_RX`, sequência `RPV2_*` e `APPLY_STATUS`
 
 ## Related

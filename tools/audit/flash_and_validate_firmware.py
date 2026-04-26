@@ -49,6 +49,11 @@ REQUIRED_SOURCE_MARKERS = [
     "planner_or_dispatch_stall",
     "measurementOk",
     "fitsLimit",
+    "RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER",
+    "RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT",
+    "RTR_WAKE_CLOUD_TX_DEFERRED_UNTIL_PAGE",
+    "RTR_WAKE_CLOUD_TX_RESUMED_AFTER_PAGE",
+    "RTR_FAST_PATH_ORDER_VIOLATION",
 ]
 REQUIRED_MATRIX_BINARY_MARKERS = [
     "FW_PROVENANCE role=matrix",
@@ -62,6 +67,10 @@ REQUIRED_MATRIX_BINARY_MARKERS = [
     "RPV2_PLAN_FAILED_TERMINAL",
     "SIMPLE_COMMAND_CLEARED",
     "planner_or_dispatch_stall",
+    "RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER",
+    "RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT",
+    "RTR_WAKE_CLOUD_TX_DEFERRED_UNTIL_PAGE",
+    "RTR_WAKE_CLOUD_TX_RESUMED_AFTER_PAGE",
 ]
 ALLOWED_DIRTY_SUFFIXES = (
     "manual_settings.local.h",
@@ -781,9 +790,44 @@ def validate_bench_logs(matrix_log: Path, collar_log: Path) -> StageResult:
     simple_cleared = "SIMPLE_COMMAND_CLEARED" in matrix_text
     has_stale = "RTR_WAKE_HINT_STALE" in matrix_text
     has_waiting = "RTR_WAITING_FRESH_UPLINK" in matrix_text
+    immediate_enter = "RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER" in matrix_text
+    page_tx_ok = "RTR_PAGE_TX_OK" in matrix_text
+    order_violation = "RTR_FAST_PATH_ORDER_VIOLATION" in matrix_text
     repeated_stale_only = has_stale and not has_waiting
-    fresh_release = all(token in matrix_text for token in ("RTR_FRESH_UPLINK_RECEIVED", "RTR_WAKE_HINT_FROM_UPLINK", "RTR_PAGE_TX_OK"))
+    fresh_release = all(
+        token in matrix_text
+        for token in (
+            "RTR_FRESH_UPLINK_RECEIVED",
+            "RTR_WAKE_HINT_FROM_UPLINK",
+            "RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER",
+            "RTR_PAGE_TX_OK",
+        )
+    )
     collar_page = all(token in collar_text for token in ("RTR_RAW_DOWNLINK_SEEN", "RTR_RAW_DOWNLINK_ACCEPT", "RTR_PAGE_RX", "RTR_PAGE_ACK_TX"))
+    if order_violation:
+        return StageResult("FAIL", "violacao de ordem: cloud_tx_before_page")
+
+    target_flow = all(
+        token in matrix_text
+        for token in (
+            "LORA_UPLINK_ACCEPTED",
+            "RTR_WAKE_HINT_CAPTURED",
+            "RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER",
+            "RTR_PAGE_TX_OK",
+        )
+    )
+    if target_flow:
+        accepted_idx = matrix_text.find("LORA_UPLINK_ACCEPTED")
+        hint_idx = matrix_text.find("RTR_WAKE_HINT_CAPTURED", accepted_idx)
+        immediate_idx = matrix_text.find("RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER", hint_idx)
+        page_ok_idx = matrix_text.find("RTR_PAGE_TX_OK", immediate_idx)
+        cloud_idx = matrix_text.find("CLOUD_TX_BEGIN", accepted_idx)
+        if -1 not in (accepted_idx, hint_idx, immediate_idx, page_ok_idx):
+            if cloud_idx != -1 and cloud_idx < page_ok_idx:
+                return StageResult("FAIL", "CLOUD_TX_BEGIN apareceu antes de RTR_PAGE_TX_OK")
+            if accepted_idx < hint_idx < immediate_idx < page_ok_idx:
+                return StageResult("PASS", "fast-path imediato enviou page antes do cloud tx")
+
     deadlock_after_reject = (
         chunk_reject
         and "QUEUE_POLL_SKIPPED reason=simple_command_active" in matrix_text
@@ -809,7 +853,7 @@ def validate_bench_logs(matrix_log: Path, collar_log: Path) -> StageResult:
         return StageResult("FAIL", "stale loop sem RTR_WAITING_FRESH_UPLINK")
     if has_stale and has_waiting:
         return StageResult("PASS", "stale hint seguido de waiting fresh uplink")
-    if fresh_release:
+    if fresh_release and immediate_enter and page_tx_ok:
         return StageResult("PASS", "fresh uplink liberou page")
     if collar_page:
         return StageResult("PASS", "coleira recebeu RTR_PAGE")
