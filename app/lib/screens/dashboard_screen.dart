@@ -2049,16 +2049,13 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                           Positioned(
-                            right: 12,
-                            top: 0,
-                            bottom: 0,
-                            child: Center(
-                              child: _MapControlsStack(
-                                onNorth: _resetNorthUp,
-                                onLocate: _centerOnUser,
-                                onLayers: () => AppFeedback.warning(
-                                    'Seleção de camadas em breve.'),
-                              ),
+                            left: 12,
+                            bottom: 96,
+                            child: _MapControlsStack(
+                              onNorth: _resetNorthUp,
+                              onLocate: _centerOnUser,
+                              onLayers: () => AppFeedback.warning(
+                                  'Seleção de camadas em breve.'),
                             ),
                           ),
                           if (homeIssues.isNotEmpty)
