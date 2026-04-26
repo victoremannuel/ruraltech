@@ -95,12 +95,12 @@ class DeviceDetailsScreen extends StatelessWidget {
         ),
         children: [
           _buildHero(networkId),
-          const SizedBox(height: RTSpacing.x4),
+          const SizedBox(height: RTSpacing.x3),
           _buildPositionCard(context),
-          const SizedBox(height: RTSpacing.x4),
+          const SizedBox(height: RTSpacing.x3),
           if (device.hasDailyHealth) ...[
             _buildGpsBusGrid(),
-            const SizedBox(height: RTSpacing.x4),
+            const SizedBox(height: RTSpacing.x3),
           ],
           _buildActions(context, hasValidLoraId, canOpenLog, loraDeviceId),
         ],
@@ -117,7 +117,7 @@ class DeviceDetailsScreen extends StatelessWidget {
     ];
     final hasHealth = device.hasDailyHealth;
     final title = hasHealth
-        ? (device.isHealthOk ? 'Todos sistemas operacionais' : 'Atenção necessária')
+        ? (device.isHealthOk ? 'Todos sistemas OK' : 'Atenção necessária')
         : 'Sem relatório diário';
     final subtitle = hasHealth
         ? 'Última saúde reportada em ${_formatHealthTimestamp()}'
