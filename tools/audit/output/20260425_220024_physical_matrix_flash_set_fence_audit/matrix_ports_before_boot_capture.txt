@@ -1,0 +1,2 @@
+crw-rw-rw-  1 root  wheel  0x9000003 Apr 25 22:12 /dev/cu.usbserial-59470049741
+crw-rw-rw-  1 root  wheel  0x9000002 Apr 25 22:10 /dev/tty.usbserial-59470049741

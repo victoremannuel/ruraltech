@@ -1,0 +1,30 @@
+RPV2_PLANNER_REV
+RPV2_PLANNER_REV
+canonical_fence_planner_v1
+canonical_fence_planner_v1
+RPV2_PLAN_ENTER
+RPV2_PLAN_ENTER
+RPV2_PLAN_CANDIDATE_EVAL
+RPV2_PLAN_CANDIDATE_EVAL
+RPV2_PLAN_CHUNK_REJECT
+[W] RPV2_PLAN_CHUNK_REJECT deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u reason=%s wireLenFinal=%u limit=%u classification=%s
+RPV2_PLAN_CHUNK_REJECT
+[W] RPV2_PLAN_CHUNK_REJECT deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u reason=%s wireLenFinal=%u limit=%u classification=%s
+RPV2_PLAN_CHUNK_FIT
+RPV2_PLAN_CHUNK_FIT
+RPV2_PLAN_FINAL
+RPV2_PLAN_FINAL
+RPV2_PLAN_FAILED_TERMINAL
+[W] RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u reason=%s wireLenFinal=%u limit=%u classification=%s
+[W] RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu reason=%s
+RPV2_PLAN_FAILED_TERMINAL
+[W] RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u reason=%s wireLenFinal=%u limit=%u classification=%s
+[W] RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu reason=%s
+[AREA_SYNC][MATRIX][INFO][SIMPLE_COMMAND_CLEARED] commandId=%s command=%s reason=%s
+[AREA_SYNC][MATRIX][INFO][SIMPLE_COMMAND_CLEARED] commandId=%s command=%s reason=%s
+planner_or_dispatch_stall
+planner_or_dispatch_stall
+23d7f93aec0142efa0051903004f8e6b57d60b11
+23d7f93
+23d7f93aec0142efa0051903004f8e6b57d60b11
+23d7f93

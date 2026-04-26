@@ -1,0 +1,9 @@
+{
+  "port": "/dev/tty.usbserial-59470049741",
+  "baud": 115200,
+  "started_at": "2026-04-26T01:16:30.248758+00:00",
+  "lines_read": 109,
+  "reset_method": "pyserial_rts_pulse_run_mode",
+  "last_line_at": "2026-04-26T01:18:28.127374+00:00",
+  "stopped_at": "2026-04-26T01:18:31.640160+00:00"
+}

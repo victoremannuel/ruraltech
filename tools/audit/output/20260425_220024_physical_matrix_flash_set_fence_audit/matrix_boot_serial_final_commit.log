@@ -1,0 +1,93 @@
+2026-04-26T01:41:13.463206+00:00  ets Jul 29 2019 12:21:46
+2026-04-26T01:41:13.463348+00:00  
+2026-04-26T01:41:13.468817+00:00  rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
+2026-04-26T01:41:13.469154+00:00  configsip: 0, SPIWP:0xee
+2026-04-26T01:41:13.474596+00:00  clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+2026-04-26T01:41:13.480416+00:00  mode:DIO, clock div:1
+2026-04-26T01:41:13.480649+00:00  load:0x3fff0030,len:4876
+2026-04-26T01:41:13.480813+00:00  ho 0 tail 12 room 4
+2026-04-26T01:41:13.485323+00:00  load:0x40078000,len:16560
+2026-04-26T01:41:13.485538+00:00  load:0x40080400,len:3500
+2026-04-26T01:41:13.486077+00:00  entry 0x400805b4
+2026-04-26T01:41:13.957503+00:00  [I] Boot reset_reason=1
+2026-04-26T01:41:13.962979+00:00  [I] seqDown restaurado=1978251947 (persistido=1978251946)
+2026-04-26T01:41:13.968763+00:00  [I] Binding matriz: ready=1 property=T0xeG8WQHwJRI6H3t7vr scope=9FFFC95AA1624895 matrix=192.168.4.1 ver=1
+2026-04-26T01:41:14.051358+00:00  [I] AP ativo: RuralTech-Matriz-000000
+2026-04-26T01:41:14.062525+00:00  [I] OTA particoes (inicio): running=app0 size=0x1f0000 next=app1 size=0x1f0000
+2026-04-26T01:41:14.062845+00:00  [I] OTA ativo hostname=ruraltech-matriz
+2026-04-26T01:41:14.063905+00:00  [W] RTC indisponivel
+2026-04-26T01:41:14.077723+00:00  [I] LoRa begin ok freq=915.0 bw=125 sf=9 cr=7 sync=0x12
+2026-04-26T01:41:14.083043+00:00  ==== HW CHECKLIST | GATEWAY MATRIX ====
+2026-04-26T01:41:14.088405+00:00  [MODE ] DIAG_STAGE               : 4
+2026-04-26T01:41:14.088776+00:00  [MODE ] DIAG_PROFILE             : diag-cloud-no-sd
+2026-04-26T01:41:14.094232+00:00  [MODE ] MATRIX_RUNTIME_ID        : matriz_fazenda_01
+2026-04-26T01:41:14.099622+00:00  [MODE ] PROTO_VERSION            : 1
+2026-04-26T01:41:14.100009+00:00  [MODE ] KEY_ID                   : 1
+2026-04-26T01:41:14.105157+00:00  [MODE ] RADIO_PROFILE            : 9151
+2026-04-26T01:41:14.110575+00:00  [MODE ] ANTI_REPLAY_MODE         : strict
+2026-04-26T01:41:14.110893+00:00  [MODE ] BINDING_READY            : true
+2026-04-26T01:41:14.116181+00:00  [CHECK] NVS_SEQ_DOWN             : OK
+2026-04-26T01:41:14.121781+00:00  [CHECK] OLED_0x3C                : OK (desabilitado em config)
+2026-04-26T01:41:14.122092+00:00  [CHECK] WIFI_AP_OTA              : OK
+2026-04-26T01:41:14.127412+00:00  [CHECK] BLE_PRESENCE             : OK
+2026-04-26T01:41:14.132793+00:00  [CHECK] API_HTTP_WS              : OK (porta 80 + ws:81)
+2026-04-26T01:41:14.138129+00:00  [CHECK] RTC_DS3231               : OFF
+2026-04-26T01:41:14.143800+00:00  [W] CHECKLIST RTC_DS3231 OFF: RTC indisponivel; revisar SDA/SCL, VCC, GND e bateria.
+2026-04-26T01:41:14.144108+00:00  [CHECK] SD_CARD                  : OK
+2026-04-26T01:41:14.149390+00:00  [CHECK] LORA_RFM95               : OK
+2026-04-26T01:41:14.154986+00:00  [CHECK] CLOUD_BACKHAUL_CFG       : OK
+2026-04-26T01:41:14.155555+00:00  [CHECK] QUEUE_POLLING_CFG        : OK
+2026-04-26T01:41:14.161463+00:00  =======================================
+2026-04-26T01:41:14.165795+00:00  [I] Matrix diag_stage=4 profile=diag-cloud-no-sd
+2026-04-26T01:41:14.166605+00:00  [W] Matrix anti_replay_test_mode=0
+2026-04-26T01:41:14.171369+00:00  [I] Matrix lora_only_bench_mode=0
+2026-04-26T01:41:14.182435+00:00  [I] Matrix cloud_preflight runtimeId=matriz_fazenda_01 cloudConfigured=1 queuePollingConfigured=1 backhaulFeature=1 cloudFeature=1
+2026-04-26T01:41:14.193476+00:00  [I] Matrix boot fw=gateway-matriz-1.0.0 diag_stage=4 proto_version=1 key_id=1 radio_profile=9151 bindingReady=1 profile_name=diag-cloud-no-sd
+2026-04-26T01:41:14.215859+00:00  [I] FW_PROVENANCE role=matrix gitSha=9508a21ea62988025ec98d5f8310336465193e50 gitShort=9508a21 dirty=0 buildUtc=2026-04-26T01:34:00Z buildSource=generated firmwareVersion=gateway-matriz-1.0.0 profile=diag-cloud-no-sd diagStage=4 runtimeId=matriz_fazenda_01
+2026-04-26T01:41:14.221292+00:00  [I] RPV2_PLANNER_REV rev=canonical_fence_planner_v1 gitShort=9508a21
+2026-04-26T01:41:14.226724+00:00  [I] Gateway matriz pronto fw=gateway-matriz-1.0.0
+2026-04-26T01:41:14.232077+00:00  [I] Backhaul transicao: idle -> idle wl=disconnected(6) resumo=idle
+2026-04-26T01:41:14.241410+00:00  [I] Backhaul status: state=idle wl=disconnected(6) elapsed_ms=0 attempt=0 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=0.0.0.0
+2026-04-26T01:41:19.237361+00:00  [I] Backhaul status: state=idle wl=disconnected(6) elapsed_ms=0 attempt=0 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=0.0.0.0
+2026-04-26T01:41:21.961620+00:00  [I] Backhaul Wi-Fi: tentando conectar em VICTOR_E_CAROL-IoT
+2026-04-26T01:41:21.968300+00:00  [I] Backhaul transicao: idle -> connecting wl=disconnected(6) resumo=tentando_conectar
+2026-04-26T01:41:21.980562+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_POLL_START] runtimeId=matriz_fazenda_01 forceDispatch=0 bindingReady=1 backhaulOpen=1
+2026-04-26T01:41:21.991967+00:00  [AREA_SYNC][MATRIX][ERROR][QUEUE_FETCH_HTTP_FAIL] runtimeId=matriz_fazenda_01 queueKeyLen=64 httpStatus=0 stage=wifi detail=disconnected
+2026-04-26T01:41:22.985229+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_POLL_START] runtimeId=matriz_fazenda_01 forceDispatch=0 bindingReady=1 backhaulOpen=1
+2026-04-26T01:41:22.995922+00:00  [AREA_SYNC][MATRIX][ERROR][QUEUE_FETCH_HTTP_FAIL] runtimeId=matriz_fazenda_01 queueKeyLen=64 httpStatus=0 stage=wifi detail=disconnected
+2026-04-26T01:41:23.986004+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_POLL_START] runtimeId=matriz_fazenda_01 forceDispatch=0 bindingReady=1 backhaulOpen=1
+2026-04-26T01:41:23.997608+00:00  [AREA_SYNC][MATRIX][ERROR][QUEUE_FETCH_HTTP_FAIL] runtimeId=matriz_fazenda_01 queueKeyLen=64 httpStatus=0 stage=wifi detail=disconnected
+2026-04-26T01:41:24.238577+00:00  [I] Backhaul status: state=connecting wl=idle(0) elapsed_ms=2272 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=0.0.0.0
+2026-04-26T01:41:24.427833+00:00  [I] Backhaul transicao: connecting -> connected wl=connected(3) resumo=connected_ok
+2026-04-26T01:41:29.843138+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_POLL_START] runtimeId=matriz_fazenda_01 forceDispatch=0 bindingReady=1 backhaulOpen=1
+2026-04-26T01:41:34.770626+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_FETCH_HTTP_OK_EMPTY_BODY] runtimeId=matriz_fazenda_01 queueKeyLen=64 httpStatus=200 bodyLen=10 emptyKind=null bodyPrefix=4  null  0
+2026-04-26T01:41:34.774704+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_EMPTY] runtimeId=matriz_fazenda_01 queueKeyLen=64
+2026-04-26T01:41:34.783745+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_POLL_START] runtimeId=matriz_fazenda_01 forceDispatch=0 bindingReady=1 backhaulOpen=1
+2026-04-26T01:41:39.696200+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_FETCH_HTTP_OK_EMPTY_BODY] runtimeId=matriz_fazenda_01 queueKeyLen=64 httpStatus=200 bodyLen=10 emptyKind=null bodyPrefix=4  null  0
+2026-04-26T01:41:39.710643+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_POLL_START] runtimeId=matriz_fazenda_01 forceDispatch=0 bindingReady=1 backhaulOpen=1
+2026-04-26T01:41:44.575214+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_FETCH_HTTP_OK_EMPTY_BODY] runtimeId=matriz_fazenda_01 queueKeyLen=64 httpStatus=200 bodyLen=10 emptyKind=null bodyPrefix=4  null  0
+2026-04-26T01:41:44.589500+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_POLL_START] runtimeId=matriz_fazenda_01 forceDispatch=0 bindingReady=1 backhaulOpen=1
+2026-04-26T01:41:49.570981+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_FETCH_HTTP_OK_EMPTY_BODY] runtimeId=matriz_fazenda_01 queueKeyLen=64 httpStatus=200 bodyLen=10 emptyKind=null bodyPrefix=4  null  0
+2026-04-26T01:41:49.576659+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_EMPTY] runtimeId=matriz_fazenda_01 queueKeyLen=64
+2026-04-26T01:41:49.586266+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_POLL_START] runtimeId=matriz_fazenda_01 forceDispatch=0 bindingReady=1 backhaulOpen=1
+2026-04-26T01:41:54.602995+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_FETCH_HTTP_OK_EMPTY_BODY] runtimeId=matriz_fazenda_01 queueKeyLen=64 httpStatus=200 bodyLen=10 emptyKind=null bodyPrefix=4  null  0
+2026-04-26T01:41:54.617371+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:42:00.488640+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_POLL_START] runtimeId=matriz_fazenda_01 forceDispatch=0 bindingReady=1 backhaulOpen=1
+2026-04-26T01:42:05.442010+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_FETCH_HTTP_OK_EMPTY_BODY] runtimeId=matriz_fazenda_01 queueKeyLen=64 httpStatus=200 bodyLen=10 emptyKind=null bodyPrefix=4  null  0
+2026-04-26T01:42:05.447714+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_EMPTY] runtimeId=matriz_fazenda_01 queueKeyLen=64
+2026-04-26T01:42:05.457291+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_POLL_START] runtimeId=matriz_fazenda_01 forceDispatch=0 bindingReady=1 backhaulOpen=1
+2026-04-26T01:42:10.417955+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_FETCH_HTTP_OK_EMPTY_BODY] runtimeId=matriz_fazenda_01 queueKeyLen=64 httpStatus=200 bodyLen=10 emptyKind=null bodyPrefix=4  null  0
+2026-04-26T01:42:10.433269+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_POLL_START] runtimeId=matriz_fazenda_01 forceDispatch=0 bindingReady=1 backhaulOpen=1
+2026-04-26T01:42:15.371961+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_FETCH_HTTP_OK_EMPTY_BODY] runtimeId=matriz_fazenda_01 queueKeyLen=64 httpStatus=200 bodyLen=10 emptyKind=null bodyPrefix=4  null  0
+2026-04-26T01:42:15.386289+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_POLL_START] runtimeId=matriz_fazenda_01 forceDispatch=0 bindingReady=1 backhaulOpen=1
+2026-04-26T01:42:20.475894+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_FETCH_HTTP_OK_EMPTY_BODY] runtimeId=matriz_fazenda_01 queueKeyLen=64 httpStatus=200 bodyLen=10 emptyKind=null bodyPrefix=4  null  0
+2026-04-26T01:42:20.481516+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_EMPTY] runtimeId=matriz_fazenda_01 queueKeyLen=64
+2026-04-26T01:42:20.491180+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_POLL_START] runtimeId=matriz_fazenda_01 forceDispatch=0 bindingReady=1 backhaulOpen=1
+2026-04-26T01:42:25.471026+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_FETCH_HTTP_OK_EMPTY_BODY] runtimeId=matriz_fazenda_01 queueKeyLen=64 httpStatus=200 bodyLen=10 emptyKind=null bodyPrefix=4  null  0
+2026-04-26T01:42:25.485223+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:42:31.211304+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_POLL_START] runtimeId=matriz_fazenda_01 forceDispatch=0 bindingReady=1 backhaulOpen=1
+2026-04-26T01:42:36.172833+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_FETCH_HTTP_OK_EMPTY_BODY] runtimeId=matriz_fazenda_01 queueKeyLen=64 httpStatus=200 bodyLen=10 emptyKind=null bodyPrefix=4  null  0
+2026-04-26T01:42:36.178642+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_EMPTY] runtimeId=matriz_fazenda_01 queueKeyLen=64
+2026-04-26T01:42:36.188073+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_POLL_START] runtimeId=matriz_fazenda_01 forceDispatch=0 bindingReady=1 backhaulOpen=1
+2026-04-26T01:42:41.173751+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_FETCH_HTTP_OK_EMPTY_BODY] runtimeId=matriz_fazenda_01 queueKeyLen=64 httpStatus=200 bodyLen=10 emptyKind=null bodyPrefix=4  null  0
+2026-04-26T01:42:41.188181+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_POLL_START] runtimeId=matriz_fazenda_01 forceDispatch=0 bindingReady=1 backhaulOpen=1

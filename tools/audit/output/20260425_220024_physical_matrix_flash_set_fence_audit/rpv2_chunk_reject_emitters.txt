@@ -1,0 +1,5 @@
+firmware/tests/matrix_cloud_set_fence_dispatch_integration_test.cpp:  if (strcmp(event.eventType, "RPV2_PLAN_CHUNK_REJECT") == 0) state->rejectCount++;
+gateway-matriz/gateway-matriz.ino:  if (strcmp(event.eventType, "RPV2_PLAN_CHUNK_REJECT") == 0) {
+gateway-matriz/gateway-matriz.ino:        "RPV2_PLAN_CHUNK_REJECT deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u reason=%s wireLenFinal=%u limit=%u classification=%s",
+firmware/tests/rpv2_fence_planner_test.cpp:  if (strcmp(event.eventType, "RPV2_PLAN_CHUNK_REJECT") == 0) state->rejectCount++;
+gateway-matriz/FenceRpv2Planner.h:        rejectEvent.eventType = "RPV2_PLAN_CHUNK_REJECT";

@@ -1,0 +1,26 @@
+{
+  "areaId": "kQSjWOVdkqTNDM9WBggT",
+  "started_at": "2026-04-26T01:26:07.827240+00:00",
+  "propertyId": "T0xeG8WQHwJRI6H3t7vr",
+  "linkedDeviceIds": [
+    "3222380545"
+  ],
+  "pointCount": 6,
+  "patched_at": "2026-04-26T01:26:10.329773+00:00",
+  "patch_status_code": 200,
+  "patch_response_prefix": "[{\"id\":\"kQSjWOVdkqTNDM9WBggT\",\"owner_uid\":\"pjdZPNnsr7T2OzpRTxDhkdnlZf22\",\"property_id\":\"T0xeG8WQHwJRI6H3t7vr\",\"user_uids\":[\"uZbzLMrcusaCHq6CnqXehPvT3uD2\",\"pjdZPNnsr7T2OzpRTxDhkdnlZf22\"],\"perimeter\":[{\"lat\": -16.674899067537087, \"lon\": -49.48423817286258}, {\"lat\": -16.674483515977375, \"lon\": -49.4856",
+  "latest_command_status_code": 200,
+  "latestCommand": {
+    "command_id": "AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:8F3288727D342E9C:23A00185B336A70A",
+    "command": "SET_FENCE",
+    "status": "queued",
+    "origin_doc_id": "kQSjWOVdkqTNDM9WBggT",
+    "origin_doc_type": "area",
+    "property_id": "T0xeG8WQHwJRI6H3t7vr",
+    "created_at": "2026-04-26T01:26:11.689962+00:00",
+    "updated_at": "2026-04-26T01:26:11.689962+00:00",
+    "reason": null
+  },
+  "serial_lines_read": 54,
+  "stopped_at": "2026-04-26T01:32:08.443599+00:00"
+}

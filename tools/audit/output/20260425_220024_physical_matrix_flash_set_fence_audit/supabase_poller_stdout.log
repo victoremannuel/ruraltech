@@ -1,0 +1,11 @@
+[poller] areaId=kQSjWOVdkqTNDM9WBggT propertyId=T0xeG8WQHwJRI6H3t7vr
+[poller] Snapshots → tools/audit/output/20260425_220024_physical_matrix_flash_set_fence_audit/supabase_snapshots.jsonl
+[poller] Timeline  → tools/audit/output/20260425_220024_physical_matrix_flash_set_fence_audit/supabase_timeline.jsonl
+  [timeline] {'ts': '2026-04-26T01:19:41.439463+00:00', 'event': 'status_change', 'commandId': 'AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388859F00:23A00185B336A70A', 'from': None, 'to': 'queued'}
+  [timeline] {'ts': '2026-04-26T01:19:41.439463+00:00', 'event': 'status_change', 'commandId': 'AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:9DB1FEEB62', 'from': 'queued', 'to': 'failed'}
+  [timeline] {'ts': '2026-04-26T01:19:41.439463+00:00', 'event': 'status_change', 'commandId': 'AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:9DB1FEEB62C7BFC0:23A00185B336A70A', 'from': 'failed', 'to': 'queued'}
+  [timeline] {'ts': '2026-04-26T01:19:41.439463+00:00', 'event': 'status_change', 'commandId': 'AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:FE7FD5ECA2', 'from': 'queued', 'to': 'failed'}
+  [timeline] {'ts': '2026-04-26T01:19:41.439463+00:00', 'event': 'status_change', 'commandId': 'AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:FE7FD5ECA20D7089:23A00185B336A70A', 'from': 'failed', 'to': 'queued'}
+
+[poller] Terminal: failed
+[poller] Concluído. Arquivos em tools/audit/output/20260425_220024_physical_matrix_flash_set_fence_audit

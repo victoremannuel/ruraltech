@@ -1,0 +1,40 @@
+1:2026-04-26T01:26:12.779075+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2:2026-04-26T01:26:22.783412+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+4:2026-04-26T01:26:32.783970+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+5:2026-04-26T01:26:42.787725+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+6:2026-04-26T01:26:52.787385+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+8:2026-04-26T01:27:02.791661+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+9:2026-04-26T01:27:12.797428+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+10:2026-04-26T01:27:22.797339+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+12:2026-04-26T01:27:32.799482+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+13:2026-04-26T01:27:42.800384+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+14:2026-04-26T01:27:52.805269+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+16:2026-04-26T01:28:02.810366+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+17:2026-04-26T01:28:12.815295+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+18:2026-04-26T01:28:22.820203+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+20:2026-04-26T01:28:32.820294+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+21:2026-04-26T01:28:42.824239+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+22:2026-04-26T01:28:52.829210+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+24:2026-04-26T01:29:02.834231+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+26:2026-04-26T01:29:04.968349+00:00  [I] LORA_RX_DECRYPT_ATTEMPT len=159 rssi=-35 snr=12.2 attempts=6
+27:2026-04-26T01:29:04.971362+00:00  [W] Replay bloqueado device=3222380545 seq=77000001
+29:2026-04-26T01:29:11.329279+00:00  [I] LORA_RX_DECRYPT_ATTEMPT len=166 rssi=-35 snr=12.5 attempts=7
+30:2026-04-26T01:29:11.332261+00:00  [W] Replay bloqueado device=3222380545 seq=77000002
+31:2026-04-26T01:29:12.836252+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+32:2026-04-26T01:29:22.839168+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+34:2026-04-26T01:29:32.844276+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+35:2026-04-26T01:29:42.870496+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+36:2026-04-26T01:29:52.863024+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+38:2026-04-26T01:30:02.859516+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+39:2026-04-26T01:30:12.859493+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+40:2026-04-26T01:30:22.863178+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+42:2026-04-26T01:30:32.868460+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+43:2026-04-26T01:30:42.873156+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+44:2026-04-26T01:30:52.879223+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+46:2026-04-26T01:31:02.883096+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+47:2026-04-26T01:31:12.882989+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+48:2026-04-26T01:31:22.888192+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+50:2026-04-26T01:31:32.893173+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+51:2026-04-26T01:31:42.898087+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+52:2026-04-26T01:31:52.898122+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+54:2026-04-26T01:32:02.901188+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
