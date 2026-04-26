@@ -365,21 +365,26 @@ class _HerdingScreenState extends State<HerdingScreen> {
     return Scaffold(
       backgroundColor: RTColors.bgAlt,
       appBar: AppBar(
-        title: const Text('Solicitar arrebanhamento'),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(52),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              RTSpacing.x4,
-              0,
-              RTSpacing.x4,
-              RTSpacing.x3,
-            ),
-            child: RTStepper(steps: _steps, currentStep: _currentStep),
+        leading: IconButton(
+          icon: Icon(
+            _currentStep == 0 ? Icons.close : Icons.arrow_back,
           ),
+          onPressed: () =>
+              _currentStep == 0 ? Navigator.pop(context) : _prevStep(),
         ),
+        title: const Text('Arrebanhamento'),
       ),
-      body: StreamBuilder<List<Map<String, dynamic>>>(
+      body: Column(children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            RTSpacing.x4,
+            RTSpacing.x2,
+            RTSpacing.x4,
+            RTSpacing.x4,
+          ),
+          child: RTStepper(steps: _steps, currentStep: _currentStep),
+        ),
+        Expanded(child: StreamBuilder<List<Map<String, dynamic>>>(
         stream: cloud.streamRuralProperties(uid: uid, isAdmin: auth.isAdmin),
         builder: (context, propertySnap) {
           if (propertySnap.hasError) {
@@ -502,7 +507,8 @@ class _HerdingScreenState extends State<HerdingScreen> {
             },
           );
         },
-      ),
+      )),  // StreamBuilder + Expanded
+    ]),  // Column children + Column (body)
     );
   }
 
