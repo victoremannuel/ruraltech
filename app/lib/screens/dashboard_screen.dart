@@ -11,11 +11,13 @@ import 'package:provider/provider.dart';
 
 import '../components/domain/rt_collar_sheet.dart';
 import '../components/domain/rt_telemetry_grid.dart';
-import '../components/map/rt_map_controls.dart';
+import '../components/map/rt_filter_chips.dart';
 import '../components/primitives/rt_button.dart';
 import '../components/primitives/rt_fab.dart';
 import '../config/manual_settings.dart';
 import '../design/colors.dart';
+import '../design/tokens.dart';
+import '../design/typography.dart';
 import '../models/device_model.dart';
 import '../services/auth_service.dart';
 import '../services/cloud_service.dart';
@@ -1464,7 +1466,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
-    final gateway = context.watch<GatewayService>();
+    context.watch<GatewayService>();
     final filters = context.watch<MapFilterService>();
     final uid = auth.user?.uid;
     final authKey = resolveHomeAuthKey(uid: uid, role: auth.role);
@@ -1485,33 +1487,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _updateStreamsIfNeeded(uid: currentUid, isAdmin: auth.isAdmin);
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Home (${auth.isAdmin ? 'adm' : 'user'})'),
-        bottom: auth.isProfileLoading
-            ? const PreferredSize(
-                preferredSize: Size.fromHeight(4),
-                child: LinearProgressIndicator(minHeight: 4),
-              )
-            : null,
-        actions: [
-          IconButton(
-            key: const Key('home_connect_gateway_button'),
-            icon: const Icon(Icons.wifi),
-            onPressed: gateway.connect,
-          ),
-          IconButton(
-            key: const Key('home_refresh_button'),
-            icon: const Icon(Icons.refresh),
-            onPressed: _refreshFromDatabase,
-            tooltip: 'Atualizar',
-          ),
-          IconButton(
-            key: const Key('home_logout_button'),
-            icon: const Icon(Icons.logout),
-            onPressed: () => context.read<AuthService>().signOut(),
-          ),
-        ],
-      ),
       body: StreamBuilder<List<Map<String, dynamic>>>(
         key: ValueKey('props-$currentUid-$_refreshTick'),
         stream: _propertiesStream,
@@ -1879,168 +1854,200 @@ class _HomeScreenState extends State<HomeScreen> {
                           ? 14.0
                           : _countryOverviewZoom(center.latitude);
 
-                      return Column(
+                      return Stack(
                         children: [
-                          Container(
-                            width: double.infinity,
-                            color: Colors.green.withValues(alpha: 0.08),
-                            padding: const EdgeInsets.all(10),
-                            child: Text(
-                              'Propriedades: ${properties.length} | Areas: ${filteredAreas.length} | Coleiras: ${devices.length} | Gateways: ${gateways.length}'
-                              '${filters.hasAnyFilter ? ' (filtrado)' : ''}',
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
-                          Expanded(
-                            child: Stack(
+                          Positioned.fill(
+                            child: FlutterMap(
+                              mapController: _mapController,
+                              options: MapOptions(
+                                initialCenter: center,
+                                initialZoom: initialZoom,
+                                initialCameraFit: fitBounds == null
+                                    ? null
+                                    : CameraFit.bounds(
+                                        bounds: fitBounds,
+                                        padding: const EdgeInsets.all(40),
+                                      ),
+                                onTap: (_, p) => selectPolygonAt(p),
+                              ),
                               children: [
-                                FlutterMap(
-                                  mapController: _mapController,
-                                  options: MapOptions(
-                                    initialCenter: center,
-                                    initialZoom: initialZoom,
-                                    initialCameraFit: fitBounds == null
-                                        ? null
-                                        : CameraFit.bounds(
-                                            bounds: fitBounds,
-                                            padding: const EdgeInsets.all(40),
+                                TileLayer(
+                                  urlTemplate:
+                                      'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                  subdomains: const ['a', 'b', 'c'],
+                                  userAgentPackageName: ManualSettings
+                                      .mapUserAgentPackageName,
+                                ),
+                                PolygonLayer(polygons: polygons),
+                                MarkerLayer(markers: areaLabelMarkers),
+                                MarkerLayer(markers: markers),
+                                if (_userPosition != null)
+                                  MarkerLayer(
+                                    markers: [
+                                      Marker(
+                                        point: _userPosition!,
+                                        width: 42,
+                                        height: 42,
+                                        child: Transform.rotate(
+                                          angle: _userHeading *
+                                              (math.pi / 180.0),
+                                          child: const Icon(
+                                            Icons.navigation,
+                                            color: Colors.blue,
+                                            size: 34,
                                           ),
-                                    onTap: (_, p) => selectPolygonAt(p),
-                                  ),
-                                  children: [
-                                    TileLayer(
-                                      urlTemplate:
-                                          'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                                      subdomains: const ['a', 'b', 'c'],
-                                      userAgentPackageName: ManualSettings
-                                          .mapUserAgentPackageName,
-                                    ),
-                                    PolygonLayer(polygons: polygons),
-                                    MarkerLayer(markers: areaLabelMarkers),
-                                    MarkerLayer(markers: markers),
-                                    if (_userPosition != null)
-                                      MarkerLayer(
-                                        markers: [
-                                          Marker(
-                                            point: _userPosition!,
-                                            width: 42,
-                                            height: 42,
-                                            child: Transform.rotate(
-                                              angle: _userHeading *
-                                                  (math.pi / 180.0),
-                                              child: const Icon(
-                                                Icons.navigation,
-                                                color: Colors.blue,
-                                                size: 34,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    if (_selectedPolygonAnchor != null)
-                                      MarkerLayer(
-                                        markers: [
-                                          Marker(
-                                            point: LatLng(
-                                              _selectedPolygonAnchor!.latitude,
-                                              _selectedPolygonAnchor!
-                                                      .longitude +
-                                                  0.00025,
-                                            ),
-                                            width: 40,
-                                            height: 40,
-                                            child: FloatingActionButton.small(
-                                              heroTag: 'edit-polygon',
-                                              onPressed: () =>
-                                                  _openSelectedPolygonEditor(
-                                                      context),
-                                              child: const Icon(Icons.edit),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    const Scalebar(
-                                      alignment: Alignment.bottomRight,
-                                      padding: EdgeInsets.only(
-                                        right: 12,
-                                        bottom: 12,
-                                      ),
-                                      lineColor: Color(0xFF173120),
-                                      textStyle: TextStyle(
-                                        color: Color(0xFF173120),
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600,
-                                      ),
+                                        ),
                                       ),
                                     ],
                                   ),
-                                if (homeIssues.isNotEmpty)
-                                  Positioned(
-                                    top: 12,
-                                    left: 12,
+                                if (_selectedPolygonAnchor != null)
+                                  MarkerLayer(
+                                    markers: [
+                                      Marker(
+                                        point: LatLng(
+                                          _selectedPolygonAnchor!.latitude,
+                                          _selectedPolygonAnchor!.longitude +
+                                              0.00025,
+                                        ),
+                                        width: 40,
+                                        height: 40,
+                                        child: FloatingActionButton.small(
+                                          heroTag: 'edit-polygon',
+                                          onPressed: () =>
+                                              _openSelectedPolygonEditor(
+                                                  context),
+                                          child: const Icon(Icons.edit),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                const Scalebar(
+                                  alignment: Alignment.bottomRight,
+                                  padding: EdgeInsets.only(
                                     right: 12,
-                                    child: Material(
-                                      color: Colors.transparent,
-                                      child: Container(
-                                        padding: const EdgeInsets.all(12),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFFFDECEC),
-                                          borderRadius:
-                                              BorderRadius.circular(12),
-                                          border: Border.all(
-                                            color: const Color(0xFFE5A5A5),
-                                          ),
-                                        ),
-                                        child: Row(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            const Padding(
-                                              padding:
-                                                  EdgeInsets.only(top: 2),
-                                              child: Icon(
-                                                Icons.warning_amber_rounded,
-                                                color: Color(0xFFB3261E),
-                                              ),
-                                            ),
-                                            const SizedBox(width: 10),
-                                            Expanded(
-                                              child: Text(
-                                                homeIssues.join('\n'),
-                                                style: const TextStyle(
-                                                  color: Color(0xFF5F1111),
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
+                                    bottom: 12,
                                   ),
-                                Positioned(
-                                  left: 0,
-                                  bottom: 0,
-                                  child: RTMapControls(
-                                    alignment: Alignment.bottomLeft,
-                                    actions: [
-                                      RTMapControlAction(
-                                        icon: Icons.explore_outlined,
-                                        tooltip: 'Orientar ao norte',
-                                        heroTag: 'north-up',
-                                        onPressed: _resetNorthUp,
-                                      ),
-                                      RTMapControlAction(
-                                        icon: Icons.my_location,
-                                        tooltip: 'Centralizar no usuário',
-                                        heroTag: 'center-user',
-                                        onPressed: _centerOnUser,
-                                      ),
-                                    ],
+                                  lineColor: Colors.white54,
+                                  textStyle: TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
                               ],
                             ),
+                          ),
+                          Positioned(
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            child: SafeArea(
+                              bottom: false,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                        16, 12, 16, 8),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: _MapSearchBar(
+                                            count: devices.length +
+                                                gateways.length,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        const _NotifBell(),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  RTFilterChips(
+                                    chips: [
+                                      RTFilterChipData(
+                                        id: 'all',
+                                        label: 'Todos',
+                                        icon: Icons.layers_outlined,
+                                        count: devices.length +
+                                            gateways.length,
+                                      ),
+                                      RTFilterChipData(
+                                        id: 'collars',
+                                        label: 'Coleiras',
+                                        count: devices.length,
+                                      ),
+                                      RTFilterChipData(
+                                        id: 'gateways',
+                                        label: 'Gateways',
+                                        icon: Icons.router_outlined,
+                                        count: gateways.length,
+                                      ),
+                                    ],
+                                    selectedIds: const {'all'},
+                                    onToggle: (_) {},
+                                  ),
+                                  const SizedBox(height: 8),
+                                ],
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            right: 12,
+                            top: 0,
+                            bottom: 0,
+                            child: Center(
+                              child: _MapControlsStack(
+                                onNorth: _resetNorthUp,
+                                onLocate: _centerOnUser,
+                              ),
+                            ),
+                          ),
+                          if (homeIssues.isNotEmpty)
+                            Positioned(
+                              top: 140,
+                              left: 12,
+                              right: 64,
+                              child: Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: RTColors.dangerSoft,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: RTColors.danger
+                                        .withValues(alpha: 0.4),
+                                  ),
+                                ),
+                                child: Row(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 2),
+                                      child: Icon(
+                                        Icons.warning_amber_rounded,
+                                        color: RTColors.danger,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        homeIssues.join('\n'),
+                                        style: RTTypography.bodySmall
+                                            .copyWith(
+                                          color: RTColors.danger,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          Positioned(
+                            right: 16,
+                            bottom: 96,
+                            child: _buildHomeFab(context, auth),
                           ),
                         ],
                       );
@@ -2052,7 +2059,6 @@ class _HomeScreenState extends State<HomeScreen> {
           );
         },
       ),
-      floatingActionButton: _buildHomeFab(context, auth),
     );
   }
 
@@ -2137,6 +2143,119 @@ class _HomeScreenState extends State<HomeScreen> {
       label: 'Novo',
       icon: Icons.add,
       actions: actions,
+    );
+  }
+}
+
+class _MapSearchBar extends StatelessWidget {
+  const _MapSearchBar({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 48,
+      decoration: BoxDecoration(
+        color: RTColors.bg.withValues(alpha: 0.96),
+        borderRadius: BorderRadius.circular(RTRadius.r3),
+        border: Border.all(color: RTColors.hair),
+        boxShadow: RTElevation.sh1,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        child: Row(
+          children: [
+            Icon(Icons.search, size: 20, color: RTColors.inkMute),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Buscar propriedade…',
+                style: RTTypography.body.copyWith(color: RTColors.inkMute),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: RTColors.bgAlt,
+                borderRadius: BorderRadius.circular(RTRadius.rFull),
+              ),
+              child: Text(
+                '$count',
+                style: RTTypography.mono.copyWith(fontSize: 11),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Icon(Icons.keyboard_arrow_down, size: 18, color: RTColors.inkSoft),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NotifBell extends StatelessWidget {
+  const _NotifBell();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        color: RTColors.bg.withValues(alpha: 0.96),
+        borderRadius: BorderRadius.circular(RTRadius.r3),
+        border: Border.all(color: RTColors.hair),
+        boxShadow: RTElevation.sh1,
+      ),
+      child: Icon(
+        Icons.notifications_outlined,
+        size: 22,
+        color: RTColors.inkSoft,
+      ),
+    );
+  }
+}
+
+class _MapControlsStack extends StatelessWidget {
+  const _MapControlsStack({
+    required this.onNorth,
+    required this.onLocate,
+  });
+
+  final VoidCallback onNorth;
+  final VoidCallback onLocate;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _controlBtn(Icons.layers_outlined, 'Camadas', () {}),
+        _controlBtn(Icons.my_location, 'Centralizar', onLocate),
+        _controlBtn(Icons.explore_outlined, 'Norte', onNorth),
+      ],
+    );
+  }
+
+  Widget _controlBtn(IconData icon, String tooltip, VoidCallback onTap) {
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 44,
+          height: 44,
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          decoration: BoxDecoration(
+            color: RTColors.bg,
+            borderRadius: BorderRadius.circular(RTRadius.r3),
+            border: Border.all(color: RTColors.hair),
+            boxShadow: RTElevation.sh1,
+          ),
+          child: Icon(icon, size: 22, color: RTColors.inkSoft),
+        ),
+      ),
     );
   }
 }
