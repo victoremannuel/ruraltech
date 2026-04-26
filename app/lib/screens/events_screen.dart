@@ -8,7 +8,7 @@ import '../design/typography.dart';
 import '../services/auth_service.dart';
 import '../services/cloud_service.dart';
 
-enum _EventFilter { all, critical, info }
+enum _EventFilter { all, critical, warn, ok }
 
 class EventsScreen extends StatefulWidget {
   const EventsScreen({super.key});
@@ -50,9 +50,6 @@ class _EventsScreenState extends State<EventsScreen> {
     }
     return RTEventSeverity.neutral;
   }
-
-  bool _isCritical(RTEventSeverity s) =>
-      s == RTEventSeverity.danger || s == RTEventSeverity.warn;
 
   String _titleFor(Map<String, dynamic> event) {
     final raw = (event['type'] ?? event['eventType'] ?? 'evento').toString();
@@ -110,7 +107,6 @@ class _EventsScreenState extends State<EventsScreen> {
     final fb = context.read<CloudService>();
     return Scaffold(
       backgroundColor: RTColors.bgAlt,
-      appBar: AppBar(title: const Text('Eventos e Telemetria')),
       body: StreamBuilder<List<Map<String, dynamic>>>(
         stream: fb.streamCriticalEvents(uid: uid, isAdmin: auth.isAdmin),
         builder: (context, snapshot) {
@@ -127,41 +123,94 @@ class _EventsScreenState extends State<EventsScreen> {
               .map((e) => (event: e, severity: _severityFor(e)))
               .toList();
 
-          final criticalCount =
-              withSeverity.where((e) => _isCritical(e.severity)).length;
-          final infoCount = withSeverity.length - criticalCount;
+          final criticalCount = withSeverity
+              .where((e) => e.severity == RTEventSeverity.danger)
+              .length;
+          final warnCount = withSeverity
+              .where((e) => e.severity == RTEventSeverity.warn)
+              .length;
+          final okCount = withSeverity
+              .where((e) =>
+                  e.severity == RTEventSeverity.ok ||
+                  e.severity == RTEventSeverity.info ||
+                  e.severity == RTEventSeverity.neutral)
+              .length;
 
           final filtered = withSeverity.where((e) {
             switch (_filter) {
               case _EventFilter.all:
                 return true;
               case _EventFilter.critical:
-                return _isCritical(e.severity);
-              case _EventFilter.info:
-                return !_isCritical(e.severity);
+                return e.severity == RTEventSeverity.danger;
+              case _EventFilter.warn:
+                return e.severity == RTEventSeverity.warn;
+              case _EventFilter.ok:
+                return e.severity == RTEventSeverity.ok ||
+                    e.severity == RTEventSeverity.info ||
+                    e.severity == RTEventSeverity.neutral;
             }
           }).toList();
 
-          return Column(
-            children: [
-              _buildHeader(criticalCount, infoCount),
-              _buildFilters(criticalCount, infoCount),
-              Expanded(
-                child: filtered.isEmpty
-                    ? _buildEmpty()
-                    : ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(
-                          RTSpacing.x4,
-                          RTSpacing.x2,
-                          RTSpacing.x4,
-                          RTSpacing.x8,
-                        ),
+          return CustomScrollView(
+            slivers: [
+              SliverAppBar(
+                pinned: true,
+                backgroundColor: RTColors.bg,
+                surfaceTintColor: Colors.transparent,
+                title: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Eventos',
+                        style: RTTypography.h2.copyWith(fontSize: 24)),
+                    Text('Últimas 24 horas',
+                        style: RTTypography.bodySmall
+                            .copyWith(color: RTColors.inkSoft)),
+                  ],
+                ),
+              ),
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                sliver: SliverToBoxAdapter(
+                  child: Row(children: [
+                    Expanded(
+                      child: _CounterCard(
+                        value: criticalCount,
+                        label: 'Críticos',
+                        tone: RTColors.danger,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _CounterCard(
+                        value: warnCount + okCount,
+                        label: 'Informativos',
+                        tone: RTColors.info,
+                      ),
+                    ),
+                  ]),
+                ),
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: 4)),
+              SliverToBoxAdapter(
+                child: _buildFilters(
+                    criticalCount, warnCount, okCount, withSeverity.length),
+              ),
+              filtered.isEmpty
+                  ? SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: _buildEmpty(),
+                    )
+                  : SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+                      sliver: SliverList.separated(
                         itemCount: filtered.length,
                         separatorBuilder: (_, __) =>
-                            const SizedBox(height: RTSpacing.x2),
+                            const SizedBox(height: 10),
                         itemBuilder: (_, i) {
                           final e = filtered[i];
-                          final deviceId = (e.event['deviceId'] ?? '').toString();
+                          final deviceId =
+                              (e.event['deviceId'] ?? '').toString();
                           return RTEventCard(
                             title: _titleFor(e.event),
                             severity: e.severity,
@@ -175,7 +224,7 @@ class _EventsScreenState extends State<EventsScreen> {
                           );
                         },
                       ),
-              ),
+                    ),
             ],
           );
         },
@@ -183,69 +232,29 @@ class _EventsScreenState extends State<EventsScreen> {
     );
   }
 
-  Widget _buildHeader(int criticalCount, int infoCount) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        RTSpacing.x4,
-        RTSpacing.x3,
-        RTSpacing.x4,
-        RTSpacing.x2,
-      ),
-      child: Row(
-        children: [
-          _counter(
-            value: criticalCount.toString(),
-            label: 'Críticos',
-            color: RTColors.danger,
-          ),
-          const SizedBox(width: RTSpacing.x4),
-          _counter(
-            value: infoCount.toString(),
-            label: 'Informativos',
-            color: RTColors.info,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _counter({required String value, required String label, required Color color}) {
-    return Row(
-      children: [
-        Container(
-          width: 8,
-          height: 8,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-        ),
-        const SizedBox(width: RTSpacing.x2),
-        Text(
-          value,
-          style: RTTypography.monoLarge.copyWith(color: RTColors.ink),
-        ),
-        const SizedBox(width: RTSpacing.x1),
-        Text(label, style: RTTypography.bodySmall),
-      ],
-    );
-  }
-
-  Widget _buildFilters(int criticalCount, int infoCount) {
+  Widget _buildFilters(
+      int criticalCount, int warnCount, int okCount, int total) {
     return SizedBox(
-      height: 44,
+      height: 36,
       child: ListView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: RTSpacing.x4),
         children: [
-          _filterChip('Todos', null, _EventFilter.all),
+          _filterChip('Tudo · $total', null, _EventFilter.all),
           const SizedBox(width: RTSpacing.x2),
-          _filterChip('Críticos', criticalCount, _EventFilter.critical),
+          _filterChip('Crítico · $criticalCount', RTColors.danger,
+              _EventFilter.critical),
           const SizedBox(width: RTSpacing.x2),
-          _filterChip('Informativos', infoCount, _EventFilter.info),
+          _filterChip(
+              'Atenção · $warnCount', RTColors.warn, _EventFilter.warn),
+          const SizedBox(width: RTSpacing.x2),
+          _filterChip('OK · $okCount', RTColors.ok, _EventFilter.ok),
         ],
       ),
     );
   }
 
-  Widget _filterChip(String label, int? count, _EventFilter value) {
+  Widget _filterChip(String label, Color? dot, _EventFilter value) {
     final selected = _filter == value;
     return GestureDetector(
       onTap: () => setState(() => _filter = value),
@@ -263,7 +272,19 @@ class _EventsScreenState extends State<EventsScreen> {
           ),
         ),
         child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
+            if (dot != null) ...[
+              Container(
+                width: 7,
+                height: 7,
+                decoration: BoxDecoration(
+                  color: selected ? RTColors.onPrimary : dot,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 6),
+            ],
             Text(
               label,
               style: RTTypography.label.copyWith(
@@ -271,25 +292,6 @@ class _EventsScreenState extends State<EventsScreen> {
                 color: selected ? RTColors.onPrimary : RTColors.ink,
               ),
             ),
-            if (count != null) ...[
-              const SizedBox(width: RTSpacing.x2),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: selected
-                      ? RTColors.onPrimary.withValues(alpha: 0.2)
-                      : RTColors.bgSubtle,
-                  borderRadius: BorderRadius.circular(RTRadius.rFull),
-                ),
-                child: Text(
-                  count.toString(),
-                  style: RTTypography.monoSmall.copyWith(
-                    color: selected ? RTColors.onPrimary : RTColors.inkSoft,
-                    fontSize: 10,
-                  ),
-                ),
-              ),
-            ],
           ],
         ),
       ),
@@ -356,6 +358,44 @@ class _EventsScreenState extends State<EventsScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _CounterCard extends StatelessWidget {
+  const _CounterCard({
+    required this.value,
+    required this.label,
+    required this.tone,
+  });
+
+  final int value;
+  final String label;
+  final Color tone;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: RTColors.bg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: RTColors.hairSoft),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$value',
+            style: RTTypography.h1.copyWith(fontSize: 36, color: tone),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label.toUpperCase(),
+            style: RTTypography.eyebrow,
+          ),
+        ],
       ),
     );
   }
