@@ -338,6 +338,11 @@ void ApiServer::begin() {
       pageAck["lastAckRxWindowResult"] = lastPageDiag.lastAckRxWindowResult;
       pageAck["lastPageTxToAckRxLatencyMs"] = lastPageDiag.lastPageTxToAckRxLatencyMs;
       pageAck["lastAckLateReason"] = lastPageDiag.lastAckLateReason;
+      pageAck["lastAckToRpv2HandoffBeginAtMs"] = lastPageDiag.lastAckToRpv2HandoffBeginAtMs;
+      pageAck["lastAckToRpv2BeginDispatchAtMs"] = lastPageDiag.lastAckToRpv2BeginDispatchAtMs;
+      pageAck["lastAckToRpv2BeginTxAtMs"] = lastPageDiag.lastAckToRpv2BeginTxAtMs;
+      pageAck["lastAckToRpv2BeginLatencyMs"] = lastPageDiag.lastAckToRpv2BeginLatencyMs;
+      pageAck["lastAckToRpv2Source"] = lastPageDiag.lastAckToRpv2Source;
       doc["acceptedUplinkQueueDepth"] = acceptedUplinkQueueCount;
       doc["acceptedUplinkDropCount"] = acceptedUplinkDropCount;
       doc["acceptedUplinkLastDrainAtMs"] = acceptedUplinkLastDrainAtMs;

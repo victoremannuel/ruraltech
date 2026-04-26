@@ -442,6 +442,11 @@ static bool tryHandlePendingWakePageAckFastPath(
     const LoRaFrame& rx,
     uint32_t rxAtMs = 0,
     const char* source = nullptr);
+static void publishRtrPageAckProgressAfterBeginStarted(PendingWakeSession& session);
+static bool startRpv2BeginImmediatelyAfterPageAck(
+    PendingWakeSession& session,
+    uint32_t ackRxAtMs,
+    const char* source);
 static bool waitForRtrPageAckImmediatelyAfterPageTx(
     PendingWakeSession& session,
     uint32_t txOkAtMs,
@@ -3905,8 +3910,8 @@ static bool trySendRtrPage(
       "rtr_page_sent",
       nullptr,
       nullptr);
-  markFenceCommandDispatchingBegin();
   if (session.core.state == rtrwake::State::PAGING_AWAITING_ACK) {
+    markFenceCommandDispatchingBegin();
     publishFenceTransportState(session.core.deviceId, "paging_sent");
     publishFenceTransportState(session.core.deviceId, "awaiting_page_ack");
   }
@@ -3984,7 +3989,13 @@ static bool tryHandlePendingWakePageAckFastPath(
       (unsigned)ack.accepted,
       (unsigned)ack.sessionModeActive,
       ackSource);
-  return handlePendingWakePageAck(rx, observedAtMs);
+  const bool consumed = handlePendingWakePageAck(rx, observedAtMs);
+  if (consumed &&
+      session.core.state == rtrwake::State::PAGE_ACKED &&
+      strcmp(ackSource, "page_ack_window") != 0) {
+    startRpv2BeginImmediatelyAfterPageAck(session, observedAtMs, ackSource);
+  }
+  return consumed;
 }
 
 static bool handlePendingWakePageAck(const LoRaFrame& rx, uint32_t rxAtMs) {
@@ -4076,14 +4087,6 @@ static bool handlePendingWakePageAck(const LoRaFrame& rx, uint32_t rxAtMs) {
   rtrdiag::noteAckMatched(&lastPageDiag, ackWithinGrace);
   syncLastPageDiagFromSession(session);
   rtrdiag::notePageOutcome(&lastPageDiag, "ack_rx");
-  transitionPendingWakeState(session, rtrwake::State::PAGE_ACKED, "page_ack_ok");
-  publishFenceTransportState(session.core.deviceId, "page_acked");
-  appendPropertyCommandEvent(
-      activeSimpleCommand.propertyId,
-      activeSimpleCommand.commandId,
-      "rtr_page_ack",
-      nullptr,
-      nullptr);
   LOGI(
       "RTR_PAGE_ACK_RX deviceId=%lu commandId=%s sessionId=%llu messageId=%lu suggestedRxWindowMs=%u wakeLockSec=%lu",
       (unsigned long)rx.deviceId,
@@ -4092,7 +4095,127 @@ static bool handlePendingWakePageAck(const LoRaFrame& rx, uint32_t rxAtMs) {
       (unsigned long)header.messageId,
       (unsigned)ack.suggestedRxWindowMs,
       (unsigned long)ack.wakeLockUntilSec);
+  transitionPendingWakeState(session, rtrwake::State::PAGE_ACKED, "page_ack_ok");
   return true;
+}
+
+static void publishRtrPageAckProgressAfterBeginStarted(PendingWakeSession& session) {
+  publishFenceTransportState(session.core.deviceId, "page_acked");
+  appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      "rtr_page_ack",
+      nullptr,
+      nullptr);
+  markFenceCommandDispatchingBegin();
+}
+
+static bool startRpv2BeginImmediatelyAfterPageAck(
+    PendingWakeSession& session,
+    uint32_t ackRxAtMs,
+    const char* source) {
+  const uint32_t beginDispatchAtMs = millis();
+  const char* handoffSource = source && source[0] ? source : "unspecified";
+  rtrdiag::noteAckToRpv2HandoffBegin(
+      &lastPageDiag,
+      ackRxAtMs,
+      beginDispatchAtMs,
+      handoffSource);
+  wakeLoopDiag.lastBeginDispatchAtMs = beginDispatchAtMs;
+  LOGI(
+      "RTR_ACK_TO_RPV2_FAST_HANDOFF_BEGIN deviceId=%lu commandId=%s sessionId=%llu messageId=%lu ackRxAtMs=%lu beginDispatchAtMs=%lu source=%s",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.core.pageSessionId,
+      (unsigned long)session.core.pageMessageId,
+      (unsigned long)ackRxAtMs,
+      (unsigned long)beginDispatchAtMs,
+      handoffSource);
+  transitionPendingWakeState(
+      session,
+      rtrwake::State::SESSION_START_READY,
+      "ack_to_rpv2_fast_handoff");
+  transitionPendingWakeState(
+      session,
+      rtrwake::State::SESSION_IN_PROGRESS,
+      "ack_to_rpv2_begin_dispatch");
+  session.core.beginDispatchPending = false;
+  session.core.sessionStarted = true;
+  LOGI(
+      "RPV2_SESSION_BEGIN_DISPATCH deviceId=%lu commandId=%s radioCommandId=%llu",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.radioCommandId);
+  LOGI(
+      "RTR_TO_RPV2_START deviceId=%lu commandId=%s campaignCount=%u",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned)session.core.campaignCount);
+  const char* sessionReason = nullptr;
+  const bool ok = executeFenceCommandRpv2Plan(
+      session.core.deviceId,
+      session.scopeId,
+      session.radioCommandId,
+      session.sessionNonce,
+      session.commandId,
+      session.plan,
+      &sessionReason);
+  const uint32_t handoffDoneAtMs = millis();
+  LOGI(
+      "RTR_ACK_TO_RPV2_FAST_HANDOFF_DONE deviceId=%lu commandId=%s sessionId=%llu messageId=%lu ackRxAtMs=%lu beginDispatchAtMs=%lu beginTxAtMs=%lu deltaMs=%lu source=%s result=%s",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.core.pageSessionId,
+      (unsigned long)session.core.pageMessageId,
+      (unsigned long)ackRxAtMs,
+      (unsigned long)beginDispatchAtMs,
+      (unsigned long)lastPageDiag.lastAckToRpv2BeginTxAtMs,
+      (unsigned long)lastPageDiag.lastAckToRpv2BeginLatencyMs,
+      handoffSource,
+      ok ? "ok" : "failed");
+  LOGI(
+      "RTR_ACK_TO_RPV2_BEGIN_LATENCY deviceId=%lu commandId=%s sessionId=%llu messageId=%lu ackRxAtMs=%lu beginDispatchAtMs=%lu beginTxAtMs=%lu deltaMs=%lu source=%s handoffDoneAtMs=%lu",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.core.pageSessionId,
+      (unsigned long)session.core.pageMessageId,
+      (unsigned long)ackRxAtMs,
+      (unsigned long)beginDispatchAtMs,
+      (unsigned long)lastPageDiag.lastAckToRpv2BeginTxAtMs,
+      (unsigned long)lastPageDiag.lastAckToRpv2BeginLatencyMs,
+      handoffSource,
+      (unsigned long)handoffDoneAtMs);
+  if (ok) {
+    LOGI(
+        "RPV2_SESSION_END_APPLIED deviceId=%lu commandId=%s radioCommandId=%llu",
+        (unsigned long)session.core.deviceId,
+        session.commandId[0] ? session.commandId : "-",
+        (unsigned long long)session.radioCommandId);
+    transitionPendingWakeState(
+        session, rtrwake::State::COMPLETED, "rpv2_applied");
+    return true;
+  }
+  LOGW(
+      "RPV2_SESSION_END_FAILED deviceId=%lu commandId=%s radioCommandId=%llu reason=%s",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.radioCommandId,
+      sessionReason ? sessionReason : "rpv2_failed");
+  LOGW(
+      "RTR_TO_RPV2_ABORT deviceId=%lu commandId=%s reason=%s",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      sessionReason ? sessionReason : "session_start_failed");
+  failPendingWakeSession(
+      session,
+      activeSimpleCommand.lastReasonCode != rpv2::REASON_NONE
+          ? activeSimpleCommand.lastReasonCode
+          : rtrv1::REASON_SESSION_NOT_STARTED_AFTER_PAGE_ACK,
+      sessionReason && sessionReason[0]
+          ? sessionReason
+          : rtrv1::reasonCodeLabel(
+                rtrv1::REASON_SESSION_NOT_STARTED_AFTER_PAGE_ACK));
+  return false;
 }
 
 static bool waitForRtrPageAckImmediatelyAfterPageTx(
@@ -4134,6 +4257,9 @@ static bool waitForRtrPageAckImmediatelyAfterPageTx(
           (unsigned long)session.core.pageMessageId,
           windowResult,
           (unsigned long)rxAcceptedAtMs);
+      if (pageAcked) {
+        startRpv2BeginImmediatelyAfterPageAck(session, rxAcceptedAtMs, "page_ack_window");
+      }
       return pageAcked;
     }
     enqueueDeferredUplink(rx);
@@ -4663,7 +4789,6 @@ static bool executeFenceCommandRpv2Plan(
       (unsigned)beginMetrics.packedLen,
       (unsigned)beginMetrics.cipherPayloadLen,
       (unsigned)beginMetrics.wireLenFinal);
-  publishFenceTransportState(deviceId, "awaiting_begin_ack");
   logRpv2StageTransition(deviceId, commandId, "page_acked", "begin_tx");
   LOGI(
       "RPV2_WAIT_ACK_BEGIN deviceId=%lu commandId=%s radioCommandId=%llu retryCount=%u",
@@ -4692,12 +4817,21 @@ static bool executeFenceCommandRpv2Plan(
       "rpv2_begin_sent",
       nullptr,
       nullptr);
+  const uint32_t beginTxAtMs = millis();
+  const int pendingIdx = findPendingWakeSessionByDeviceId(deviceId);
+  if (pendingIdx >= 0) {
+    rtrdiag::noteAckToRpv2BeginTx(&lastPageDiag, beginTxAtMs);
+  }
   LOGI(
       "RPV2_BEGIN_TX_OK deviceId=%lu commandId=%s radioCommandId=%llu retryCount=%u",
       (unsigned long)deviceId,
       commandId && commandId[0] ? commandId : "-",
       (unsigned long long)radioCommandId,
       (unsigned)activeSimpleCommand.retryCount);
+  publishFenceTransportState(deviceId, "awaiting_begin_ack");
+  if (pendingIdx >= 0) {
+    publishRtrPageAckProgressAfterBeginStarted(pendingWakeSessions[pendingIdx]);
+  }
   feedWatchdogIfEnabled();
 
   Rpv2AwaitedResponse response;

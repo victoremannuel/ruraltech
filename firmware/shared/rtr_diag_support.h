@@ -78,6 +78,10 @@ struct PageSnapshot {
   uint32_t lastAckRxWindowBeginAtMs = 0;
   uint32_t lastAckRxWindowEndAtMs = 0;
   uint32_t lastPageTxToAckRxLatencyMs = 0;
+  uint32_t lastAckToRpv2HandoffBeginAtMs = 0;
+  uint32_t lastAckToRpv2BeginDispatchAtMs = 0;
+  uint32_t lastAckToRpv2BeginTxAtMs = 0;
+  uint32_t lastAckToRpv2BeginLatencyMs = 0;
   uint32_t lastSoftDeadlineMs = 0;
   uint64_t inFlightPageSessionId = 0;
   uint32_t inFlightPageMessageId = 0;
@@ -103,6 +107,7 @@ struct PageSnapshot {
   char lastAckRxWindowResult[kOutcomeSize] = "not_started";
   char lastAckLateReason[kReasonSize] = "none";
   char lastAckRejectedReason[kReasonSize]{};
+  char lastAckToRpv2Source[kSourceSize] = "none";
 };
 
 struct CollarWindowSnapshot {
@@ -429,6 +434,34 @@ static inline void noteAckLatency(
     uint32_t deltaMs) {
   if (!snapshot) return;
   snapshot->lastPageTxToAckRxLatencyMs = deltaMs;
+}
+
+static inline void noteAckToRpv2HandoffBegin(
+    PageSnapshot* snapshot,
+    uint32_t ackRxAtMs,
+    uint32_t beginDispatchAtMs,
+    const char* source) {
+  if (!snapshot) return;
+  snapshot->lastAckToRpv2HandoffBeginAtMs = ackRxAtMs;
+  snapshot->lastAckToRpv2BeginDispatchAtMs = beginDispatchAtMs;
+  snapshot->lastAckToRpv2BeginTxAtMs = 0;
+  snapshot->lastAckToRpv2BeginLatencyMs = 0;
+  copyText(
+      snapshot->lastAckToRpv2Source,
+      sizeof(snapshot->lastAckToRpv2Source),
+      source && source[0] ? source : "unknown");
+}
+
+static inline void noteAckToRpv2BeginTx(
+    PageSnapshot* snapshot,
+    uint32_t beginTxAtMs) {
+  if (!snapshot) return;
+  snapshot->lastAckToRpv2BeginTxAtMs = beginTxAtMs;
+  if (snapshot->lastAckToRpv2HandoffBeginAtMs != 0 &&
+      (int32_t)(beginTxAtMs - snapshot->lastAckToRpv2HandoffBeginAtMs) >= 0) {
+    snapshot->lastAckToRpv2BeginLatencyMs =
+        beginTxAtMs - snapshot->lastAckToRpv2HandoffBeginAtMs;
+  }
 }
 
 static inline void notePageRetry(

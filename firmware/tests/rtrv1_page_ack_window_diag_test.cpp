@@ -21,10 +21,17 @@ int main() {
   rtrdiag::noteAckLatency(&page, 321);
   rtrdiag::notePagePostTxFast(&page, 17);
   rtrdiag::noteAckMatched(&page, false);
+  rtrdiag::noteAckToRpv2HandoffBegin(&page, 9321, 9340, "page_ack_window");
+  rtrdiag::noteAckToRpv2BeginTx(&page, 9475);
 
   assert(page.lastPageTxToAckRxLatencyMs == 321);
   assert(page.lastPagePostTxFastDurationMs == 17);
   assert(strcmp(page.lastAckLateReason, "none") == 0);
+  assert(page.lastAckToRpv2HandoffBeginAtMs == 9321);
+  assert(page.lastAckToRpv2BeginDispatchAtMs == 9340);
+  assert(page.lastAckToRpv2BeginTxAtMs == 9475);
+  assert(page.lastAckToRpv2BeginLatencyMs == 154);
+  assert(strcmp(page.lastAckToRpv2Source, "page_ack_window") == 0);
 
   return 0;
 }
