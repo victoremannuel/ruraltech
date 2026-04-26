@@ -361,6 +361,44 @@ Nova rodada aplicada em 2026-04-25 (pipeline auditável de validação dos runti
   - antes de qualquer novo reteste funcional de `SET_FENCE`, agora existe um pipeline único no repositório para provar markers em source, binário e boot/runtime da matriz
   - a próxima rodada física de bancada pode ser invalidada automaticamente se `RPV2_PLANNER_REV` não aparecer no boot ou se o binário não contiver os markers do planner real
 
+Nova rodada aplicada em 2026-04-25 (unificação definitiva do planner `SET_FENCE` e guarda anti-deadlock):
+- criado `gateway-matriz/FenceRpv2Planner.h` como implementação canônica única do planner `RPv2` de cerca:
+  - recebe pontos já normalizados/convertidos
+  - usa callback de medição exata do envelope seguro
+  - classifica cada candidato como `fit`, `oversize_reducible`, `oversize_terminal_single_point` ou `codec_or_buffer_error`
+  - acumula `candidateEvalCount`, `rejectCount`, `fitCount`, `chunkCount`, `minWireLen`, `maxWireLen`, `reasonLabel` e `reasonCode`
+  - emite exatamente um `RPV2_PLAN_FINAL` por execução
+- `gateway-matriz/gateway-matriz.ino`:
+  - o antigo planner inline foi substituído por um wrapper fino que apenas:
+    - resolve os pontos do `JsonArray`
+    - monta o `PlannerContext`
+    - chama `buildFenceRpv2PlanStrict(...)`
+    - delega a observabilidade ao callback `logFencePlannerEvent(...)`
+  - o boot da matriz e o planner real agora convergem para a mesma revisão `canonical_fence_planner_v1`
+  - `publishFenceTransportState(...)` e eventos do planner passaram a atualizar `lastProgressAtMs`
+  - `ActiveSimpleCommandState` ganhou `lastProgressAtMs`
+  - novo watchdog local `checkSetFencePlannerDispatchStall(...)` falha e limpa o comando com `reason=planner_or_dispatch_stall` se `SET_FENCE` ficar ativo sem wake session e sem progresso por mais de `30000 ms`
+  - o mapeamento de reason label passou a cobrir `planner_or_dispatch_stall`
+- testes host:
+  - `firmware/tests/rpv2_fence_planner_test.cpp` foi refeito para chamar a implementação canônica real, em vez de uma lógica paralela
+  - novo `firmware/tests/matrix_cloud_set_fence_dispatch_integration_test.cpp` cobre o fluxo de decisão do dispatch cloud usando o planner canônico e a decisão `create wake session` vs `publish failed + clear`
+- `tools/audit/flash_and_validate_firmware.py`:
+  - `run_host_tests()` agora inclui `matrix_cloud_set_fence_dispatch_integration_test.cpp`
+  - dry-runs com `--skip-*` agora resultam em `INCONCLUSIVE`, não mais `PASS`
+  - os markers obrigatórios da rodada passaram a exigir `canonical_fence_planner_v1`
+- validação local desta rodada:
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rpv2_fence_planner_test.cpp -o /tmp/rpv2_fence_planner_test && /tmp/rpv2_fence_planner_test`: ok
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/matrix_cloud_set_fence_dispatch_integration_test.cpp -o /tmp/matrix_cloud_set_fence_dispatch_integration_test && /tmp/matrix_cloud_set_fence_dispatch_integration_test`: ok
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rtrv1_stale_wake_hint_test.cpp -o /tmp/rtrv1_stale_wake_hint_test && /tmp/rtrv1_stale_wake_hint_test`: ok
+  - `c++ -std=c++17 -I. -Ifirmware/tests/arduino_compat firmware/tests/rtrv1_terminal_failure_status_test.cpp -o /tmp/rtrv1_terminal_failure_status_test && /tmp/rtrv1_terminal_failure_status_test`: ok
+  - `python3 -m py_compile tools/audit/flash_and_validate_firmware.py`: ok
+  - `python3 tools/audit/flash_and_validate_firmware.py --target-commit $(git rev-parse HEAD) --allow-dirty --skip-compile --skip-upload --skip-serial --skip-status --skip-bench`: ok
+  - diretório de evidência do dry-run local: `tools/audit/output/20260425_211118_matrix_planner_runtime_marker_validation/`
+- conclusão desta rodada:
+  - o planner host-testado e o planner produtivo da matriz agora são a mesma implementação
+  - o emissor produtivo de `RPV2_PLAN_CHUNK_REJECT` ficou concentrado no callback de log do planner canônico
+  - a próxima prova física esperada deixa de ser “marker existe no código” e passa a ser “planner canônico entrou, finalizou e ou criou wake session ou limpou o comando”
+
 Nova rodada aplicada em 2026-04-21 (proveniência de firmware / SHA de bancada):
 - criado `firmware/shared/build_info.h` com fallback seguro para metadata de build (`gitSha`, `gitShortSha`, `buildUtc`, `dirty`, `buildSource`)
 - criado gerador local `tools/audit/generate_build_info.py`, que escreve `firmware/shared/generated_build_info.h` a partir do git atual

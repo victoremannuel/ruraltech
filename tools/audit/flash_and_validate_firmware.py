@@ -37,7 +37,7 @@ SOURCE_MARKER_PATHS = ["gateway-matriz", "firmware/shared", "firmware/tests"]
 REQUIRED_SOURCE_MARKERS = [
     "RPV2_PLAN_ENTER",
     "RPV2_PLANNER_REV",
-    "progressive_reduce_real_path_v1",
+    "canonical_fence_planner_v1",
     "RPV2_PLAN_CANDIDATE_EVAL",
     "RPV2_PLAN_CHUNK_FIT",
     "RPV2_PLAN_FINAL",
@@ -49,7 +49,7 @@ REQUIRED_SOURCE_MARKERS = [
 REQUIRED_MATRIX_BINARY_MARKERS = [
     "RPV2_PLAN_ENTER",
     "RPV2_PLANNER_REV",
-    "progressive_reduce_real_path_v1",
+    "canonical_fence_planner_v1",
     "RPV2_PLAN_CANDIDATE_EVAL",
     "RPV2_PLAN_CHUNK_FIT",
     "RPV2_PLAN_FINAL",
@@ -311,6 +311,7 @@ def validate_include_chain() -> StageResult:
 def run_host_tests(out_dir: Path) -> tuple[StageResult, list[str]]:
     tests = [
         "firmware/tests/rpv2_fence_planner_test.cpp",
+        "firmware/tests/matrix_cloud_set_fence_dispatch_integration_test.cpp",
         "firmware/tests/rtrv1_stale_wake_hint_test.cpp",
         "firmware/tests/rtrv1_wake_scheduler_test.cpp",
         "firmware/tests/rtrv1_fast_path_priority_test.cpp",
@@ -587,8 +588,8 @@ def validate_matrix_boot_markers(log_path: Path, out_path: Path) -> StageResult:
     text = read_text(log_path)
     markers = {
         "FW_PROVENANCE role=matrix": "FW_PROVENANCE role=matrix" in text,
-        "RPV2_PLANNER_REV rev=progressive_reduce_real_path_v1":
-            "RPV2_PLANNER_REV rev=progressive_reduce_real_path_v1" in text,
+        "RPV2_PLANNER_REV rev=canonical_fence_planner_v1":
+            "RPV2_PLANNER_REV rev=canonical_fence_planner_v1" in text,
         "DIAG_STAGE=4":
             "Matrix diag_stage=4" in text or "diagStage=4" in text or "DIAG_STAGE=4" in text,
         "QUEUE_POLLING_CFG":
@@ -677,6 +678,9 @@ def validate_bench_logs(matrix_log: Path, collar_log: Path) -> StageResult:
     deadlock_after_reject = (
         chunk_reject
         and "QUEUE_POLL_SKIPPED reason=simple_command_active" in matrix_text
+        and "RPV2_PLAN_FINAL" not in matrix_text
+        and "RPV2_PLAN_CANDIDATE_EVAL" in matrix_text
+        and matrix_text.rfind("RPV2_PLAN_CHUNK_REJECT") > matrix_text.rfind("RPV2_PLAN_CANDIDATE_EVAL")
         and not chunk_fit
         and not plan_final_success
         and not plan_final_failure
@@ -914,6 +918,7 @@ def main() -> int:
     matrix_status_result = StageResult("SKIPPED", "status pulado")
     collar_status_result = StageResult("SKIPPED", "status pulado")
     bench_result = StageResult("SKIPPED", "bench pulado")
+    final_result_label = "PASS"
 
     try:
         head, short_head, dirty_files = validate_workspace(args.target_commit, out_dir)
@@ -1086,6 +1091,8 @@ def main() -> int:
             if bench_result.status == "FAIL":
                 raise ValidationError(bench_result.details)
 
+        if args.skip_compile or args.skip_upload or args.skip_serial or args.skip_bench:
+            final_result_label = "INCONCLUSIVE"
         build_report(
             out_dir,
             args.target_commit,
@@ -1111,7 +1118,7 @@ def main() -> int:
             matrix_status_result,
             collar_status_result,
             bench_result,
-            "PASS",
+            final_result_label,
             blocking_issues,
             commands_executed,
         )
