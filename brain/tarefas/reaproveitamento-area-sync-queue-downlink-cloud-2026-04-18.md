@@ -761,6 +761,24 @@ Historico adicional desta rodada:
 - [ ] CRC validado corretamente em ambos os lados
 - [ ] Logs de `PAGE/PAGE_ACK` comprovam wake-up antes do `BEGIN`
 
+### Nova rodada aplicada em 2026-04-25 (consolidação física do planner canônico)
+
+- `tools/audit/flash_and_validate_firmware.py` foi endurecido para o plano físico do planner canônico:
+- limpa `__pycache__`/`.pyc` transitórios e restaura bytecode rastreado regenerado durante a própria validação;
+- audita emitters produtivos de `RPV2_PLAN_CHUNK_REJECT` e falha se houver emissor legado fora de `gateway-matriz/FenceRpv2Planner.h` ou do callback real da matriz;
+- ignora `tools/audit/output/` na checagem de sujeira e na varredura de `generated_build_info.h`, evitando falso positivo causado pela própria evidência da execução;
+- mantém dry-runs com `--skip-*` em `INCONCLUSIVE`, preservando a exigência de compile/upload/serial/bench físicos antes de declarar sucesso.
+
+### Evidência local desta rodada
+
+- `python3 -m py_compile tools/audit/flash_and_validate_firmware.py`
+- host tests passaram novamente:
+- `rpv2_fence_planner_test.cpp`
+- `matrix_cloud_set_fence_dispatch_integration_test.cpp`
+- `rtrv1_stale_wake_hint_test.cpp`
+- `rtrv1_terminal_failure_status_test.cpp`
+- dry-run do auditor gerou `tools/audit/output/20260425_213456_canonical_planner_physical_validation/validation_report.md` com resultado correto `INCONCLUSIVE` por ausência de compile/upload/serial/bench físicos.
+
 ## Related
 
 [[projetos/ruraltech]]

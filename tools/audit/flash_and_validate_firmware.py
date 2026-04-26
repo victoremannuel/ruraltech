@@ -35,25 +35,33 @@ DEFAULT_MATRIX_BUILD = Path("/tmp/ruraltech-build-matriz")
 DEFAULT_COLLAR_BUILD = Path("/tmp/ruraltech-build-coleira")
 SOURCE_MARKER_PATHS = ["gateway-matriz", "firmware/shared", "firmware/tests"]
 REQUIRED_SOURCE_MARKERS = [
+    "FenceRpv2Planner",
+    "buildFenceRpv2PlanStrict",
     "RPV2_PLAN_ENTER",
     "RPV2_PLANNER_REV",
     "canonical_fence_planner_v1",
+    "RPV2_PLAN_CHUNK_REJECT",
     "RPV2_PLAN_CANDIDATE_EVAL",
     "RPV2_PLAN_CHUNK_FIT",
     "RPV2_PLAN_FINAL",
     "RPV2_PLAN_FAILED_TERMINAL",
-    "radio_proto_v2_planner_support",
+    "SIMPLE_COMMAND_CLEARED",
+    "planner_or_dispatch_stall",
     "measurementOk",
     "fitsLimit",
 ]
 REQUIRED_MATRIX_BINARY_MARKERS = [
+    "FW_PROVENANCE role=matrix",
     "RPV2_PLAN_ENTER",
     "RPV2_PLANNER_REV",
     "canonical_fence_planner_v1",
+    "RPV2_PLAN_CHUNK_REJECT",
     "RPV2_PLAN_CANDIDATE_EVAL",
     "RPV2_PLAN_CHUNK_FIT",
     "RPV2_PLAN_FINAL",
-    "FW_PROVENANCE role=matrix",
+    "RPV2_PLAN_FAILED_TERMINAL",
+    "SIMPLE_COMMAND_CLEARED",
+    "planner_or_dispatch_stall",
 ]
 ALLOWED_DIRTY_SUFFIXES = (
     "manual_settings.local.h",
@@ -183,6 +191,8 @@ def is_allowed_dirty(line: str) -> bool:
     if len(line) < 4:
       return False
     path = line[3:].strip()
+    if path.startswith("tools/audit/output/"):
+        return True
     return path.endswith(ALLOWED_DIRTY_SUFFIXES)
 
 
@@ -195,11 +205,78 @@ def validate_workspace(target_commit: str, out_dir: Path) -> tuple[str, str, lis
     ensure_text(out_dir / "branch.txt", f"{branch}\n")
     ensure_text(out_dir / "git_log_oneline_10.txt", f"{log10}\n")
     ensure_text(out_dir / "git_status.txt", ("\n".join(status_lines) + "\n") if status_lines else "")
+    ensure_text(out_dir / "git_status_before.txt", ("\n".join(status_lines) + "\n") if status_lines else "")
     ensure_text(out_dir / "head.txt", f"{head}\n")
     ensure_text(out_dir / "head_short.txt", f"{short_head}\n")
     if head != target_commit:
         raise ValidationError(f"HEAD {head} difere do commit alvo {target_commit}")
     return head, short_head, status_lines
+
+
+def capture_git_status_after(out_dir: Path) -> list[str]:
+    status_lines = git_status_lines()
+    ensure_text(out_dir / "git_status_after.txt", ("\n".join(status_lines) + "\n") if status_lines else "")
+    return status_lines
+
+
+def cleanup_transient_files(out_dir: Path) -> StageResult:
+    removed: list[str] = []
+    pycache_dirs = subprocess.run(
+        ["git", "ls-files", "--others", "--ignored", "--exclude-standard", "**/__pycache__"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    for line in pycache_dirs.stdout.splitlines():
+        rel = line.strip()
+        if not rel:
+            continue
+        path = ROOT / rel
+        if path.exists():
+            shutil.rmtree(path, ignore_errors=True)
+            removed.append(rel)
+    pyc_files = subprocess.run(
+        ["git", "ls-files", "--others", "--ignored", "--exclude-standard", "*.pyc", "**/*.pyc"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    for line in pyc_files.stdout.splitlines():
+        rel = line.strip()
+        if not rel:
+            continue
+        path = ROOT / rel
+        if path.exists():
+            path.unlink(missing_ok=True)
+            removed.append(rel)
+    tracked_bytecode = subprocess.run(
+        ["git", "status", "--short", "--", "**/__pycache__", "*.pyc", "**/*.pyc"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    restore_targets: list[str] = []
+    for line in tracked_bytecode.stdout.splitlines():
+        if not line.startswith(" M "):
+            continue
+        rel = line[3:].strip()
+        if "__pycache__" not in rel and not rel.endswith(".pyc"):
+            continue
+        restore_targets.append(rel)
+    if restore_targets:
+        subprocess.run(
+            ["git", "restore", "--source=HEAD", "--"] + restore_targets,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        removed.extend(restore_targets)
+    ensure_text(out_dir / "transient_cleanup.txt", ("\n".join(sorted(set(removed))) + "\n") if removed else "")
+    return StageResult("PASS", f"transientes removidos: {len(set(removed))}")
 
 
 def validate_source_markers(out_dir: Path) -> StageResult:
@@ -234,10 +311,41 @@ def validate_source_markers(out_dir: Path) -> StageResult:
     return StageResult("PASS", "todos os markers obrigatorios encontrados no source")
 
 
+def audit_legacy_reject_emitters(out_dir: Path) -> StageResult:
+    command = which_search_tool() + ["RPV2_PLAN_CHUNK_REJECT", "gateway-matriz", "firmware/shared", "firmware/tests"]
+    result = subprocess.run(
+        command,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        errors="replace",
+        check=False,
+    )
+    stdout = result.stdout.strip()
+    ensure_text(out_dir / "legacy_reject_emitters.txt", (stdout + "\n") if stdout else "")
+    production_hits = [
+        line for line in stdout.splitlines()
+        if line.startswith("gateway-matriz/") or line.startswith("firmware/shared/")
+    ]
+    allowed = {
+        "gateway-matriz/gateway-matriz.ino",
+        "gateway-matriz/FenceRpv2Planner.h",
+    }
+    disallowed = []
+    for line in production_hits:
+        file_name = line.split(":", 1)[0]
+        if file_name not in allowed:
+            disallowed.append(file_name)
+    if disallowed:
+        return StageResult("FAIL", "emitters legados encontrados: " + ", ".join(sorted(set(disallowed))))
+    return StageResult("PASS", "emitters produtivos restritos ao planner canonico/callback")
+
+
 def snapshot_generated_header(out_dir: Path) -> None:
     generated = ROOT / "firmware" / "shared" / "generated_build_info.h"
     if generated.exists():
         shutil.copyfile(generated, out_dir / "generated_build_info_snapshot.h")
+        shutil.copyfile(generated, out_dir / "generated_build_info.h")
 
 
 def validate_generated_header(target_commit: str, stale_sha: str, out_dir: Path) -> StageResult:
@@ -262,11 +370,13 @@ def generated_header_flags(out_dir: Path, target_commit: str, stale_sha: str) ->
 
 
 def find_generated_header_locations(out_dir: Path) -> StageResult:
-    ignored_parts = {"graphify-out", ".git", ".venv", "__pycache__", "tools/audit/output"}
+    ignored_parts = {"graphify-out", ".git", ".venv", "__pycache__"}
     locations: list[Path] = []
     for path in ROOT.rglob("generated_build_info.h"):
         rel = path.relative_to(ROOT)
         rel_str = rel.as_posix()
+        if rel.parts[:3] == ("tools", "audit", "output"):
+            continue
         if any(part in ignored_parts for part in rel.parts):
             continue
         if "/build/" in rel_str:
@@ -468,11 +578,10 @@ def compile_target(
     command = ["arduino-cli", "compile", "--fqbn", fqbn, "--build-path", str(build_path), sketch]
     result = run_capture(command, log_path, timeout=420)
     files = build_files_listing(build_path, build_files_path)
-    if has_firmware_artifacts(build_path):
-        if result.returncode == 0:
-            return StageResult("PASS", f"artefatos em {build_path}")
-        if result.timed_out:
-            return StageResult("PASS", f"artefatos em {build_path} apesar de timeout do arduino-cli")
+    if has_firmware_artifacts(build_path) and result.returncode == 0:
+        return StageResult("PASS", f"artefatos em {build_path}")
+    if has_firmware_artifacts(build_path) and result.timed_out:
+        return StageResult("FAIL", f"artefatos em {build_path}, mas arduino-cli expirou; compilacao inconclusiva")
     if not files:
         return StageResult("FAIL", f"nenhum artefato em {build_path}")
     return StageResult("FAIL", f"build invalido em {build_path}")
@@ -715,7 +824,7 @@ def run_bench_command(
     duration: int,
     out_dir: Path,
 ) -> StageResult:
-    matrix_log = out_dir / "bench_set_fence_matrix.log"
+    matrix_log = out_dir / "matrix_set_fence_serial.log"
     collar_log = out_dir / "bench_set_fence_collar.log"
 
     errors: list[Exception] = []
@@ -750,7 +859,9 @@ def build_report(
     head: str,
     short_head: str,
     dirty_files: list[str],
+    transient_cleanup: StageResult,
     source_markers: StageResult,
+    legacy_emitters: StageResult,
     generated_headers: StageResult,
     build_info: StageResult,
     include_chain: StageResult,
@@ -778,7 +889,7 @@ def build_report(
         stale_sha,
     )
     report = [
-        "# RuralTech Matrix Planner Runtime Marker Validation Report",
+        "# RuralTech Canonical Planner Physical Validation Report",
         "",
         "## Target Commit",
         target_commit,
@@ -795,8 +906,12 @@ def build_report(
     report.extend(
         [
             "",
+            "## Cleanup",
+            f"- Transient cleanup: {transient_cleanup.status} ({transient_cleanup.details or '-'})",
+            "",
             "## Source Marker Audit",
             f"- Source markers: {source_markers.status} ({source_markers.details or '-'})",
+            f"- Legacy reject emitters: {legacy_emitters.status} ({legacy_emitters.details or '-'})",
             "",
             "## Generated Build Info",
             f"- Header locations audit: {generated_headers.status} ({generated_headers.details or '-'})",
@@ -889,7 +1004,7 @@ def main() -> int:
     parser.add_argument("--skip-bench", action="store_true")
     args = parser.parse_args()
 
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_matrix_planner_runtime_marker_validation"
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_canonical_planner_physical_validation"
     out_dir = Path(args.output_dir) if args.output_dir else ROOT / "tools" / "audit" / "output" / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -900,7 +1015,9 @@ def main() -> int:
     head = ""
     short_head = ""
     dirty_files: list[str] = []
+    transient_cleanup_result = StageResult("SKIPPED", "nao executado")
     source_markers_result = StageResult("SKIPPED", "nao executado")
+    legacy_emitters_result = StageResult("SKIPPED", "nao executado")
     generated_headers_result = StageResult("SKIPPED", "nao executado")
     build_info_result = StageResult("SKIPPED", "nao executado")
     include_chain_result = StageResult("SKIPPED", "nao executado")
@@ -921,8 +1038,10 @@ def main() -> int:
     final_result_label = "PASS"
 
     try:
+        transient_cleanup_result = cleanup_transient_files(out_dir)
         head, short_head, dirty_files = validate_workspace(args.target_commit, out_dir)
         commands_executed.extend([
+            "cleanup transient __pycache__/pyc",
             "git branch --show-current",
             "git status --short",
             "git log --oneline -10",
@@ -937,6 +1056,10 @@ def main() -> int:
         commands_executed.append("marker search via rg/grep")
         if source_markers_result.status != "PASS":
             raise ValidationError(source_markers_result.details)
+        legacy_emitters_result = audit_legacy_reject_emitters(out_dir)
+        commands_executed.append("audit RPV2_PLAN_CHUNK_REJECT emitters")
+        if legacy_emitters_result.status != "PASS":
+            raise ValidationError(legacy_emitters_result.details)
 
         gen_result = run_capture(["python3", "tools/audit/generate_build_info.py"], out_dir / "generate_build_info.log", timeout=120)
         commands_executed.append("python3 tools/audit/generate_build_info.py")
@@ -1093,6 +1216,14 @@ def main() -> int:
 
         if args.skip_compile or args.skip_upload or args.skip_serial or args.skip_bench:
             final_result_label = "INCONCLUSIVE"
+        dirty_after = capture_git_status_after(out_dir)
+        source_dirty_after = [
+            line for line in dirty_after
+            if not is_allowed_dirty(line)
+        ]
+        if source_dirty_after:
+            final_result_label = "INCONCLUSIVE"
+            blocking_issues.append("workspace ainda suja apos validacao: " + "; ".join(source_dirty_after))
         build_report(
             out_dir,
             args.target_commit,
@@ -1100,7 +1231,9 @@ def main() -> int:
             head,
             short_head,
             dirty_files,
+            transient_cleanup_result,
             source_markers_result,
+            legacy_emitters_result,
             generated_headers_result,
             build_info_result,
             include_chain_result,
@@ -1133,7 +1266,9 @@ def main() -> int:
             head,
             short_head,
             dirty_files or git_status_lines(),
+            transient_cleanup_result,
             source_markers_result,
+            legacy_emitters_result,
             generated_headers_result,
             build_info_result,
             include_chain_result,
