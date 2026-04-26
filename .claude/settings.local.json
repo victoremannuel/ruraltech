@@ -30,7 +30,8 @@
       "Bash(rtk git:*)",
       "Bash(supabase functions:*)",
       "Bash(python3:*)",
-      "Bash(rtk pip:*)"
+      "Bash(rtk pip:*)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
