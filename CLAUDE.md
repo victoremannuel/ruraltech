@@ -1,6 +1,6 @@
 # Instructions
 
-## design
+## skill /design
 
 **Quando usar esta skill:** sempre que for solicitado criar, alterar, refatorar ou revisar QUALQUER tela, componente, widget ou elemento visual do app RuralTech (`app/lib/`). Esta skill é a fonte de verdade para o redesign v2.
 
