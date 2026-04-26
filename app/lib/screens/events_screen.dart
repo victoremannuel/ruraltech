@@ -88,6 +88,56 @@ class _EventsScreenState extends State<EventsScreen> {
     return '$d/$m $hh:$mm';
   }
 
+  void _openEvent(Map<String, dynamic> event, RTEventSeverity severity) {
+    final deviceId = (event['deviceId'] ?? '').toString().trim();
+    final type = _titleFor(event);
+    final ts = _timestampFor(event);
+    final detail = [
+      if (deviceId.isNotEmpty) 'Coleira: $deviceId',
+      if (ts.isNotEmpty) ts,
+    ].join(' · ');
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(type,
+                  style: Theme.of(ctx)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w600)),
+              if (detail.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(detail,
+                    style: Theme.of(ctx)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Colors.black54)),
+              ],
+              const SizedBox(height: 16),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.check_circle_outline),
+                title: const Text('Marcar como lido'),
+                onTap: () => Navigator.pop(ctx),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.notifications_off_outlined),
+                title: const Text('Silenciar'),
+                onTap: () => Navigator.pop(ctx),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
@@ -151,81 +201,97 @@ class _EventsScreenState extends State<EventsScreen> {
             }
           }).toList();
 
-          return CustomScrollView(
-            slivers: [
-              SliverAppBar(
-                pinned: true,
-                backgroundColor: RTColors.bg,
-                surfaceTintColor: Colors.transparent,
-                title: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('Eventos',
-                        style: RTTypography.h2.copyWith(fontSize: 24)),
-                    Text('Últimas 24 horas',
-                        style: RTTypography.bodySmall
-                            .copyWith(color: RTColors.inkSoft)),
-                  ],
+          return RefreshIndicator(
+            onRefresh: () async =>
+                await Future.delayed(const Duration(milliseconds: 500)),
+            child: CustomScrollView(
+              slivers: [
+                SliverAppBar(
+                  pinned: true,
+                  backgroundColor: RTColors.bg,
+                  surfaceTintColor: Colors.transparent,
+                  title: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('Eventos',
+                          style: RTTypography.h2.copyWith(fontSize: 24)),
+                      Text('Últimas 24 horas',
+                          style: RTTypography.bodySmall
+                              .copyWith(color: RTColors.inkSoft)),
+                    ],
+                  ),
                 ),
-              ),
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                sliver: SliverToBoxAdapter(
-                  child: Row(children: [
-                    Expanded(
-                      child: _CounterCard(
-                        value: criticalCount,
-                        label: 'Críticos',
-                        tone: RTColors.danger,
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  sliver: SliverToBoxAdapter(
+                    child: Row(children: [
+                      Expanded(
+                        child: _CounterCard(
+                          value: criticalCount,
+                          label: 'Críticos',
+                          tone: RTColors.danger,
+                          selected: _filter == _EventFilter.critical,
+                          onTap: () => setState(() => _filter =
+                              _filter == _EventFilter.critical
+                                  ? _EventFilter.all
+                                  : _EventFilter.critical),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _CounterCard(
-                        value: warnCount + okCount,
-                        label: 'Informativos',
-                        tone: RTColors.info,
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _CounterCard(
+                          value: warnCount + okCount,
+                          label: 'Informativos',
+                          tone: RTColors.info,
+                          selected: _filter == _EventFilter.ok ||
+                              _filter == _EventFilter.warn,
+                          onTap: () => setState(() => _filter =
+                              _filter == _EventFilter.ok
+                                  ? _EventFilter.all
+                                  : _EventFilter.ok),
+                        ),
                       ),
-                    ),
-                  ]),
+                    ]),
+                  ),
                 ),
-              ),
-              const SliverToBoxAdapter(child: SizedBox(height: 4)),
-              SliverToBoxAdapter(
-                child: _buildFilters(
-                    criticalCount, warnCount, okCount, withSeverity.length),
-              ),
-              filtered.isEmpty
-                  ? SliverFillRemaining(
-                      hasScrollBody: false,
-                      child: _buildEmpty(),
-                    )
-                  : SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-                      sliver: SliverList.separated(
-                        itemCount: filtered.length,
-                        separatorBuilder: (_, __) =>
-                            const SizedBox(height: 10),
-                        itemBuilder: (_, i) {
-                          final e = filtered[i];
-                          final deviceId =
-                              (e.event['deviceId'] ?? '').toString();
-                          return RTEventCard(
-                            title: _titleFor(e.event),
-                            severity: e.severity,
-                            subtitle: _subtitleFor(e.event).isEmpty
-                                ? null
-                                : _subtitleFor(e.event),
-                            deviceId: deviceId.isEmpty ? null : deviceId,
-                            timestamp: _timestampFor(e.event),
-                            live: i == 0 &&
-                                e.severity == RTEventSeverity.danger,
-                          );
-                        },
+                const SliverToBoxAdapter(child: SizedBox(height: 4)),
+                SliverToBoxAdapter(
+                  child: _buildFilters(
+                      criticalCount, warnCount, okCount, withSeverity.length),
+                ),
+                filtered.isEmpty
+                    ? SliverFillRemaining(
+                        hasScrollBody: false,
+                        child: _buildEmpty(),
+                      )
+                    : SliverPadding(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+                        sliver: SliverList.separated(
+                          itemCount: filtered.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 10),
+                          itemBuilder: (_, i) {
+                            final e = filtered[i];
+                            final deviceId =
+                                (e.event['deviceId'] ?? '').toString();
+                            return RTEventCard(
+                              title: _titleFor(e.event),
+                              severity: e.severity,
+                              subtitle: _subtitleFor(e.event).isEmpty
+                                  ? null
+                                  : _subtitleFor(e.event),
+                              deviceId: deviceId.isEmpty ? null : deviceId,
+                              timestamp: _timestampFor(e.event),
+                              live: i == 0 &&
+                                  e.severity == RTEventSeverity.danger,
+                              onTap: () => _openEvent(e.event, e.severity),
+                            );
+                          },
+                        ),
                       ),
-                    ),
-            ],
+              ],
+            ),
           );
         },
       ),
@@ -368,20 +434,28 @@ class _CounterCard extends StatelessWidget {
     required this.value,
     required this.label,
     required this.tone,
+    this.selected = false,
+    this.onTap,
   });
 
   final int value;
   final String label;
   final Color tone;
+  final bool selected;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+      duration: const Duration(milliseconds: 160),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: RTColors.bg,
+        color: selected ? tone.withValues(alpha: 0.08) : RTColors.bg,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: RTColors.hairSoft),
+        border: Border.all(
+            color: selected ? tone.withValues(alpha: 0.4) : RTColors.hairSoft),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -397,6 +471,7 @@ class _CounterCard extends StatelessWidget {
           ),
         ],
       ),
-    );
+      ),  // AnimatedContainer
+    );  // GestureDetector
   }
 }

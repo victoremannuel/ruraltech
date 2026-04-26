@@ -36,6 +36,7 @@ import 'rural_property_editor_screen.dart';
 import 'add_collar_screen.dart';
 import 'add_gateway_screen.dart';
 import 'device_details_screen.dart';
+import 'events_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -66,6 +67,8 @@ class _HomeScreenState extends State<HomeScreen> {
   List<LatLng> _selectedPolygonPoints = const [];
   final Map<String, DeviceMapTelemetrySample> _latestTelemetryByDeviceId = {};
   List<DeviceModel> _latestKnownDevices = const <DeviceModel>[];
+  String _mapChipFilter = 'all'; // 'all' | 'collars' | 'gateways'
+  String? _selectedPropertyName;
 
   // Stream cache: evita que build() recrie streams a cada rebuild,
   // o que causava StreamBuilder re-subscriptions e reset do mapa.
@@ -193,6 +196,35 @@ class _HomeScreenState extends State<HomeScreen> {
     var normalized = heading % 360.0;
     if (normalized < 0) normalized += 360.0;
     return normalized;
+  }
+
+  Future<void> _openPropertySearch(
+      List<Map<String, dynamic>> properties) async {
+    final selected = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => _PropertyPickerSheet(properties: properties),
+    );
+    if (selected == null || !mounted) return;
+
+    final name = (selected['name'] ?? '').toString();
+    final rawPoints = selected['points'] as List<dynamic>?;
+    if (rawPoints == null || rawPoints.isEmpty) return;
+
+    final latLngs = rawPoints
+        .whereType<List>()
+        .where((p) => p.length >= 2)
+        .map((p) => LatLng((p[0] as num).toDouble(), (p[1] as num).toDouble()))
+        .toList();
+    if (latLngs.isEmpty) return;
+
+    setState(() => _selectedPropertyName = name);
+    _mapController.fitCamera(
+      CameraFit.bounds(
+        bounds: LatLngBounds.fromPoints(latLngs),
+        padding: const EdgeInsets.all(48),
+      ),
+    );
   }
 
   double _angularDiffDegrees(double a, double b) {
@@ -1620,11 +1652,13 @@ class _HomeScreenState extends State<HomeScreen> {
                               return selectedGatewayIds.contains(gatewayId);
                             }).toList();
 
-                      final markers = <Marker>[];
+                      final collarMarkers = <Marker>[];
+                      final gatewayMarkers = <Marker>[];
+                      List<Marker> markers = const [];
                       final polygons = <Polygon>[];
                       final areaLabelMarkers = <Marker>[];
                       try {
-                        markers.addAll(
+                        collarMarkers.addAll(
                           devices.map((d) {
                             final position = _resolvedMarkerTelemetryForDevice(
                               d,
@@ -1658,7 +1692,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         for (final g in gateways) {
                           final point = _gatewayMarkerPoint(g);
                           if (point == null) continue;
-                          markers.add(
+                          gatewayMarkers.add(
                             Marker(
                               point: point,
                               width: 40,
@@ -1675,6 +1709,12 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           );
                         }
+
+                        markers = switch (_mapChipFilter) {
+                          'collars' => collarMarkers,
+                          'gateways' => gatewayMarkers,
+                          _ => [...collarMarkers, ...gatewayMarkers],
+                        };
 
                         for (final a in filteredAreas) {
                           final raw = (a['perimeter'] as List?) ?? const [];
@@ -1955,10 +1995,25 @@ class _HomeScreenState extends State<HomeScreen> {
                                           child: _MapSearchBar(
                                             count: devices.length +
                                                 gateways.length,
+                                            onTap: () => _openPropertySearch(
+                                                allProperties),
+                                            selectedPropertyName:
+                                                _selectedPropertyName,
+                                            onClear: () => setState(
+                                                () => _selectedPropertyName =
+                                                    null),
                                           ),
                                         ),
                                         const SizedBox(width: 12),
-                                        const _NotifBell(),
+                                        _NotifBell(
+                                          onTap: () => Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (_) =>
+                                                  const EventsScreen(),
+                                            ),
+                                          ),
+                                        ),
                                       ],
                                     ),
                                   ),
@@ -1984,8 +2039,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                         count: gateways.length,
                                       ),
                                     ],
-                                    selectedIds: const {'all'},
-                                    onToggle: (_) {},
+                                    selectedIds: {_mapChipFilter},
+                                    onToggle: (id) => setState(
+                                        () => _mapChipFilter = id),
                                   ),
                                   const SizedBox(height: 8),
                                 ],
@@ -2000,6 +2056,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               child: _MapControlsStack(
                                 onNorth: _resetNorthUp,
                                 onLocate: _centerOnUser,
+                                onLayers: () => AppFeedback.warning(
+                                    'Seleção de camadas em breve.'),
                               ),
                             ),
                           ),
@@ -2148,46 +2206,86 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class _MapSearchBar extends StatelessWidget {
-  const _MapSearchBar({required this.count});
+  const _MapSearchBar({
+    required this.count,
+    this.onTap,
+    this.selectedPropertyName,
+    this.onClear,
+  });
 
   final int count;
+  final VoidCallback? onTap;
+  final String? selectedPropertyName;
+  final VoidCallback? onClear;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 48,
-      decoration: BoxDecoration(
-        color: RTColors.bg.withValues(alpha: 0.96),
-        borderRadius: BorderRadius.circular(RTRadius.r3),
-        border: Border.all(color: RTColors.hair),
-        boxShadow: RTElevation.sh1,
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        child: Row(
-          children: [
-            Icon(Icons.search, size: 20, color: RTColors.inkMute),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'Buscar propriedade…',
-                style: RTTypography.body.copyWith(color: RTColors.inkMute),
+    final hasSelection = selectedPropertyName != null;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: 48,
+        decoration: BoxDecoration(
+          color: RTColors.bg.withValues(alpha: 0.96),
+          borderRadius: BorderRadius.circular(RTRadius.r3),
+          border: Border.all(
+            color: hasSelection ? RTColors.primary : RTColors.hair,
+          ),
+          boxShadow: RTElevation.sh1,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.only(left: 14, right: 4),
+          child: Row(
+            children: [
+              Icon(
+                Icons.search,
+                size: 20,
+                color: hasSelection ? RTColors.primary : RTColors.inkMute,
               ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: RTColors.bgAlt,
-                borderRadius: BorderRadius.circular(RTRadius.rFull),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  hasSelection
+                      ? selectedPropertyName!
+                      : 'Buscar propriedade…',
+                  style: RTTypography.body.copyWith(
+                    color: hasSelection ? RTColors.ink : RTColors.inkMute,
+                    fontWeight: hasSelection
+                        ? FontWeight.w600
+                        : FontWeight.normal,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-              child: Text(
-                '$count',
-                style: RTTypography.mono.copyWith(fontSize: 11),
-              ),
-            ),
-            const SizedBox(width: 6),
-            Icon(Icons.keyboard_arrow_down, size: 18, color: RTColors.inkSoft),
-          ],
+              if (hasSelection)
+                GestureDetector(
+                  onTap: onClear,
+                  behavior: HitTestBehavior.opaque,
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Icon(Icons.close,
+                        size: 18, color: RTColors.inkSoft),
+                  ),
+                )
+              else ...[
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: RTColors.bgAlt,
+                    borderRadius: BorderRadius.circular(RTRadius.rFull),
+                  ),
+                  child: Text(
+                    '$count',
+                    style: RTTypography.mono.copyWith(fontSize: 11),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Icon(Icons.keyboard_arrow_down,
+                    size: 18, color: RTColors.inkSoft),
+              ],
+            ],
+          ),
         ),
       ),
     );
@@ -2195,23 +2293,28 @@ class _MapSearchBar extends StatelessWidget {
 }
 
 class _NotifBell extends StatelessWidget {
-  const _NotifBell();
+  const _NotifBell({this.onTap});
+
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 48,
-      height: 48,
-      decoration: BoxDecoration(
-        color: RTColors.bg.withValues(alpha: 0.96),
-        borderRadius: BorderRadius.circular(RTRadius.r3),
-        border: Border.all(color: RTColors.hair),
-        boxShadow: RTElevation.sh1,
-      ),
-      child: Icon(
-        Icons.notifications_outlined,
-        size: 22,
-        color: RTColors.inkSoft,
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          color: RTColors.bg.withValues(alpha: 0.96),
+          borderRadius: BorderRadius.circular(RTRadius.r3),
+          border: Border.all(color: RTColors.hair),
+          boxShadow: RTElevation.sh1,
+        ),
+        child: Icon(
+          Icons.notifications_outlined,
+          size: 22,
+          color: RTColors.inkSoft,
+        ),
       ),
     );
   }
@@ -2221,17 +2324,19 @@ class _MapControlsStack extends StatelessWidget {
   const _MapControlsStack({
     required this.onNorth,
     required this.onLocate,
+    required this.onLayers,
   });
 
   final VoidCallback onNorth;
   final VoidCallback onLocate;
+  final VoidCallback onLayers;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _controlBtn(Icons.layers_outlined, 'Camadas', () {}),
+        _controlBtn(Icons.layers_outlined, 'Camadas', onLayers),
         _controlBtn(Icons.my_location, 'Centralizar', onLocate),
         _controlBtn(Icons.explore_outlined, 'Norte', onNorth),
       ],
@@ -2248,13 +2353,161 @@ class _MapControlsStack extends StatelessWidget {
           height: 44,
           margin: const EdgeInsets.symmetric(vertical: 4),
           decoration: BoxDecoration(
-            color: RTColors.bg,
+            color: RTColors.primary,
             borderRadius: BorderRadius.circular(RTRadius.r3),
-            border: Border.all(color: RTColors.hair),
             boxShadow: RTElevation.sh1,
           ),
-          child: Icon(icon, size: 22, color: RTColors.inkSoft),
+          child: Icon(icon, size: 22, color: Colors.white),
         ),
+      ),
+    );
+  }
+}
+
+class _PropertyPickerSheet extends StatefulWidget {
+  const _PropertyPickerSheet({required this.properties});
+
+  final List<Map<String, dynamic>> properties;
+
+  @override
+  State<_PropertyPickerSheet> createState() => _PropertyPickerSheetState();
+}
+
+class _PropertyPickerSheetState extends State<_PropertyPickerSheet> {
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<Map<String, dynamic>> get _filtered {
+    if (_query.isEmpty) return widget.properties;
+    final q = _query.toLowerCase();
+    return widget.properties
+        .where((p) =>
+            (p['name'] ?? '').toString().toLowerCase().contains(q))
+        .toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final screen = MediaQuery.of(context).size;
+    final filtered = _filtered;
+
+    return SizedBox(
+      height: screen.height * 0.6,
+      child: Column(
+        children: [
+          // Handle
+          Padding(
+            padding: const EdgeInsets.only(top: 12, bottom: 8),
+            child: Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: RTColors.hair,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          // Search field
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: TextField(
+              controller: _searchCtrl,
+              autofocus: true,
+              decoration: InputDecoration(
+                hintText: 'Buscar propriedade…',
+                hintStyle:
+                    RTTypography.body.copyWith(color: RTColors.inkMute),
+                prefixIcon:
+                    Icon(Icons.search, size: 20, color: RTColors.inkMute),
+                suffixIcon: _query.isNotEmpty
+                    ? IconButton(
+                        icon:
+                            Icon(Icons.close, size: 18, color: RTColors.inkSoft),
+                        onPressed: () {
+                          _searchCtrl.clear();
+                          setState(() => _query = '');
+                        },
+                      )
+                    : null,
+                filled: true,
+                fillColor: RTColors.bgAlt,
+                contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(RTRadius.r3),
+                  borderSide: BorderSide(color: RTColors.hair),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(RTRadius.r3),
+                  borderSide: BorderSide(color: RTColors.hair),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(RTRadius.r3),
+                  borderSide: BorderSide(color: RTColors.primary),
+                ),
+              ),
+              onChanged: (v) => setState(() => _query = v),
+            ),
+          ),
+          // List
+          Expanded(
+            child: filtered.isEmpty
+                ? Center(
+                    child: Text(
+                      'Nenhuma propriedade encontrada.',
+                      style: RTTypography.bodySmall
+                          .copyWith(color: RTColors.inkMute),
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: filtered.length,
+                    itemBuilder: (ctx, i) {
+                      final p = filtered[i];
+                      final name =
+                          (p['name'] ?? 'Propriedade').toString();
+                      final rawPoints = p['points'] as List<dynamic>?;
+                      final hasPolygon =
+                          rawPoints != null && rawPoints.isNotEmpty;
+                      return ListTile(
+                        leading: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: RTColors.primarySoft,
+                            borderRadius:
+                                BorderRadius.circular(RTRadius.r2),
+                          ),
+                          child: Icon(
+                            Icons.crop_square_outlined,
+                            size: 20,
+                            color: RTColors.primary,
+                          ),
+                        ),
+                        title: Text(name, style: RTTypography.body),
+                        subtitle: hasPolygon
+                            ? Text(
+                                '${rawPoints.length} vértices',
+                                style: RTTypography.bodySmall
+                                    .copyWith(color: RTColors.inkMute),
+                              )
+                            : Text(
+                                'Sem polígono definido',
+                                style: RTTypography.bodySmall
+                                    .copyWith(color: RTColors.inkMute),
+                              ),
+                        trailing: Icon(Icons.chevron_right,
+                            color: RTColors.inkSoft),
+                        onTap: () => Navigator.pop(ctx, p),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }

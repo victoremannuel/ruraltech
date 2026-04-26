@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../components/domain/rt_action_row.dart';
@@ -10,6 +11,7 @@ import '../design/tokens.dart';
 import '../design/typography.dart';
 import '../models/device_model.dart';
 import '../services/cloud_service.dart';
+import '../utils/top_feedback.dart';
 import 'collar_log_screen.dart';
 import 'geofence_screen.dart';
 import 'herding_screen.dart';
@@ -81,8 +83,44 @@ class DeviceDetailsScreen extends StatelessWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.more_horiz),
-            onPressed: () {},
             tooltip: 'Mais',
+            onPressed: () {
+              HapticFeedback.selectionClick();
+              showModalBottomSheet<void>(
+                context: context,
+                builder: (ctx) => SafeArea(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ListTile(
+                        leading: const Icon(Icons.drive_file_rename_outline),
+                        title: const Text('Renomear'),
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          AppFeedback.warning('Renomeação disponível em breve.');
+                        },
+                      ),
+                      ListTile(
+                        leading: Icon(Icons.delete_outline,
+                            color: RTColors.danger),
+                        title: Text('Remover coleira',
+                            style: TextStyle(color: RTColors.danger)),
+                        onTap: () => Navigator.pop(ctx),
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.share_outlined),
+                        title: const Text('Compartilhar diagnóstico'),
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          AppFeedback.warning(
+                              'Compartilhamento disponível em breve.');
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
           ),
         ],
       ),

@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
@@ -118,10 +119,42 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
     }
   }
 
+  Future<bool> _confirmDiscard(BuildContext context) async {
+    if (_polygonPoints.isEmpty) return true;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Descartar alterações?'),
+        content: const Text(
+            'Você tem vértices não publicados. Deseja sair sem publicar a cerca?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Continuar editando'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style:
+                TextButton.styleFrom(foregroundColor: RTColors.danger),
+            child: const Text('Descartar'),
+          ),
+        ],
+      ),
+    );
+    return result == true;
+  }
+
   @override
   Widget build(BuildContext context) {
     final topPad = MediaQuery.of(context).padding.top;
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        final ok = await _confirmDiscard(context);
+        if (ok && context.mounted) Navigator.pop(context);
+      },
+      child: Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
         backgroundColor: Colors.black.withValues(alpha: 0.45),
@@ -132,6 +165,13 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
         titleTextStyle:
             RTTypography.h3.copyWith(color: Colors.white, fontSize: 17),
         title: Text('Geofence · ${widget.deviceId}'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () async {
+            final ok = await _confirmDiscard(context);
+            if (ok && context.mounted) Navigator.pop(context);
+          },
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -140,8 +180,72 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.more_horiz),
-            onPressed: () {},
             tooltip: 'Mais',
+            onPressed: () {
+              HapticFeedback.selectionClick();
+              showModalBottomSheet<void>(
+                context: context,
+                builder: (ctx) => SafeArea(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ListTile(
+                        leading: const Icon(Icons.file_upload_outlined),
+                        title: const Text('Importar GPX'),
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          AppFeedback.warning(
+                              'Importação GPX disponível em breve.');
+                        },
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.file_download_outlined),
+                        title: const Text('Exportar'),
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          AppFeedback.warning(
+                              'Exportação disponível em breve.');
+                        },
+                      ),
+                      ListTile(
+                        leading:
+                            Icon(Icons.delete_sweep_outlined, color: RTColors.danger),
+                        title: Text('Limpar tudo',
+                            style: TextStyle(color: RTColors.danger)),
+                        onTap: () async {
+                          Navigator.pop(ctx);
+                          if (_polygonPoints.isEmpty) return;
+                          final ok = await showDialog<bool>(
+                            context: context,
+                            builder: (d) => AlertDialog(
+                              title: const Text('Limpar todos os vértices?'),
+                              actions: [
+                                TextButton(
+                                  onPressed: () =>
+                                      Navigator.pop(d, false),
+                                  child: const Text('Cancelar'),
+                                ),
+                                TextButton(
+                                  onPressed: () =>
+                                      Navigator.pop(d, true),
+                                  style: TextButton.styleFrom(
+                                      foregroundColor: RTColors.danger),
+                                  child: const Text('Limpar'),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (ok == true && mounted) {
+                            HapticFeedback.mediumImpact();
+                            setState(_polygonPoints.clear);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
           ),
         ],
         flexibleSpace: ClipRect(
@@ -235,7 +339,8 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
           ),
         ],
       ),
-    );
+    ),  // Scaffold
+    );  // PopScope
   }
 
 
@@ -243,25 +348,32 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
     final markers = <Marker>[];
     for (var i = 0; i < _polygonPoints.length; i++) {
       final point = _polygonPoints[i];
+      final idx = i;
       markers.add(
         Marker(
           point: point,
           width: 28,
           height: 28,
-          child: Container(
-            decoration: BoxDecoration(
-              color: RTColors.primaryDeep,
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white, width: 2),
-              boxShadow: RTElevation.sh2,
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              '${i + 1}',
-              style: RTTypography.monoSmall.copyWith(
-                color: RTColors.onPrimary,
-                fontSize: 11,
-                height: 1.0,
+          child: GestureDetector(
+            onLongPress: () {
+              HapticFeedback.mediumImpact();
+              setState(() => _polygonPoints.removeAt(idx));
+            },
+            child: Container(
+              decoration: BoxDecoration(
+                color: RTColors.primaryDeep,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+                boxShadow: RTElevation.sh2,
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                '${idx + 1}',
+                style: RTTypography.monoSmall.copyWith(
+                  color: RTColors.onPrimary,
+                  fontSize: 11,
+                  height: 1.0,
+                ),
               ),
             ),
           ),
@@ -307,7 +419,33 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
                     icon: Icons.delete_outline,
                     label: 'Limpar',
                     onPressed: hasPoints
-                        ? () => setState(_polygonPoints.clear)
+                        ? () async {
+                            final ok = await showDialog<bool>(
+                              context: context,
+                              builder: (d) => AlertDialog(
+                                title:
+                                    const Text('Limpar todos os vértices?'),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(d, false),
+                                    child: const Text('Cancelar'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(d, true),
+                                    style: TextButton.styleFrom(
+                                        foregroundColor: RTColors.danger),
+                                    child: const Text('Limpar'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (ok == true && mounted) {
+                              HapticFeedback.mediumImpact();
+                              setState(_polygonPoints.clear);
+                            }
+                          }
                         : null,
                   ),
                 ),

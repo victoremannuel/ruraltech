@@ -399,20 +399,59 @@ class _ProfileScreenState extends State<ProfileScreen> {
           padding: EdgeInsets.zero,
           child: Column(children: [
             _accountRow(
-                icon: Icons.person_outline, title: 'Dados pessoais'),
+              icon: Icons.person_outline,
+              title: 'Dados pessoais',
+              onTap: () =>
+                  AppFeedback.warning('Dados pessoais disponíveis em breve.'),
+            ),
             Divider(color: RTColors.hairSoft, height: 1, indent: 60),
             _accountRow(
-                icon: Icons.notifications_outlined, title: 'Notificações'),
+              icon: Icons.notifications_outlined,
+              title: 'Notificações',
+              onTap: () =>
+                  AppFeedback.warning('Configurações de notificação em breve.'),
+            ),
             Divider(color: RTColors.hairSoft, height: 1, indent: 60),
-            _accountRow(icon: Icons.sync, title: 'Sincronização'),
+            _accountRow(
+              icon: Icons.sync,
+              title: 'Sincronização',
+              onTap: () =>
+                  AppFeedback.warning('Sincronização disponível em breve.'),
+            ),
             Divider(color: RTColors.hairSoft, height: 1, indent: 60),
-            _accountRow(icon: Icons.info_outline, title: 'Sobre o app'),
+            _accountRow(
+              icon: Icons.info_outline,
+              title: 'Sobre o app',
+              onTap: () =>
+                  AppFeedback.warning('Sobre o app disponível em breve.'),
+            ),
             Divider(color: RTColors.hairSoft, height: 1, indent: 60),
             _accountRow(
               key: const Key('profile_sign_out_button'),
               icon: Icons.logout,
               title: 'Sair',
-              onTap: () => auth.signOut(),
+              onTap: () async {
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('Sair'),
+                    content: const Text('Deseja encerrar a sessão?'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('Cancelar'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        style: TextButton.styleFrom(
+                            foregroundColor: RTColors.danger),
+                        child: const Text('Sair'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirmed == true && context.mounted) auth.signOut();
+              },
               showChevron: false,
               danger: true,
             ),
