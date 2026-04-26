@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:provider/provider.dart';
@@ -94,8 +95,9 @@ Future<void> main() async {
   }
 
   // WorkManager é exclusivo do Android. Guard de plataforma + try-catch evitam
-  // que uma PlatformException impeça o runApp() de ser chamado.
-  if (Platform.isAndroid) {
+  // que uma PlatformException impeça o runApp() de ser chamado. kIsWeb é
+  // checado primeiro para não tocar em dart:io Platform na web.
+  if (!kIsWeb && Platform.isAndroid) {
     try {
       await Workmanager().initialize(callbackDispatcher);
       await Workmanager().registerPeriodicTask(
