@@ -2050,7 +2050,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           Positioned(
                             left: 12,
-                            bottom: 96,
+                            bottom: 8,
                             child: _MapControlsStack(
                               onNorth: _resetNorthUp,
                               onLocate: _centerOnUser,
@@ -2101,7 +2101,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           Positioned(
                             right: 16,
-                            bottom: 96,
+                            bottom: 8,
                             child: _buildHomeFab(context, auth),
                           ),
                         ],
