@@ -269,77 +269,89 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
       children: [
         _identityCard(auth),
-        const SizedBox(height: RTSpacing.x4),
-        _sectionLabel('Filtros do mapa'),
+        const SizedBox(height: RTSpacing.x6),
+        _eyebrow('Filtros do mapa'),
         const SizedBox(height: RTSpacing.x2),
-        _filterCard(
-          sectionKey: const Key('profile_properties_section'),
-          icon: Icons.landscape_outlined,
-          title: 'Propriedades',
-          selectedCount: _selectedPropertyIds.length,
-          totalCount: properties.length,
-          children: properties
-              .map((p) => _filterTile(
-                    id: _normalizeId(p['id']),
-                    selected: _selectedPropertyIds,
-                    title: (p['name'] ?? p['id']).toString(),
-                    subtitle:
-                        'Proprietário: ${userEmailFromUid(p['createdByUid'])}',
-                  ))
-              .toList(),
+        RTCard(
+          padding: EdgeInsets.zero,
+          child: Theme(
+            data: Theme.of(context).copyWith(
+              dividerColor: Colors.transparent,
+              splashColor: Colors.transparent,
+              highlightColor: Colors.transparent,
+            ),
+            child: Column(children: [
+              _filterRow(
+                sectionKey: const Key('profile_properties_section'),
+                icon: Icons.landscape_outlined,
+                title: 'Propriedades',
+                selectedCount: _selectedPropertyIds.length,
+                totalCount: properties.length,
+                children: properties
+                    .map((p) => _filterTile(
+                          id: _normalizeId(p['id']),
+                          selected: _selectedPropertyIds,
+                          title: (p['name'] ?? p['id']).toString(),
+                          subtitle:
+                              'Proprietário: ${userEmailFromUid(p['createdByUid'])}',
+                        ))
+                    .toList(),
+              ),
+              Divider(color: RTColors.hairSoft, height: 1, indent: 60),
+              _filterRow(
+                sectionKey: const Key('profile_areas_section'),
+                icon: Icons.polyline_outlined,
+                title: 'Áreas',
+                selectedCount: _selectedAreaIds.length,
+                totalCount: areas.length,
+                children: areas.map((a) {
+                  final id = _normalizeId(a['id']);
+                  final short = id.length <= 6 ? id : id.substring(0, 6);
+                  return _filterTile(
+                    id: id,
+                    selected: _selectedAreaIds,
+                    title: 'Área ${short.isEmpty ? '—' : short}',
+                    subtitle: 'Fazenda: ${propertyNameFromId(a['propertyId'])}',
+                  );
+                }).toList(),
+              ),
+              Divider(color: RTColors.hairSoft, height: 1, indent: 60),
+              _filterRow(
+                sectionKey: const Key('profile_collars_section'),
+                icon: Icons.pets_outlined,
+                title: 'Coleiras',
+                selectedCount: _selectedCollarIds.length,
+                totalCount: devices.length,
+                children: devices
+                    .map((d) => _filterTile(
+                          id: _normalizeId(d.id),
+                          selected: _selectedCollarIds,
+                          title: d.name,
+                          subtitle: 'Dono: ${userEmailFromUid(d.ownerUid)}',
+                        ))
+                    .toList(),
+              ),
+              Divider(color: RTColors.hairSoft, height: 1, indent: 60),
+              _filterRow(
+                sectionKey: const Key('profile_gateways_section'),
+                icon: Icons.wifi,
+                title: 'Gateways',
+                selectedCount: _selectedGatewayIds.length,
+                totalCount: gateways.length,
+                children: gateways
+                    .map((g) => _filterTile(
+                          id: _normalizeId(g['id']),
+                          selected: _selectedGatewayIds,
+                          title: (g['name'] ?? g['id']).toString(),
+                          subtitle:
+                              'Fazenda: ${propertyNameFromId(g['propertyId'])}',
+                        ))
+                    .toList(),
+              ),
+            ]),
+          ),
         ),
-        const SizedBox(height: RTSpacing.x2),
-        _filterCard(
-          sectionKey: const Key('profile_areas_section'),
-          icon: Icons.polyline_outlined,
-          title: 'Áreas',
-          selectedCount: _selectedAreaIds.length,
-          totalCount: areas.length,
-          children: areas.map((a) {
-            final id = _normalizeId(a['id']);
-            final short = id.length <= 6 ? id : id.substring(0, 6);
-            return _filterTile(
-              id: id,
-              selected: _selectedAreaIds,
-              title: 'Área ${short.isEmpty ? '—' : short}',
-              subtitle: 'Fazenda: ${propertyNameFromId(a['propertyId'])}',
-            );
-          }).toList(),
-        ),
-        const SizedBox(height: RTSpacing.x2),
-        _filterCard(
-          sectionKey: const Key('profile_collars_section'),
-          icon: Icons.pets_outlined,
-          title: 'Coleiras',
-          selectedCount: _selectedCollarIds.length,
-          totalCount: devices.length,
-          children: devices
-              .map((d) => _filterTile(
-                    id: _normalizeId(d.id),
-                    selected: _selectedCollarIds,
-                    title: d.name,
-                    subtitle: 'Dono: ${userEmailFromUid(d.ownerUid)}',
-                  ))
-              .toList(),
-        ),
-        const SizedBox(height: RTSpacing.x2),
-        _filterCard(
-          sectionKey: const Key('profile_gateways_section'),
-          icon: Icons.wifi,
-          title: 'Gateways',
-          selectedCount: _selectedGatewayIds.length,
-          totalCount: gateways.length,
-          children: gateways
-              .map((g) => _filterTile(
-                    id: _normalizeId(g['id']),
-                    selected: _selectedGatewayIds,
-                    title: (g['name'] ?? g['id']).toString(),
-                    subtitle:
-                        'Fazenda: ${propertyNameFromId(g['propertyId'])}',
-                  ))
-              .toList(),
-        ),
-        const SizedBox(height: RTSpacing.x4),
+        const SizedBox(height: RTSpacing.x3),
         RTButton(
           key: const Key('profile_apply_filters_button'),
           label: 'Aplicar filtros',
@@ -381,70 +393,97 @@ class _ProfileScreenState extends State<ProfileScreen> {
           },
         ),
         const SizedBox(height: RTSpacing.x6),
-        _sectionLabel('Conta'),
+        _eyebrow('Conta'),
         const SizedBox(height: RTSpacing.x2),
-        RTButton(
-          key: const Key('profile_sign_out_button'),
-          label: 'Sair da conta',
-          icon: Icons.logout,
-          variant: RTButtonVariant.danger,
-          fullWidth: true,
-          onPressed: () => auth.signOut(),
+        RTCard(
+          padding: EdgeInsets.zero,
+          child: Column(children: [
+            _accountRow(
+                icon: Icons.person_outline, title: 'Dados pessoais'),
+            Divider(color: RTColors.hairSoft, height: 1, indent: 60),
+            _accountRow(
+                icon: Icons.notifications_outlined, title: 'Notificações'),
+            Divider(color: RTColors.hairSoft, height: 1, indent: 60),
+            _accountRow(icon: Icons.sync, title: 'Sincronização'),
+            Divider(color: RTColors.hairSoft, height: 1, indent: 60),
+            _accountRow(icon: Icons.info_outline, title: 'Sobre o app'),
+            Divider(color: RTColors.hairSoft, height: 1, indent: 60),
+            _accountRow(
+              key: const Key('profile_sign_out_button'),
+              icon: Icons.logout,
+              title: 'Sair',
+              onTap: () => auth.signOut(),
+              showChevron: false,
+              danger: true,
+            ),
+          ]),
         ),
       ],
     );
   }
 
   Widget _identityCard(AuthService auth) {
-    final email = auth.user?.email ?? 'Sem email';
-    final roleLabel = auth.isAdmin ? 'ADMIN' : 'OPERADOR';
+    final email = auth.user?.email ?? '';
+    final username = email.split('@').first;
+    final nameParts = username.split(RegExp(r'[._\-]')).where((p) => p.isNotEmpty).toList();
+    final displayName = nameParts
+        .map((p) => p[0].toUpperCase() + p.substring(1).toLowerCase())
+        .join(' ');
+    final initials = nameParts.take(2).map((p) => p[0].toUpperCase()).join();
+    final roleLabel = auth.isAdmin ? 'Admin' : 'Operador';
+
     return RTCard(
       padding: const EdgeInsets.all(RTSpacing.x4),
-      child: Row(
-        children: [
-          Container(
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(
-              color: RTColors.primarySoft,
-              borderRadius: BorderRadius.circular(RTRadius.rFull),
-            ),
-            alignment: Alignment.center,
-            child: Icon(Icons.person_outline,
-                color: RTColors.primary, size: 28),
+      child: Row(children: [
+        Container(
+          width: 56,
+          height: 56,
+          decoration: BoxDecoration(
+            color: RTColors.primarySoft,
+            shape: BoxShape.circle,
           ),
-          const SizedBox(width: RTSpacing.x3),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  email,
-                  style: RTTypography.h3.copyWith(fontSize: 18),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-                RTBadge(
-                  label: roleLabel,
-                  tone: auth.isAdmin ? RTTone.accent : RTTone.neutral,
-                  mono: true,
-                ),
-              ],
+          alignment: Alignment.center,
+          child: Text(
+            initials.isEmpty ? '?' : initials,
+            style: RTTypography.h3.copyWith(
+              color: RTColors.primaryDeep,
+              fontSize: 18,
             ),
           ),
-        ],
-      ),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                displayName.isNotEmpty ? displayName : email,
+                style: RTTypography.h3.copyWith(fontSize: 16),
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                email,
+                style: RTTypography.bodySmall.copyWith(color: RTColors.inkSoft),
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 6),
+              RTBadge(
+                label: roleLabel,
+                tone: auth.isAdmin ? RTTone.accent : RTTone.neutral,
+              ),
+            ],
+          ),
+        ),
+      ]),
     );
   }
 
-  Widget _sectionLabel(String label) {
-    return Padding(
-      padding: const EdgeInsets.only(left: RTSpacing.x1),
-      child: Text(label.toUpperCase(), style: RTTypography.eyebrow),
-    );
+  Widget _eyebrow(String label) {
+    return Text(label.toUpperCase(), style: RTTypography.eyebrow);
   }
 
-  Widget _filterCard({
+  Widget _filterRow({
     required Key sectionKey,
     required IconData icon,
     required String title,
@@ -455,40 +494,33 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final summary = selectedCount == 0
         ? 'Todos visíveis ($totalCount)'
         : '$selectedCount de $totalCount selecionados';
-    return RTCard(
-      padding: EdgeInsets.zero,
-      child: Theme(
-        data: Theme.of(context).copyWith(
-          dividerColor: Colors.transparent,
-          splashColor: Colors.transparent,
-          highlightColor: Colors.transparent,
-        ),
-        child: ExpansionTile(
-          key: sectionKey,
-          tilePadding: const EdgeInsets.symmetric(
-            horizontal: RTSpacing.x3,
-            vertical: RTSpacing.x1,
-          ),
-          childrenPadding: const EdgeInsets.only(
-            left: RTSpacing.x2,
-            right: RTSpacing.x2,
-            bottom: RTSpacing.x2,
-          ),
-          leading: Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: RTColors.bgSubtle,
-              borderRadius: BorderRadius.circular(RTRadius.r2),
-            ),
-            alignment: Alignment.center,
-            child: Icon(icon, size: 18, color: RTColors.inkSoft),
-          ),
-          title: Text(title, style: RTTypography.bodyStrong),
-          subtitle: Text(summary, style: RTTypography.bodySmall),
-          children: children,
-        ),
+    return ExpansionTile(
+      key: sectionKey,
+      tilePadding: const EdgeInsets.symmetric(
+        horizontal: RTSpacing.x4,
+        vertical: RTSpacing.x1,
       ),
+      childrenPadding: const EdgeInsets.only(
+        left: RTSpacing.x2,
+        right: RTSpacing.x2,
+        bottom: RTSpacing.x2,
+      ),
+      leading: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: RTColors.bgAlt,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        alignment: Alignment.center,
+        child: Icon(icon, size: 18, color: RTColors.inkSoft),
+      ),
+      title: Text(title, style: RTTypography.bodyStrong),
+      subtitle: Text(
+        summary,
+        style: RTTypography.bodySmall.copyWith(color: RTColors.inkSoft),
+      ),
+      children: children,
     );
   }
 
@@ -515,6 +547,53 @@ class _ProfileScreenState extends State<ProfileScreen> {
           selected.remove(id);
         }
       }),
+    );
+  }
+
+  Widget _accountRow({
+    Key? key,
+    required IconData icon,
+    required String title,
+    VoidCallback? onTap,
+    bool showChevron = true,
+    bool danger = false,
+  }) {
+    return InkWell(
+      key: key,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: RTSpacing.x4,
+          vertical: 14,
+        ),
+        child: Row(children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: danger ? RTColors.dangerSoft : RTColors.bgAlt,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            alignment: Alignment.center,
+            child: Icon(
+              icon,
+              size: 18,
+              color: danger ? RTColors.danger : RTColors.inkSoft,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              title,
+              style: RTTypography.bodyStrong.copyWith(
+                color: danger ? RTColors.danger : null,
+              ),
+            ),
+          ),
+          if (showChevron)
+            Icon(Icons.chevron_right, color: RTColors.inkMute, size: 20),
+        ]),
+      ),
     );
   }
 }
