@@ -1,6 +1,7 @@
 # ruraltech
 
 Monorepo com:
+
 - `coleira/`: firmware ESP32 da coleira
 - `gateway/`: firmware ESP32 do gateway
 - `app/`: aplicativo Flutter + Firebase
@@ -115,7 +116,7 @@ rtk arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs cole
 Upload:
 
 ```bash
-rtk arduino-cli upload -p /dev/cu.usbserial-1420 --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs coleira
+rtk arduino-cli upload -p /dev/cu.usbserial-1420 --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs --upload-property upload.speed=115200 coleira
 ```
 
 #### Gateway matriz
