@@ -262,6 +262,7 @@ struct Rpv2AwaitedResponse {
   bool ack = false;
   bool nack = false;
   bool applyStatus = false;
+  uint8_t responseMsgType = 0;
   uint16_t reasonCode = rpv2::REASON_NONE;
   uint16_t fragmentIndex = 0;
   uint16_t nextExpectedFragment = 0;
@@ -4447,6 +4448,7 @@ static bool decodeRpv2ResponseFrame(
 
   *out = Rpv2AwaitedResponse{};
   out->received = true;
+  out->responseMsgType = header.msgType;
   switch (header.msgType) {
     case rpv2::FENCE_ACK: {
       rpv2::AckBody body{};
@@ -4493,6 +4495,7 @@ static bool waitForRpv2Response(
     const char* commandId = nullptr) {
   const uint32_t startedAt = millis();
   uint32_t lastHeartbeatAt = startedAt;
+  const bool beginAckStage = stage && strcmp(stage, "begin_ack") == 0;
   while ((uint32_t)(millis() - startedAt) < timeoutMs) {
     feedWatchdogIfEnabled();
     const uint32_t nowMs = millis();
@@ -4520,13 +4523,54 @@ static bool waitForRpv2Response(
       delay(1);
       continue;
     }
-    if (decodeRpv2ResponseFrame(rx, radioCommandId, sessionNonce, out)) return true;
+    const uint32_t rxAcceptedAtMs = lora.lastAcceptedRxAtMs();
+    if (beginAckStage) {
+      LOGI(
+          "RPV2_BEGIN_ACK_RX_WINDOW_FRAME deviceId=%lu commandId=%s msgType=%u seq=%lu rxAcceptedAtMs=%lu",
+          (unsigned long)deviceId,
+          commandId && commandId[0] ? commandId : "-",
+          (unsigned)rx.msgType,
+          (unsigned long)rx.seq,
+          (unsigned long)rxAcceptedAtMs);
+    }
+    if (decodeRpv2ResponseFrame(rx, radioCommandId, sessionNonce, out)) {
+      if (beginAckStage) {
+        const char* windowResult =
+            out->ack ? "ack_rx" : (out->nack ? "nack_rx" : "apply_status_rx");
+        LOGI(
+            "RPV2_BEGIN_ACK_RX deviceId=%lu commandId=%s radioCommandId=%llu msgType=%u fragmentIndex=%u acceptedPoints=%u reasonCode=%u",
+            (unsigned long)deviceId,
+            commandId && commandId[0] ? commandId : "-",
+            (unsigned long long)radioCommandId,
+            (unsigned)out->responseMsgType,
+            (unsigned)out->fragmentIndex,
+            (unsigned)out->acceptedPoints,
+            (unsigned)out->reasonCode);
+        LOGI(
+            "RPV2_BEGIN_ACK_RX_WINDOW_END deviceId=%lu commandId=%s radioCommandId=%llu result=%s atMs=%lu",
+            (unsigned long)deviceId,
+            commandId && commandId[0] ? commandId : "-",
+            (unsigned long long)radioCommandId,
+            windowResult,
+            (unsigned long)rxAcceptedAtMs);
+      }
+      return true;
+    }
     tryHandleWakePageImmediatelyAfterAcceptedUplink(
         rx,
-        lora.lastAcceptedRxAtMs(),
+        rxAcceptedAtMs,
         "rpv2_wait");
     enqueueAcceptedUplink(rx);
     delay(1);
+  }
+  if (beginAckStage) {
+    LOGW(
+        "RPV2_BEGIN_ACK_RX_WINDOW_END deviceId=%lu commandId=%s radioCommandId=%llu result=timeout atMs=%lu timeoutMs=%lu",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned long)millis(),
+        (unsigned long)timeoutMs);
   }
   return false;
 }
@@ -4790,6 +4834,30 @@ static bool executeFenceCommandRpv2Plan(
       (unsigned)beginMetrics.cipherPayloadLen,
       (unsigned)beginMetrics.wireLenFinal);
   logRpv2StageTransition(deviceId, commandId, "page_acked", "begin_tx");
+  const int pendingIdx = findPendingWakeSessionByDeviceId(deviceId);
+  const uint32_t ackRxAtMs =
+      pendingIdx >= 0 ? lastPageDiag.lastAckRxWindowEndAtMs : 0;
+  const uint32_t beginTxStartAtMs = millis();
+  LOGI(
+      "RPV2_BEGIN_TX_START deviceId=%lu commandId=%s radioCommandId=%llu retryCount=%u ackRxAtMs=%lu beginTxStartAtMs=%lu source=%s",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)activeSimpleCommand.retryCount,
+      (unsigned long)ackRxAtMs,
+      (unsigned long)beginTxStartAtMs,
+      pendingIdx >= 0 ? "page_ack_window" : "direct");
+  if (ackRxAtMs != 0 && beginTxStartAtMs >= ackRxAtMs) {
+    LOGI(
+        "RTR_ACK_TO_RPV2_BEGIN_TX_START_LATENCY deviceId=%lu commandId=%s radioCommandId=%llu ackRxAtMs=%lu beginTxStartAtMs=%lu deltaMs=%lu source=%s",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned long)ackRxAtMs,
+        (unsigned long)beginTxStartAtMs,
+        (unsigned long)(beginTxStartAtMs - ackRxAtMs),
+        pendingIdx >= 0 ? "page_ack_window" : "direct");
+  }
   LOGI(
       "RPV2_WAIT_ACK_BEGIN deviceId=%lu commandId=%s radioCommandId=%llu retryCount=%u",
       (unsigned long)deviceId,
@@ -4818,7 +4886,6 @@ static bool executeFenceCommandRpv2Plan(
       nullptr,
       nullptr);
   const uint32_t beginTxAtMs = millis();
-  const int pendingIdx = findPendingWakeSessionByDeviceId(deviceId);
   if (pendingIdx >= 0) {
     rtrdiag::noteAckToRpv2BeginTx(&lastPageDiag, beginTxAtMs);
   }
@@ -4828,6 +4895,26 @@ static bool executeFenceCommandRpv2Plan(
       commandId && commandId[0] ? commandId : "-",
       (unsigned long long)radioCommandId,
       (unsigned)activeSimpleCommand.retryCount);
+  if (ackRxAtMs != 0 && beginTxAtMs >= ackRxAtMs) {
+    LOGI(
+        "RTR_ACK_TO_RPV2_BEGIN_TX_OK_LATENCY deviceId=%lu commandId=%s radioCommandId=%llu ackRxAtMs=%lu beginTxOkAtMs=%lu deltaMs=%lu source=%s",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned long)ackRxAtMs,
+        (unsigned long)beginTxAtMs,
+        (unsigned long)(beginTxAtMs - ackRxAtMs),
+        pendingIdx >= 0 ? "page_ack_window" : "direct");
+  }
+  const uint32_t beginAckWindowStartAtMs = millis();
+  LOGI(
+      "RPV2_BEGIN_ACK_RX_WINDOW_BEGIN deviceId=%lu commandId=%s radioCommandId=%llu beginTxOkAtMs=%lu atMs=%lu timeoutMs=%lu",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned long)beginTxAtMs,
+      (unsigned long)beginAckWindowStartAtMs,
+      (unsigned long)rpv2::BEGIN_ACK_TIMEOUT_MS);
   publishFenceTransportState(deviceId, "awaiting_begin_ack");
   if (pendingIdx >= 0) {
     publishRtrPageAckProgressAfterBeginStarted(pendingWakeSessions[pendingIdx]);

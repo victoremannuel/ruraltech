@@ -177,6 +177,11 @@ static void holdRpv2Session(
     uint32_t sessionNonce,
     const char* reason);
 static void logRtrDropReason(const char* reason, const LoRaFrame& frame);
+static void applyDownlink(const LoRaFrame& frame);
+static bool waitForRpv2BeginImmediatelyAfterPageAck(
+    uint64_t sessionId,
+    uint64_t scopeId,
+    uint32_t ackTxAtMs);
 
 struct PolygonAuditContext {
   uint64_t scopeId = 0;
@@ -232,11 +237,17 @@ uint8_t rpv2ReplayNextIdx_ = 0;
 
 struct RtrSessionModeState {
   bool active = false;
+  bool waitingForBegin = false;
   uint64_t sessionId = 0;
+  uint64_t scopeId = 0;
+  uint32_t pageMessageId = 0;
   uint32_t wakeLockUntilMs = 0;
   uint32_t lastActivityAtMs = 0;
+  uint16_t estimatedFragments = 0;
   MsgType commandType = MsgType::SET_FENCE;
 } rtrSessionMode_;
+
+constexpr uint32_t kRpv2BeginImmediateRxWindowMs = 3000;
 
 static void randomNonce(uint8_t* nonce12) {
   for (int i = 0; i < 12; ++i) nonce12[i] = (uint8_t)esp_random();
@@ -1206,12 +1217,12 @@ static bool isRpv2FencePayload(const LoRaFrame& frame) {
   return rpv2::decodeHeader(frame.payload, frame.payloadLen, &header);
 }
 
-static void sendRpv2BinaryReply(
+static bool sendRpv2BinaryReply(
     const LoRaFrame& cmd,
     uint8_t outerMsgType,
     const uint8_t* payload,
     size_t payloadLen) {
-  if (!payload || payloadLen == 0 || payloadLen > sizeof(LoRaFrame{}.payload)) return;
+  if (!payload || payloadLen == 0 || payloadLen > sizeof(LoRaFrame{}.payload)) return false;
   LoRaFrame reply;
   reply.deviceId = cfg::DEVICE_ID;
   reply.scopeId = cmd.scopeId;
@@ -1223,10 +1234,12 @@ static void sendRpv2BinaryReply(
   memcpy(reply.payload, payload, payloadLen);
   if (!lora.sendFrame(reply)) {
     LOGW("Falha ao enviar RPv2 reply type=%u", (unsigned)outerMsgType);
+    return false;
   }
+  return true;
 }
 
-static void sendRpv2Ack(
+static bool sendRpv2Ack(
     const LoRaFrame& cmd,
     const rpv2::Header& req,
     uint8_t ackedMsgType,
@@ -1260,10 +1273,10 @@ static void sendRpv2Ack(
       (unsigned)ackedFragmentIndex,
       (unsigned)nextExpectedFragment,
       (unsigned)acceptedPoints);
-  sendRpv2BinaryReply(cmd, static_cast<uint8_t>(MsgType::ACK), payload, len);
+  return sendRpv2BinaryReply(cmd, static_cast<uint8_t>(MsgType::ACK), payload, len);
 }
 
-static void sendRpv2Nack(
+static bool sendRpv2Nack(
     const LoRaFrame& cmd,
     const rpv2::Header& req,
     uint8_t nackOfMsgType,
@@ -1298,10 +1311,10 @@ static void sendRpv2Nack(
       (unsigned)reasonCode,
       (unsigned)nextExpectedFragment,
       (unsigned long)detail);
-  sendRpv2BinaryReply(cmd, static_cast<uint8_t>(MsgType::NACK), payload, len);
+  return sendRpv2BinaryReply(cmd, static_cast<uint8_t>(MsgType::NACK), payload, len);
 }
 
-static void sendRpv2ApplyStatus(
+static bool sendRpv2ApplyStatus(
     const LoRaFrame& cmd,
     const rpv2::Header& req,
     bool applied,
@@ -1333,7 +1346,7 @@ static void sendRpv2ApplyStatus(
       (unsigned)reasonCode,
       (unsigned)activePoints,
       (unsigned long)activeCrc32);
-  sendRpv2BinaryReply(cmd, static_cast<uint8_t>(MsgType::EVENT), payload, len);
+  return sendRpv2BinaryReply(cmd, static_cast<uint8_t>(MsgType::EVENT), payload, len);
 }
 
 static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
@@ -1388,7 +1401,26 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
     rpv2FenceSession_.expectedFragment = 1;
     rpv2FenceSession_.nextPointIndex = 0;
     holdRpv2Session(header.radioCommandId, header.sessionNonce, "begin_rx");
-    sendRpv2Ack(frame, header, rpv2::FENCE_BEGIN, 0, 1, 0, 0);
+    const uint32_t beginAckPrepareAtMs = millis();
+    LOGI(
+        "RPV2_BEGIN_ACK_PREPARE radioCommandId=%llu sessionNonce=%lu fragmentTotal=%u",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce,
+        (unsigned)header.fragmentTotal);
+    const bool beginAckTxOk =
+        sendRpv2Ack(frame, header, rpv2::FENCE_BEGIN, 0, 1, 0, 0);
+    const uint32_t beginAckTxAtMs = millis();
+    LOGI(
+        "RPV2_BEGIN_%s_TX radioCommandId=%llu sessionNonce=%lu nextExpectedFragment=%u",
+        beginAckTxOk ? "ACK" : "ACK_FAIL",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce,
+        1U);
+    LOGI(
+        "RPV2_BEGIN_TO_ACK_LATENCY radioCommandId=%llu sessionNonce=%lu deltaMs=%lu",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce,
+        (unsigned long)(beginAckTxAtMs - beginAckPrepareAtMs));
     return true;
   }
 
@@ -2630,9 +2662,13 @@ static bool handleRtrControlDownlink(const LoRaFrame& frame) {
       (unsigned long)rtrWindowDiag_.pageRxCount);
 
   rtrSessionMode_.active = true;
+  rtrSessionMode_.waitingForBegin = false;
   rtrSessionMode_.sessionId = header.sessionId;
+  rtrSessionMode_.scopeId = frame.scopeId;
+  rtrSessionMode_.pageMessageId = header.messageId;
   rtrSessionMode_.commandType = static_cast<MsgType>(page.commandType);
   rtrSessionMode_.lastActivityAtMs = millis();
+  rtrSessionMode_.estimatedFragments = page.estimatedFragments;
   rtrSessionMode_.wakeLockUntilMs =
       rtrSessionMode_.lastActivityAtMs +
       (page.wakeLockSec > 0 ? page.wakeLockSec * 1000UL : rtrv1::SESSION_WAKE_LOCK_MS);
@@ -2696,7 +2732,119 @@ static bool handleRtrControlDownlink(const LoRaFrame& frame) {
       (unsigned long long)header.sessionId,
       (unsigned long)header.messageId,
       (unsigned long)(ackTxAtMs - ackPrepareAtMs));
+  rtrSessionMode_.waitingForBegin = page.commandType == static_cast<uint8_t>(MsgType::SET_FENCE);
+  if (rtrSessionMode_.waitingForBegin) {
+    waitForRpv2BeginImmediatelyAfterPageAck(
+        header.sessionId,
+        frame.scopeId,
+        ackTxAtMs);
+  }
   return true;
+}
+
+static bool waitForRpv2BeginImmediatelyAfterPageAck(
+    uint64_t sessionId,
+    uint64_t scopeId,
+    uint32_t ackTxAtMs) {
+  if (!rtrSessionMode_.active ||
+      !rtrSessionMode_.waitingForBegin ||
+      rtrSessionMode_.sessionId != sessionId) {
+    return false;
+  }
+
+  const uint32_t windowStartAtMs = millis();
+  LOGI(
+      "RPV2_BEGIN_RX_WINDOW_BEGIN sessionId=%llu messageId=%lu scopeId=%016llX ackTxAtMs=%lu atMs=%lu deltaMs=%lu windowMs=%lu estimatedFragments=%u",
+      (unsigned long long)sessionId,
+      (unsigned long)rtrSessionMode_.pageMessageId,
+      (unsigned long long)scopeId,
+      (unsigned long)ackTxAtMs,
+      (unsigned long)windowStartAtMs,
+      (unsigned long)(windowStartAtMs - ackTxAtMs),
+      (unsigned long)kRpv2BeginImmediateRxWindowMs,
+      (unsigned)rtrSessionMode_.estimatedFragments);
+
+  const uint32_t deadlineAtMs = windowStartAtMs + kRpv2BeginImmediateRxWindowMs;
+  while ((int32_t)(millis() - deadlineAtMs) <= 0) {
+    feedWatchdogIfEnabled();
+    const uint32_t nowMs = millis();
+    const uint32_t remainingMs = deadlineAtMs - nowMs;
+    LoRaFrame down{};
+    if (!lora.receiveFrame(down, remainingMs)) {
+      break;
+    }
+
+    LOGI(
+        "RPV2_BEGIN_RX_WINDOW_FRAME rawLen=%u msgType=%u seq=%lu rssi=%d snr=%.1f",
+        (unsigned)rtrWindowDiag_.lastDownlinkRawLen,
+        (unsigned)down.msgType,
+        (unsigned long)down.seq,
+        (int)lora.lastRssi(),
+        lora.lastSnr());
+
+    if (!bindingReady_) {
+      LOGW(
+          "RPV2_BEGIN_RX_REJECT reason=binding_missing sessionId=%llu",
+          (unsigned long long)sessionId);
+      continue;
+    }
+    if (scopeId == 0 || down.scopeId == 0 || down.scopeId != scopeId || down.scopeId != bindingScopeIdValue()) {
+      LOGW(
+          "RPV2_BEGIN_RX_REJECT reason=scope_mismatch sessionId=%llu frameScopeId=%016llX expectedScopeId=%016llX",
+          (unsigned long long)sessionId,
+          (unsigned long long)down.scopeId,
+          (unsigned long long)scopeId);
+      continue;
+    }
+    if (down.msgType != MsgType::SET_FENCE) {
+      LOGW(
+          "RPV2_BEGIN_RX_REJECT reason=unexpected_type sessionId=%llu outerMsgType=%u",
+          (unsigned long long)sessionId,
+          (unsigned)down.msgType);
+      continue;
+    }
+
+    rpv2::Header header{};
+    if (!rpv2::decodeHeader(down.payload, down.payloadLen, &header)) {
+      LOGW(
+          "RPV2_BEGIN_RX_REJECT reason=decode_header sessionId=%llu",
+          (unsigned long long)sessionId);
+      continue;
+    }
+    if (header.msgType != rpv2::FENCE_BEGIN) {
+      LOGW(
+          "RPV2_BEGIN_RX_REJECT reason=unexpected_type sessionId=%llu innerMsgType=%u",
+          (unsigned long long)sessionId,
+          (unsigned)header.msgType);
+      continue;
+    }
+
+    applyDownlink(down);
+    if (rpv2FenceSession_.active &&
+        rpv2FenceSession_.radioCommandId == header.radioCommandId &&
+        rpv2FenceSession_.sessionNonce == header.sessionNonce) {
+      rtrSessionMode_.waitingForBegin = false;
+      LOGI(
+          "RPV2_BEGIN_RX_WINDOW_END sessionId=%llu messageId=%lu result=begin_rx atMs=%lu",
+          (unsigned long long)sessionId,
+          (unsigned long)rtrSessionMode_.pageMessageId,
+          (unsigned long)millis());
+      return true;
+    }
+    LOGW(
+        "RPV2_BEGIN_RX_REJECT reason=session_mismatch sessionId=%llu radioCommandId=%llu sessionNonce=%lu",
+        (unsigned long long)sessionId,
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce);
+  }
+
+  rtrSessionMode_.waitingForBegin = false;
+  LOGW(
+      "RPV2_BEGIN_RX_WINDOW_END sessionId=%llu messageId=%lu result=timeout atMs=%lu",
+      (unsigned long long)sessionId,
+      (unsigned long)rtrSessionMode_.pageMessageId,
+      (unsigned long)millis());
+  return false;
 }
 
 static void applyDownlink(const LoRaFrame& frame) {
