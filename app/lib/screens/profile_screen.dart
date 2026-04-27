@@ -282,7 +282,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             child: Column(children: [
               _filterRow(
-                sectionKey: const Key('profile_properties_section'),
+                sectionId: 'profile_properties_section',
                 icon: Icons.landscape_outlined,
                 title: 'Propriedades',
                 selectedCount: _selectedPropertyIds.length,
@@ -299,7 +299,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               Divider(color: RTColors.hairSoft, height: 1, indent: 60),
               _filterRow(
-                sectionKey: const Key('profile_areas_section'),
+                sectionId: 'profile_areas_section',
                 icon: Icons.polyline_outlined,
                 title: 'Áreas',
                 selectedCount: _selectedAreaIds.length,
@@ -317,7 +317,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               Divider(color: RTColors.hairSoft, height: 1, indent: 60),
               _filterRow(
-                sectionKey: const Key('profile_collars_section'),
+                sectionId: 'profile_collars_section',
                 icon: Icons.pets_outlined,
                 title: 'Coleiras',
                 selectedCount: _selectedCollarIds.length,
@@ -333,7 +333,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               Divider(color: RTColors.hairSoft, height: 1, indent: 60),
               _filterRow(
-                sectionKey: const Key('profile_gateways_section'),
+                sectionId: 'profile_gateways_section',
                 icon: Icons.wifi,
                 title: 'Gateways',
                 selectedCount: _selectedGatewayIds.length,
@@ -523,7 +523,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _filterRow({
-    required Key sectionKey,
+    required String sectionId,
     required IconData icon,
     required String title,
     required int selectedCount,
@@ -533,8 +533,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final summary = selectedCount == 0
         ? 'Todos visíveis ($totalCount)'
         : '$selectedCount de $totalCount selecionados';
-    return ExpansionTile(
-      key: sectionKey,
+    return KeyedSubtree(
+      key: PageStorageKey(sectionId),
+      child: ExpansionTile(
       tilePadding: const EdgeInsets.symmetric(
         horizontal: RTSpacing.x4,
         vertical: RTSpacing.x1,
@@ -560,6 +561,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         style: RTTypography.bodySmall.copyWith(color: RTColors.inkSoft),
       ),
       children: children,
+      ),
     );
   }
 
