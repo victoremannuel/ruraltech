@@ -4492,10 +4492,12 @@ static bool waitForRpv2Response(
     uint32_t timeoutMs,
     Rpv2AwaitedResponse* out,
     const char* stage = nullptr,
-    const char* commandId = nullptr) {
+    const char* commandId = nullptr,
+    uint16_t expectedFragmentIndex = 0) {
   const uint32_t startedAt = millis();
   uint32_t lastHeartbeatAt = startedAt;
   const bool beginAckStage = stage && strcmp(stage, "begin_ack") == 0;
+  const bool pointsAckStage = stage && strcmp(stage, "points_ack") == 0;
   while ((uint32_t)(millis() - startedAt) < timeoutMs) {
     feedWatchdogIfEnabled();
     const uint32_t nowMs = millis();
@@ -4524,11 +4526,13 @@ static bool waitForRpv2Response(
       continue;
     }
     const uint32_t rxAcceptedAtMs = lora.lastAcceptedRxAtMs();
-    if (beginAckStage) {
+    if (beginAckStage || pointsAckStage) {
       LOGI(
-          "RPV2_BEGIN_ACK_RX_WINDOW_FRAME deviceId=%lu commandId=%s msgType=%u seq=%lu rxAcceptedAtMs=%lu",
+          "%s deviceId=%lu commandId=%s fragmentIndex=%u msgType=%u seq=%lu rxAcceptedAtMs=%lu",
+          beginAckStage ? "RPV2_BEGIN_ACK_RX_WINDOW_FRAME" : "RPV2_POINTS_ACK_RX_WINDOW_FRAME",
           (unsigned long)deviceId,
           commandId && commandId[0] ? commandId : "-",
+          (unsigned)expectedFragmentIndex,
           (unsigned)rx.msgType,
           (unsigned long)rx.seq,
           (unsigned long)rxAcceptedAtMs);
@@ -4554,6 +4558,26 @@ static bool waitForRpv2Response(
             windowResult,
             (unsigned long)rxAcceptedAtMs);
       }
+      if (pointsAckStage) {
+        const char* windowResult =
+            out->ack ? "ack_rx" : (out->nack ? "nack_rx" : "apply_status_rx");
+        LOGI(
+            "RPV2_POINTS_ACK_RX deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u acceptedPoints=%u reasonCode=%u",
+            (unsigned long)deviceId,
+            commandId && commandId[0] ? commandId : "-",
+            (unsigned long long)radioCommandId,
+            (unsigned)out->fragmentIndex,
+            (unsigned)out->acceptedPoints,
+            (unsigned)out->reasonCode);
+        LOGI(
+            "RPV2_POINTS_ACK_RX_WINDOW_END deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u result=%s atMs=%lu",
+            (unsigned long)deviceId,
+            commandId && commandId[0] ? commandId : "-",
+            (unsigned long long)radioCommandId,
+            (unsigned)expectedFragmentIndex,
+            windowResult,
+            (unsigned long)rxAcceptedAtMs);
+      }
       return true;
     }
     tryHandleWakePageImmediatelyAfterAcceptedUplink(
@@ -4569,6 +4593,16 @@ static bool waitForRpv2Response(
         (unsigned long)deviceId,
         commandId && commandId[0] ? commandId : "-",
         (unsigned long long)radioCommandId,
+        (unsigned long)millis(),
+        (unsigned long)timeoutMs);
+  }
+  if (pointsAckStage) {
+    LOGW(
+        "RPV2_POINTS_ACK_RX_WINDOW_END deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u result=timeout atMs=%lu timeoutMs=%lu",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned)expectedFragmentIndex,
         (unsigned long)millis(),
         (unsigned long)timeoutMs);
   }
@@ -4980,13 +5014,13 @@ static bool executeFenceCommandRpv2Plan(
         item.pointCount,
         framePayload,
         sizeof(framePayload));
-    publishFenceTransportState(deviceId, "awaiting_points_ack");
     LOGI(
-        "RPV2_WAIT_ACK_POINTS deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u retryCount=%u",
+        "RPV2_POINTS_TX_START deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u pointCount=%u retryCount=%u",
         (unsigned long)deviceId,
         commandId && commandId[0] ? commandId : "-",
         (unsigned long long)radioCommandId,
         (unsigned)item.fragmentIndex,
+        (unsigned)item.pointCount,
         (unsigned)activeSimpleCommand.retryCount);
     if (pointsLen == 0 || !sendLoRaBinaryFrame(
             deviceId,
@@ -5003,12 +5037,7 @@ static bool executeFenceCommandRpv2Plan(
           reason ? rpv2ReasonCodeFromLabel(*reason) : rpv2::REASON_NONE;
       return false;
     }
-    appendPropertyCommandEvent(
-        activeSimpleCommand.propertyId,
-        activeSimpleCommand.commandId,
-        "rpv2_points_sent",
-        nullptr,
-        nullptr);
+    const uint32_t pointsTxOkAtMs = millis();
     LOGI(
         "RPV2_POINTS_TX_OK deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u pointCount=%u",
         (unsigned long)deviceId,
@@ -5016,6 +5045,16 @@ static bool executeFenceCommandRpv2Plan(
         (unsigned long long)radioCommandId,
         (unsigned)item.fragmentIndex,
         (unsigned)item.pointCount);
+    LOGI(
+        "RPV2_POINTS_ACK_RX_WINDOW_BEGIN deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u pointCount=%u txOkAtMs=%lu timeoutMs=%lu",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned)item.fragmentIndex,
+        (unsigned)item.pointCount,
+        (unsigned long)pointsTxOkAtMs,
+        (unsigned long)rpv2::POINTS_ACK_TIMEOUT_MS);
+    publishFenceTransportState(deviceId, "awaiting_points_ack");
     feedWatchdogIfEnabled();
     if (!waitForRpv2Response(
             deviceId,
@@ -5024,7 +5063,8 @@ static bool executeFenceCommandRpv2Plan(
             rpv2::POINTS_ACK_TIMEOUT_MS,
             &response,
             "points_ack",
-            commandId)) {
+            commandId,
+            item.fragmentIndex)) {
       if (reason) *reason = "points_timeout";
       activeSimpleCommand.lastReasonCode = rpv2::REASON_POINTS_TIMEOUT;
       publishFenceTransportState(deviceId, "failed", "points_timeout", rpv2::REASON_POINTS_TIMEOUT, true, false);
@@ -5044,6 +5084,35 @@ static bool executeFenceCommandRpv2Plan(
       publishFenceTransportState(deviceId, "failed", *reason, code, true, false);
       return false;
     }
+    const uint16_t expectedNextFragment =
+        static_cast<uint16_t>(item.fragmentIndex + 1U);
+    const uint16_t expectedAcceptedPoints =
+        static_cast<uint16_t>(item.startPointIndex + item.pointCount);
+    if (response.fragmentIndex != item.fragmentIndex ||
+        response.acceptedPoints != expectedAcceptedPoints ||
+        response.nextExpectedFragment != expectedNextFragment) {
+      if (reason) *reason = "points_ack_mismatch";
+      activeSimpleCommand.lastReasonCode = rpv2::REASON_POINTS_OUT_OF_ORDER;
+      LOGW(
+          "RPV2_POINTS_ACK_MISMATCH deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u ackFragmentIndex=%u acceptedPoints=%u expectedAcceptedPoints=%u nextExpected=%u expectedNext=%u",
+          (unsigned long)deviceId,
+          commandId && commandId[0] ? commandId : "-",
+          (unsigned long long)radioCommandId,
+          (unsigned)item.fragmentIndex,
+          (unsigned)response.fragmentIndex,
+          (unsigned)response.acceptedPoints,
+          (unsigned)expectedAcceptedPoints,
+          (unsigned)response.nextExpectedFragment,
+          (unsigned)expectedNextFragment);
+      publishFenceTransportState(deviceId, "failed", *reason, rpv2::REASON_POINTS_OUT_OF_ORDER, true, false);
+      return false;
+    }
+    appendPropertyCommandEvent(
+        activeSimpleCommand.propertyId,
+        activeSimpleCommand.commandId,
+        "rpv2_points_sent",
+        nullptr,
+        nullptr);
     appendPropertyCommandEvent(
         activeSimpleCommand.propertyId,
         activeSimpleCommand.commandId,
@@ -5058,8 +5127,6 @@ static bool executeFenceCommandRpv2Plan(
         (unsigned long long)radioCommandId,
         (unsigned)response.fragmentIndex,
         (unsigned)response.acceptedPoints);
-    delay(rpv2::INTER_FRAME_GAP_MS);
-    feedWatchdogIfEnabled();
   }
 
   rpv2::FenceCommitBody commit{};
@@ -5213,6 +5280,12 @@ static bool executeFenceCommandRpv2Plan(
       nullptr,
       nullptr);
   feedWatchdogIfEnabled();
+  LOGI(
+      "RPV2_SESSION_END_OK deviceId=%lu commandId=%s radioCommandId=%llu activePoints=%u",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)response.activePoints);
   logRpv2StageTransition(deviceId, commandId, "apply_status_ok", "session_applied");
   publishFenceTransportState(deviceId, "applied", nullptr, rpv2::REASON_NONE, true, true);
   return true;
