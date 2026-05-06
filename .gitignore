@@ -55,4 +55,13 @@ ruraltech10-firebase-adminsdk-fbsvc-66b85a4f95.json
 /scripts/migration/.env
 /scripts/migration/package-lock.json
 .env
+/.obsidian/**
+/obsidian
 
+# keep graph outputs, skip heavy/local-only files
+graphify-out/cache/            # optional: commit for shared extraction speed, skip to keep repo small
+graphify-out/manifest.json     # mtime-based, invalid after git clone — always gitignore this
+graphify-out/cost.json         # local token tracking, not useful to share
+/.venv/                        # optional: commit for shared extraction speed, skip to keep repo small
+
+**/graphify-out/
