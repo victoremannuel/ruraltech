@@ -43,7 +43,7 @@ Lema do handoff: "Mapa é herói, UI orbita ao redor, dados técnicos em mono".
   badge opcional "VIVO" para eventos recentes.
 - `RTAuthScaffold` — shell de login com hero topográfico (painter custom) e
   sheet curvo branco.
-- `RTCollarSheet` (Sprint 2) — `DraggableScrollableSheet` com peek/expand,
+- `RTCollarSheet` [[uiux-telas]] (Sprint 2) — `DraggableScrollableSheet` com peek/expand,
   grabber, header (título + badge ONLINE/OFFLINE), `RTTelemetryGrid` e
   `Wrap<RTButton>` de ações.
 
@@ -62,10 +62,10 @@ Lema do handoff: "Mapa é herói, UI orbita ao redor, dados técnicos em mono".
 
 ## Shell (Sprint 2)
 
-- `app/lib/screens/home_shell.dart` · `HomeShell` — `NavigationBar` M3 +
+- `app/lib/screens/home_shell.dart` · `HomeShell` [[uiux-telas]] — `NavigationBar` M3 +
   `IndexedStack` preservando estado das 4 abas via `PageStorageKey` +
   `AutomaticKeepAliveClientMixin`. Tabs: Mapa / Eventos / Operações / Perfil.
-- `app/lib/screens/operations_screen.dart` · `OperationsScreen` — hub
+- `app/lib/screens/operations_screen.dart` · `OperationsScreen` [[uiux-telas]] — hub
   operacional em cards (`RTCard` + `RTActionRow`) com seções Campo (todos) e
   Cadastros (admin).
 

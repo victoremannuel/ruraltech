@@ -14,8 +14,8 @@ Stack completo do monorepo, por camada, com ferramentas de CI/CD e qualidade.
 | Item | Detalhe |
 |---|---|
 | Linguagem | Dart 3.3+ |
-| Framework | Flutter (Material 3) |
-| Banco | Supabase Postgres (RLS, Realtime, Edge Functions) |
+| Framework | Flutter [[uiux-telas]] (Material 3) |
+| Banco | Supabase Postgres [[modelagem-dados-supabase]] (RLS, Realtime, Edge Functions) |
 | Cliente | `supabase-dart` (sem ORM) |
 | Testes | `flutter_test` (unit/widget/fixtures) |
 | Linter | `flutter_lints` + `flutter analyze` + `dart format` |
@@ -39,9 +39,9 @@ Stack completo do monorepo, por camada, com ferramentas de CI/CD e qualidade.
 | Item | Detalhe |
 |---|---|
 | Banco | Postgres 15+ com RLS em todas as tabelas |
-| Auth | Supabase Auth (JWT) |
+| Auth | Supabase Auth [[migracao-supabase]] (JWT) |
 | Realtime | CDC WebSocket em 13 tabelas |
-| Edge Functions | Deno (TypeScript) |
+| Edge Functions | Deno [[fluxo-comandos]] (TypeScript) |
 | Testes | pgTAP via `supabase test db --local` |
 
 ### Regras/Testes Legados (`app/rules-tests/`)
@@ -82,6 +82,11 @@ Desativar qualquer gate de CI é **proibido**.
 
 [[ruraltech]]
 [[visao-geral]]
+[[design-system-v2]]
 [[convencoes-codigo]]
 [[padroes-implementacao]]
 [[requisitos]]
+[[modelagem-dados-supabase]]
+[[migracao-supabase]]
+[[uiux-telas]]
+[[fluxo-comandos]]
