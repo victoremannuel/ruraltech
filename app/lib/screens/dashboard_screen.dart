@@ -9,10 +9,17 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
+import '../components/domain/rt_collar_sheet.dart';
+import '../components/domain/rt_telemetry_grid.dart';
+import '../components/map/rt_filter_chips.dart';
+import '../components/primitives/rt_button.dart';
+import '../components/primitives/rt_fab.dart';
 import '../config/manual_settings.dart';
+import '../design/colors.dart';
+import '../design/tokens.dart';
+import '../design/typography.dart';
 import '../models/device_model.dart';
 import '../services/auth_service.dart';
-import '../services/bluetooth_discovery_service.dart';
 import '../services/cloud_service.dart';
 import '../services/gateway_service.dart';
 import '../services/map_filter_service.dart';
@@ -20,16 +27,16 @@ import '../utils/cloud_compat.dart';
 import '../utils/device_map_telemetry.dart';
 import '../utils/home_session_state.dart';
 import '../utils/map_coordinates.dart';
-import '../utils/onboarding_gateway_utils.dart';
 import '../utils/polygon_metrics.dart';
 import '../utils/top_feedback.dart';
 import 'area_editor_screen.dart';
-import 'events_screen.dart';
 import 'herding_screen.dart';
 import 'map_point_picker_screen.dart';
-import 'profile_screen.dart';
 import 'rural_property_editor_screen.dart';
+import 'add_collar_screen.dart';
+import 'add_gateway_screen.dart';
 import 'device_details_screen.dart';
+import 'events_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -60,6 +67,8 @@ class _HomeScreenState extends State<HomeScreen> {
   List<LatLng> _selectedPolygonPoints = const [];
   final Map<String, DeviceMapTelemetrySample> _latestTelemetryByDeviceId = {};
   List<DeviceModel> _latestKnownDevices = const <DeviceModel>[];
+  String _mapChipFilter = 'all'; // 'all' | 'collars' | 'gateways'
+  String? _selectedPropertyName;
 
   // Stream cache: evita que build() recrie streams a cada rebuild,
   // o que causava StreamBuilder re-subscriptions e reset do mapa.
@@ -187,6 +196,35 @@ class _HomeScreenState extends State<HomeScreen> {
     var normalized = heading % 360.0;
     if (normalized < 0) normalized += 360.0;
     return normalized;
+  }
+
+  Future<void> _openPropertySearch(
+      List<Map<String, dynamic>> properties) async {
+    final selected = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => _PropertyPickerSheet(properties: properties),
+    );
+    if (selected == null || !mounted) return;
+
+    final name = (selected['name'] ?? '').toString();
+    final rawPoints = selected['points'] as List<dynamic>?;
+    if (rawPoints == null || rawPoints.isEmpty) return;
+
+    final latLngs = rawPoints
+        .whereType<List>()
+        .where((p) => p.length >= 2)
+        .map((p) => LatLng((p[0] as num).toDouble(), (p[1] as num).toDouble()))
+        .toList();
+    if (latLngs.isEmpty) return;
+
+    setState(() => _selectedPropertyName = name);
+    _mapController.fitCamera(
+      CameraFit.bounds(
+        bounds: LatLngBounds.fromPoints(latLngs),
+        padding: const EdgeInsets.all(48),
+      ),
+    );
   }
 
   double _angularDiffDegrees(double a, double b) {
@@ -1280,38 +1318,90 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _openDeviceMarkerActions(
       BuildContext context, DeviceModel device) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.tune),
-              title: const Text('Comandos da coleira'),
-              subtitle: const Text('Geofence e plano de conducao'),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => DeviceDetailsScreen(device: device),
-                  ),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.edit),
-              title: const Text('Editar coleira'),
-              onTap: () async {
-                Navigator.pop(sheetContext);
-                await _showEditDeviceDialog(context, device);
-              },
-            ),
-          ],
+    final networkId = device.networkId;
+    final liveTelemetry = _latestTelemetryByDeviceId[device.id];
+    final lat = liveTelemetry?.lat ?? device.lat;
+    final lon = liveTelemetry?.lon ?? device.lon;
+    final lastSeenMs = liveTelemetry?.receivedAtMs ??
+        device.telemetryReceivedAtMs ??
+        device.positionReceivedAtMs;
+    final online = lastSeenMs != null &&
+        DateTime.now().millisecondsSinceEpoch - lastSeenMs < 5 * 60 * 1000;
+
+    final entries = <RTTelemetryEntry>[
+      RTTelemetryEntry(
+        label: 'Coordenadas',
+        value: _formatCoordPair(lat, lon),
+        emphasis: true,
+      ),
+      RTTelemetryEntry(
+        label: 'Última telemetria',
+        value: _formatRelativeFromMs(lastSeenMs),
+      ),
+      if (device.hasDailyHealth)
+        RTTelemetryEntry(
+          label: 'Sat / HDOP',
+          value:
+              '${device.healthSatellites ?? '-'} · ${device.healthHdop?.toStringAsFixed(2) ?? '-'}',
         ),
+      if (device.hasDailyHealth && device.healthTemperatureC != null)
+        RTTelemetryEntry(
+          label: 'Temperatura',
+          value: '${device.healthTemperatureC!.toStringAsFixed(1)} °C',
+        ),
+    ];
+
+    await showRTCollarSheet(
+      context,
+      sheet: RTCollarSheet(
+        title: device.name,
+        subtitle: 'ID $networkId',
+        online: online,
+        lastSeenLabel: lastSeenMs == null
+            ? 'Sem registros'
+            : 'Visto ${_formatRelativeFromMs(lastSeenMs)}',
+        entries: entries,
+        actions: [
+          RTCollarSheetAction(
+            icon: Icons.tune,
+            label: 'Comandos',
+            variant: RTButtonVariant.primary,
+            onTap: () {
+              Navigator.of(context).pop();
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => DeviceDetailsScreen(device: device),
+                ),
+              );
+            },
+          ),
+          RTCollarSheetAction(
+            icon: Icons.edit_outlined,
+            label: 'Editar',
+            onTap: () async {
+              Navigator.of(context).pop();
+              await _showEditDeviceDialog(context, device);
+            },
+          ),
+        ],
       ),
     );
+  }
+
+  String _formatCoordPair(double? lat, double? lon) {
+    if (lat == null || lon == null) return 'Sem posição';
+    return '${lat.toStringAsFixed(5)}, ${lon.toStringAsFixed(5)}';
+  }
+
+  String _formatRelativeFromMs(int? ms) {
+    if (ms == null || ms <= 0) return 'sem dados';
+    final diff =
+        DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(ms));
+    if (diff.inSeconds < 60) return 'há poucos segundos';
+    if (diff.inMinutes < 60) return 'há ${diff.inMinutes} min';
+    if (diff.inHours < 24) return 'há ${diff.inHours} h';
+    return 'há ${diff.inDays} d';
   }
 
   Future<void> _openGatewayMarkerActions(
@@ -1332,1513 +1422,16 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _showAddDeviceDialog(BuildContext context) async {
-    final auth = context.read<AuthService>();
-    final fb = context.read<CloudService>();
-    final gatewayService = context.read<GatewayService>();
-    final bleService = context.read<BluetoothDiscoveryService>();
-    final uid = auth.user?.uid;
-    if (uid == null) return;
-    if (!bleService.isScanning) {
-      unawaited(bleService.startScan());
-    }
-
-    final properties =
-        await fb.getRuralProperties(uid: uid, isAdmin: auth.isAdmin);
-    final gateways =
-        await fb.streamGateways(uid: uid, isAdmin: auth.isAdmin).first;
-    final users = auth.isAdmin
-        ? await fb.getUserOptions()
-        : const <Map<String, String>>[];
-    if (!context.mounted) return;
-    String? propertyId =
-        properties.isNotEmpty ? properties.first['id'].toString() : null;
-    String? selectedGatewayId;
-    LatLng? selectedPosition;
-    String? selectedDetectedDeviceId;
-    bool manualPositionChosen = false;
-    final ownerOptions = users
-        .where((u) => (u['uid'] ?? '').isNotEmpty)
-        .map((u) => Map<String, String>.from(u))
-        .toList();
-
-    final Map<String, String> selectedOwner = auth.isAdmin
-        ? ownerOptions.firstWhere(
-            (u) => (u['uid'] ?? '') == uid,
-            orElse: () => ownerOptions.isNotEmpty ? ownerOptions.first : {},
-          )
-        : {
-            'uid': uid,
-            'email': ((auth.user?.email ?? '').trim().isNotEmpty)
-                ? auth.user!.email!.trim().toLowerCase()
-                : uid,
-          };
-    String? selectedOwnerUid = (selectedOwner['uid'] ?? '').trim().isEmpty
-        ? uid
-        : selectedOwner['uid'];
-    final ownerCtrl = TextEditingController(
-      text: (selectedOwner['email'] ?? selectedOwnerUid ?? uid),
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const AddCollarScreen()),
     );
-    final nameCtrl = TextEditingController();
-    final statusCtrl = TextEditingController(text: 'active');
-    final loraIdCtrl = TextEditingController();
-    final formKey = GlobalKey<FormState>();
-
-    List<Map<String, dynamic>> gatewaysForProperty(String? selectedPropertyId) {
-      final normalizedProperty = _normalizeRefId(selectedPropertyId);
-      if (normalizedProperty.isEmpty) {
-        return gateways;
-      }
-      return gateways.where((g) {
-        final gatewayProperty = _normalizeRefId(g['propertyId']);
-        return gatewayProperty == normalizedProperty;
-      }).toList();
-    }
-
-    String gatewayLabel(Map<String, dynamic> gateway) {
-      final id = _normalizeRefId(gateway['id']);
-      final name = (gateway['name'] ?? '').toString().trim();
-      if (name.isEmpty) return id;
-      return '$name ($id)';
-    }
-
-    var dialogIsOpen = true;
-
-    String? selectedGatewayWsHost() {
-      return resolveSelectedGatewayWsHost(
-        selectedGatewayId: selectedGatewayId,
-        gateways: gateways,
-        connectedGatewayCandidate: gatewayService.connectedGatewayCandidate,
-        normalizeRefId: _normalizeRefId,
-      );
-    }
-
-    Future<void> syncSelectedGatewayConnection(
-      void Function(VoidCallback fn) dialogSetState, {
-      bool forceReconnect = false,
-      bool showFeedbackOnFailure = false,
-    }) async {
-      final normalizedSelectedGatewayId = _normalizeRefId(selectedGatewayId);
-      if (normalizedSelectedGatewayId.isEmpty) return;
-
-      final wsHost = selectedGatewayWsHost();
-      if (wsHost == null) {
-        if (showFeedbackOnFailure && context.mounted) {
-          AppFeedback.warning(
-            'Gateway selecionado sem host configurado. A telemetria ao vivo fica indisponivel ate informar IP/host.',
-          );
-        }
-        return;
-      }
-
-      final mustReconnect = forceReconnect ||
-          !gatewayService.isConnected ||
-          gatewayService.gatewayHost != wsHost;
-      if (!mustReconnect) return;
-
-      gatewayService.clearTransientDiscoveryState(notify: false);
-      var connected =
-          await gatewayService.ensureConnected(hostOverride: wsHost);
-      String? effectiveWsHost = wsHost;
-      if (!connected) {
-        final discoveredGateways =
-            await gatewayService.discoverGatewaysOnLocalNetwork(maxHosts: 120);
-        final fallbackWsHost = fallbackSelectedGatewayWsHost(
-          propertyGateways: gatewaysForProperty(propertyId),
-          discoveredGateways: discoveredGateways,
-        );
-        if (fallbackWsHost != null && fallbackWsHost != wsHost) {
-          connected = await gatewayService.ensureConnected(
-            hostOverride: fallbackWsHost,
-          );
-          if (connected) {
-            effectiveWsHost = fallbackWsHost;
-          }
-        }
-      }
-      if (!dialogIsOpen || !context.mounted) return;
-
-      dialogSetState(() {});
-      if (connected && effectiveWsHost != wsHost && context.mounted) {
-        AppFeedback.success(
-          'Gateway encontrado na rede em $effectiveWsHost. Telemetria ao vivo reconectada.',
-        );
-      }
-      if (!connected && showFeedbackOnFailure) {
-        AppFeedback.warning(
-          _gatewayConnectionFailureMessage(wsHost),
-        );
-      }
-    }
-
-    void selectOwner(Map<String, String> owner) {
-      selectedOwnerUid = owner['uid'];
-      ownerCtrl.text = (owner['email'] ?? owner['uid'] ?? '').trim();
-      ownerCtrl.selection =
-          TextSelection.collapsed(offset: ownerCtrl.text.length);
-    }
-
-    Future<void> showOwnerPicker(
-      BuildContext dialogContext,
-      void Function(VoidCallback fn) dialogSetState,
-    ) async {
-      var query = '';
-      final selected = await showDialog<Map<String, String>>(
-        context: dialogContext,
-        builder: (pickerContext) => StatefulBuilder(
-          builder: (pickerContext, pickerSetState) {
-            final matches = ownerOptions.where((u) {
-              final email = (u['email'] ?? '').trim().toLowerCase();
-              return query.isEmpty || email.contains(query);
-            }).toList();
-            return AlertDialog(
-              title: const Text('Selecionar dono da coleira'),
-              content: SizedBox(
-                width: double.maxFinite,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      autofocus: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Buscar por email',
-                        prefixIcon: Icon(Icons.search),
-                      ),
-                      onChanged: (v) =>
-                          pickerSetState(() => query = v.trim().toLowerCase()),
-                    ),
-                    const SizedBox(height: 8),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 260),
-                      child: matches.isEmpty
-                          ? const Align(
-                              alignment: Alignment.centerLeft,
-                              child: Text('Nenhum email encontrado.'),
-                            )
-                          : ListView.builder(
-                              shrinkWrap: true,
-                              itemCount: matches.length,
-                              itemBuilder: (_, i) {
-                                final owner = matches[i];
-                                return ListTile(
-                                  dense: true,
-                                  title: Text(
-                                      owner['email'] ?? owner['uid'] ?? ''),
-                                  onTap: () =>
-                                      Navigator.pop(pickerContext, owner),
-                                );
-                              },
-                            ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(pickerContext),
-                  child: const Text('Cancelar'),
-                ),
-              ],
-            );
-          },
-        ),
-      );
-      if (selected == null) return;
-      dialogSetState(() => selectOwner(selected));
-    }
-
-    String mergeSource(String? current, String next) {
-      final out = <String>{};
-      if (current != null && current.isNotEmpty) {
-        out.addAll(
-          current.split('+').map((s) => s.trim()).where((s) => s.isNotEmpty),
-        );
-      }
-      out.add(next);
-      final ordered = <String>[];
-      for (final preferred in const ['telemetry', 'wifi', 'ble']) {
-        if (out.remove(preferred)) ordered.add(preferred);
-      }
-      ordered.addAll(out);
-      return ordered.join('+');
-    }
-
-    double? toFiniteCoord(dynamic value) {
-      if (value is num) {
-        final out = value.toDouble();
-        return out.isFinite ? out : null;
-      }
-      if (value is String) {
-        final out = double.tryParse(value.trim());
-        if (out == null || !out.isFinite) return null;
-        return out;
-      }
-      return null;
-    }
-
-    String? normalizeLoraDeviceId(String? raw) {
-      if (raw == null) return null;
-      final trimmed = raw.trim();
-      if (trimmed.isEmpty) return null;
-      final parsed = int.tryParse(trimmed);
-      if (parsed == null || parsed <= 0) return null;
-      return parsed.toString();
-    }
-
-    LatLng? positionFromDetectedCollar(
-      String? detectedId,
-      List<Map<String, dynamic>> discovered,
-    ) {
-      if (detectedId == null || detectedId.trim().isEmpty) return null;
-      Map<String, dynamic>? found;
-      for (final item in discovered) {
-        if (item['device_id_str']?.toString() == detectedId) {
-          found = item;
-          break;
-        }
-      }
-      if (found == null) return null;
-      final lat = toFiniteCoord(found['lat']);
-      final lon = toFiniteCoord(found['lon']);
-      if (lat == null || lon == null) return null;
-      if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
-      return LatLng(lat, lon);
-    }
-
-    final Map<String, LatLng> dialogTelemetryPositionsByDeviceId = {};
-
-    Future<LatLng?> telemetryPositionFromCloud(String? rawDeviceId) async {
-      final normalized = normalizeLoraDeviceId(rawDeviceId);
-      if (normalized == null) return null;
-
-      final cached = _telemetryPositionForDeviceId(normalized) ??
-          dialogTelemetryPositionsByDeviceId[normalized];
-      if (cached != null) return cached;
-
-      final latest = await fb.getLatestTelemetryPositionForDevice(normalized);
-      if (latest == null) return null;
-      final lat = latest['lat'];
-      final lon = latest['lon'];
-      if (lat == null || lon == null) return null;
-
-      final out = LatLng(lat, lon);
-      dialogTelemetryPositionsByDeviceId[normalized] = out;
-      _cacheTelemetrySample(
-        DeviceMapTelemetrySample(
-          deviceId: normalized,
-          lat: lat,
-          lon: lon,
-          receivedAtMs: 0,
-          source: 'cloud_lookup',
-        ),
-      );
-      return out;
-    }
-
-    Future<void> hydrateDetectedCollarPosition(
-      String detectedId,
-      void Function(VoidCallback fn) dialogSetState, {
-      bool Function()? canApplyPosition,
-    }) async {
-      final cloudPosition = await telemetryPositionFromCloud(detectedId);
-      if (cloudPosition == null) return;
-      if (canApplyPosition != null && !canApplyPosition()) return;
-
-      dialogSetState(() {
-        if (canApplyPosition != null && !canApplyPosition()) return;
-        selectedPosition = cloudPosition;
-      });
-    }
-
-    List<Map<String, dynamic>> mergedDiscoveredCollars() {
-      final byId = <String, Map<String, dynamic>>{};
-
-      for (final lora in gatewayService.discoveredCollars.where(
-        (candidate) => matchesSelectedGatewayId(
-          selectedGatewayId: selectedGatewayId,
-          candidateGatewayId: candidate['gateway_id'],
-          normalizeRefId: _normalizeRefId,
-        ),
-      )) {
-        final id = lora['device_id_str']?.toString();
-        if (id == null || id.isEmpty) continue;
-        byId[id] = {
-          ...lora,
-          'device_id_str': id,
-          'source_type': 'wifi',
-        };
-      }
-
-      for (final ble in bleService.discoveredCollars) {
-        final id = ble['device_id_str']?.toString();
-        if (id == null || id.isEmpty) continue;
-        final current = byId[id];
-        if (current == null) {
-          byId[id] = {
-            ...ble,
-            'device_id_str': id,
-            'source_type': 'ble',
-          };
-          continue;
-        }
-
-        current['source_type'] =
-            mergeSource(current['source_type']?.toString(), 'ble');
-        final bleLat = toFiniteCoord(ble['lat']);
-        final bleLon = toFiniteCoord(ble['lon']);
-        if (current['lat'] == null && bleLat != null) {
-          current['lat'] = bleLat;
-        }
-        if (current['lon'] == null && bleLon != null) {
-          current['lon'] = bleLon;
-        }
-        if ((current['name']?.toString().trim() ?? '').isEmpty &&
-            (ble['name']?.toString().trim() ?? '').isNotEmpty) {
-          current['name'] = ble['name'];
-        }
-        byId[id] = current;
-      }
-
-      for (final entry in _latestTelemetryByDeviceId.entries) {
-        final id = entry.key.trim();
-        if (id.isEmpty) continue;
-        final current = byId[id];
-        if (current == null) {
-          if (_normalizeRefId(selectedGatewayId).isNotEmpty) {
-            continue;
-          }
-          byId[id] = {
-            'device_id': int.tryParse(id),
-            'device_id_str': id,
-            'lat': entry.value.lat,
-            'lon': entry.value.lon,
-            'source_type': 'telemetry',
-          };
-          continue;
-        }
-        current['source_type'] =
-            mergeSource(current['source_type']?.toString(), 'telemetry');
-        current['lat'] ??= entry.value.lat;
-        current['lon'] ??= entry.value.lon;
-        byId[id] = current;
-      }
-
-      final out = byId.values.toList();
-      out.sort((a, b) => (a['device_id_str'] as String)
-          .compareTo(b['device_id_str'] as String));
-      return out;
-    }
-
-    String collarSourceLabel(Map<String, dynamic> d) {
-      final source = (d['source_type'] ?? '').toString();
-      if (source == 'telemetry') return 'Telemetria';
-      if (source == 'telemetry+wifi') return 'Telemetria+Wi-Fi';
-      if (source == 'wifi+telemetry') return 'Wi-Fi+Telemetria';
-      if (source == 'telemetry+ble') return 'Telemetria+BLE';
-      if (source == 'ble+telemetry') return 'BLE+Telemetria';
-      if (source == 'telemetry+wifi+ble' ||
-          source == 'telemetry+ble+wifi' ||
-          source == 'wifi+telemetry+ble' ||
-          source == 'wifi+ble+telemetry' ||
-          source == 'ble+telemetry+wifi' ||
-          source == 'ble+wifi+telemetry') {
-        return 'Telemetria+Wi-Fi+BLE';
-      }
-      if (source == 'wifi+ble' || source == 'ble+wifi') return 'Wi-Fi+BLE';
-      if (source == 'wifi') return 'Wi-Fi';
-      if (source == 'ble') return 'BLE';
-      return source;
-    }
-
-    void applyDetectedCollar(Map<String, dynamic> detected) {
-      final detectedId = detected['device_id_str']?.toString();
-      if (detectedId == null || detectedId.isEmpty) return;
-      selectedDetectedDeviceId = detectedId;
-      loraIdCtrl.text = detectedId;
-      if (nameCtrl.text.trim().isEmpty ||
-          nameCtrl.text.startsWith('Coleira ')) {
-        final suggested = detected['name']?.toString().trim();
-        nameCtrl.text = (suggested == null || suggested.isEmpty)
-            ? 'Coleira $detectedId'
-            : suggested;
-      }
-      final telemetryPosition = _telemetryPositionForDeviceId(detectedId);
-      if (telemetryPosition != null) {
-        selectedPosition = telemetryPosition;
-        manualPositionChosen = false;
-        return;
-      }
-      final lat = toFiniteCoord(detected['lat']);
-      final lon = toFiniteCoord(detected['lon']);
-      if (lat != null &&
-          lon != null &&
-          lat >= -90 &&
-          lat <= 90 &&
-          lon >= -180 &&
-          lon <= 180) {
-        selectedPosition = LatLng(lat, lon);
-        manualPositionChosen = false;
-      } else if (!manualPositionChosen) {
-        // Reaproveita telemetria recente do mesmo ID quando BLE/Wi-Fi nao traz GPS.
-        selectedPosition = _telemetryPositionForDeviceId(detectedId);
-      }
-    }
-
-    try {
-      await showDialog<void>(
-        context: context,
-        builder: (_) => StatefulBuilder(
-          builder: (context, setState) => AnimatedBuilder(
-            animation: Listenable.merge([gatewayService, bleService]),
-            builder: (context, _) {
-              final discoveredCollars = mergedDiscoveredCollars();
-
-              return AlertDialog(
-                title: const Text('Incluir coleira'),
-                content: Form(
-                  key: formKey,
-                  child: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (auth.isAdmin)
-                          TextFormField(
-                            key: const Key('add_device_owner_picker'),
-                            controller: ownerCtrl,
-                            readOnly: true,
-                            onTap: () => showOwnerPicker(context, setState),
-                            decoration: const InputDecoration(
-                              labelText: 'Dono da coleira (email)',
-                              helperText:
-                                  'Toque para abrir a lista e pesquisar por email',
-                              suffixIcon: Icon(Icons.arrow_drop_down),
-                            ),
-                            validator: (_) {
-                              if (selectedOwnerUid == null ||
-                                  selectedOwnerUid!.trim().isEmpty) {
-                                return 'Selecione o dono da coleira';
-                              }
-                              return null;
-                            },
-                          )
-                        else
-                          TextFormField(
-                            controller: ownerCtrl,
-                            readOnly: true,
-                            decoration: const InputDecoration(
-                              labelText: 'Dono da coleira (email)',
-                            ),
-                          ),
-                        DropdownButtonFormField<String>(
-                          key: const Key('add_device_property_dropdown'),
-                          initialValue: propertyId,
-                          items: properties
-                              .map(
-                                (p) => DropdownMenuItem<String>(
-                                  value: p['id'].toString(),
-                                  child:
-                                      Text((p['name'] ?? p['id']).toString()),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (v) => setState(() {
-                            propertyId = v;
-                            final stillAvailable = gatewaysForProperty(v).any(
-                              (g) =>
-                                  _normalizeRefId(g['id']) ==
-                                  _normalizeRefId(selectedGatewayId),
-                            );
-                            if (!stillAvailable) {
-                              selectedGatewayId = null;
-                            }
-                          }),
-                          decoration: const InputDecoration(
-                              labelText: 'Propriedade rural'),
-                          validator: (v) => (v == null || v.trim().isEmpty)
-                              ? 'Selecione a propriedade rural'
-                              : null,
-                        ),
-                        DropdownButtonFormField<String>(
-                          key: const Key('add_device_gateway_dropdown'),
-                          initialValue: selectedGatewayId,
-                          items: <DropdownMenuItem<String>>[
-                            const DropdownMenuItem<String>(
-                              value: '',
-                              child: Text('Sem gateway vinculado'),
-                            ),
-                            ...gatewaysForProperty(propertyId).map(
-                              (g) => DropdownMenuItem<String>(
-                                value: _normalizeRefId(g['id']),
-                                child: Text(gatewayLabel(g)),
-                              ),
-                            ),
-                          ],
-                          onChanged: (v) {
-                            setState(
-                              () => selectedGatewayId =
-                                  (v == null || v.trim().isEmpty) ? null : v,
-                            );
-                            if (_normalizeRefId(selectedGatewayId).isEmpty) {
-                              gatewayService.clearTransientDiscoveryState();
-                              return;
-                            }
-                            unawaited(
-                              syncSelectedGatewayConnection(
-                                setState,
-                                forceReconnect: true,
-                                showFeedbackOnFailure: true,
-                              ),
-                            );
-                          },
-                          decoration: const InputDecoration(
-                            labelText: 'Gateway vinculado',
-                          ),
-                        ),
-                        if (_normalizeRefId(selectedGatewayId).isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: Align(
-                              alignment: Alignment.centerLeft,
-                              child: Text(
-                                () {
-                                  final wsHost = selectedGatewayWsHost();
-                                  if (wsHost == null) {
-                                    return 'Gateway selecionado sem host configurado para telemetria ao vivo.';
-                                  }
-                                  if (gatewayService.isConnected &&
-                                      gatewayService.gatewayHost == wsHost) {
-                                    return 'Telemetria ao vivo conectada em $wsHost';
-                                  }
-                                  return 'Preparando conexao de telemetria com $wsHost';
-                                }(),
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                            ),
-                          ),
-                        const SizedBox(height: 8),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Vinculacao da coleira (Telemetria/Bluetooth/Wi-Fi)',
-                              ),
-                              const SizedBox(height: 4),
-                              const Text(
-                                'Opcional: vincule a coleira detectada por telemetria, Bluetooth ou via Wi-Fi na rede local. '
-                                'Se preferir, apenas selecione o ponto no mapa manualmente.',
-                                style: TextStyle(fontSize: 12),
-                              ),
-                              const SizedBox(height: 8),
-                              OutlinedButton.icon(
-                                key: const Key('add_device_scan_ble_button'),
-                                onPressed: bleService.isScanning
-                                    ? null
-                                    : () async {
-                                        await syncSelectedGatewayConnection(
-                                          setState,
-                                        );
-                                        if (!dialogIsOpen) return;
-                                        await bleService.startScan();
-                                      },
-                                icon: Icon(
-                                  bleService.isScanning
-                                      ? Icons.bluetooth_connected
-                                      : Icons.bluetooth_searching,
-                                ),
-                                label: Text(
-                                  bleService.isScanning
-                                      ? 'Buscando coleira...'
-                                      : 'Buscar coleira por Bluetooth',
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              const Text(
-                                'Wi-Fi (rede local)',
-                                style: TextStyle(fontWeight: FontWeight.w600),
-                              ),
-                              const SizedBox(height: 4),
-                              Wrap(
-                                spacing: 10,
-                                runSpacing: 8,
-                                crossAxisAlignment: WrapCrossAlignment.center,
-                                children: [
-                                  Text(
-                                    gatewayService.isDiscoveringCollars
-                                        ? 'Buscando coleiras na rede local...'
-                                        : (gatewayService.isConnected
-                                            ? 'Gateway conectado para descoberta Wi-Fi'
-                                            : 'Descoberta Wi-Fi direta (sem gateway)'),
-                                    style: const TextStyle(fontSize: 12),
-                                  ),
-                                  OutlinedButton.icon(
-                                    key: const Key(
-                                        'add_device_scan_wifi_button'),
-                                    onPressed:
-                                        gatewayService.isDiscoveringCollars
-                                            ? null
-                                            : () async {
-                                                await gatewayService
-                                                    .requestCollarDiscovery();
-                                              },
-                                    icon: Icon(
-                                      gatewayService.isDiscoveringCollars
-                                          ? Icons.wifi_tethering
-                                          : (gatewayService.isConnected
-                                              ? Icons.wifi
-                                              : Icons.wifi_off),
-                                    ),
-                                    label: Text(
-                                      gatewayService.isDiscoveringCollars
-                                          ? 'Buscando...'
-                                          : 'Buscar coleira por Wi-Fi',
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                        if ((bleService.lastError ?? '').isNotEmpty)
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: Padding(
-                              padding: const EdgeInsets.only(top: 4),
-                              child: Text(
-                                'BLE: ${bleService.lastError}',
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                            ),
-                          ),
-                        if ((gatewayService.lastError ?? '').isNotEmpty)
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: Padding(
-                              padding: const EdgeInsets.only(top: 4),
-                              child: Text(
-                                'Wi-Fi: ${gatewayService.lastError}',
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                            ),
-                          ),
-                        DropdownButtonFormField<String>(
-                          key: const Key('add_device_detected_dropdown'),
-                          initialValue: selectedDetectedDeviceId ?? '',
-                          items: <DropdownMenuItem<String>>[
-                            const DropdownMenuItem<String>(
-                              value: '',
-                              child:
-                                  Text('Nao vincular agora (usar mapa manual)'),
-                            ),
-                            ...discoveredCollars.map(
-                              (d) => DropdownMenuItem<String>(
-                                value: d['device_id_str']?.toString() ?? '',
-                                child: Text(
-                                  () {
-                                    final extras = <String>[];
-                                    final src = collarSourceLabel(d);
-                                    if (src.isNotEmpty) extras.add(src);
-                                    final lat = toFiniteCoord(d['lat']);
-                                    final lon = toFiniteCoord(d['lon']);
-                                    if (lat != null && lon != null) {
-                                      extras.add('GPS');
-                                    }
-                                    if (extras.isEmpty) {
-                                      return 'Coleira ${d['device_id_str']}';
-                                    }
-                                    return 'Coleira ${d['device_id_str']} (${extras.join(', ')})';
-                                  }(),
-                                ),
-                              ),
-                            ),
-                          ],
-                          onChanged: (v) {
-                            setState(() {
-                              if (v == null || v.isEmpty) {
-                                selectedDetectedDeviceId = null;
-                                if (!manualPositionChosen) {
-                                  selectedPosition = null;
-                                }
-                                return;
-                              }
-                              final detected = discoveredCollars
-                                  .cast<Map<String, dynamic>?>()
-                                  .firstWhere(
-                                    (d) => d?['device_id_str']?.toString() == v,
-                                    orElse: () => null,
-                                  );
-                              if (detected == null) return;
-                              applyDetectedCollar(detected);
-                            });
-                            if (v == null ||
-                                v.isEmpty ||
-                                manualPositionChosen) {
-                              return;
-                            }
-                            unawaited(
-                              hydrateDetectedCollarPosition(
-                                v,
-                                setState,
-                                canApplyPosition: () =>
-                                    dialogIsOpen &&
-                                    !manualPositionChosen &&
-                                    selectedDetectedDeviceId == v,
-                              ),
-                            );
-                          },
-                          decoration: const InputDecoration(
-                            labelText:
-                                'Coleira detectada (Telemetria/Bluetooth/Wi-Fi)',
-                          ),
-                        ),
-                        if (discoveredCollars.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.only(top: 6, bottom: 2),
-                            child: Text(
-                              'Nenhuma coleira detectada ainda. Continue no modo manual ou tente telemetria/Bluetooth/Wi-Fi.',
-                            ),
-                          ),
-                        TextFormField(
-                          key: const Key('add_device_lora_id_input'),
-                          controller: loraIdCtrl,
-                          keyboardType: TextInputType.number,
-                          decoration: InputDecoration(
-                            labelText: 'ID LoRa da coleira',
-                            helperText: selectedDetectedDeviceId == null
-                                ? 'Obrigatorio: informe o ID numerico da coleira.'
-                                : 'Preenchido pela coleira detectada; ajuste se necessario.',
-                          ),
-                          validator: (v) {
-                            if (normalizeLoraDeviceId(v) == null) {
-                              return 'Informe um ID LoRa numerico maior que zero';
-                            }
-                            return null;
-                          },
-                        ),
-                        TextFormField(
-                          key: const Key('add_device_name_input'),
-                          controller: nameCtrl,
-                          decoration: const InputDecoration(
-                              labelText: 'Nome da coleira'),
-                          validator: (v) => (v == null || v.trim().isEmpty)
-                              ? 'Informe o nome'
-                              : null,
-                        ),
-                        TextFormField(
-                          key: const Key('add_device_status_input'),
-                          controller: statusCtrl,
-                          decoration:
-                              const InputDecoration(labelText: 'Status'),
-                        ),
-                        const SizedBox(height: 8),
-                        ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: const Icon(Icons.location_on),
-                          title: const Text('Posicao da coleira'),
-                          subtitle: Text(
-                            selectedPosition == null
-                                ? 'Nenhuma posicao selecionada'
-                                : '${selectedPosition!.latitude.toStringAsFixed(6)}, ${selectedPosition!.longitude.toStringAsFixed(6)}',
-                          ),
-                          trailing: TextButton(
-                            onPressed: () async {
-                              final selectedProperty = properties
-                                  .cast<Map<String, dynamic>?>()
-                                  .firstWhere(
-                                    (p) => p?['id'].toString() == propertyId,
-                                    orElse: () => null,
-                                  );
-                              final picked = await Navigator.push<LatLng>(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => MapPointPickerScreen(
-                                    initial: selectedPosition,
-                                    propertyPolygon:
-                                        _polygonFromProperty(selectedProperty),
-                                  ),
-                                ),
-                              );
-                              if (picked != null) {
-                                setState(() {
-                                  selectedPosition = picked;
-                                  manualPositionChosen = true;
-                                });
-                              }
-                            },
-                            child: const Text('Selecionar'),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        const Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            'Obrigatorio escolher uma opcao: ponto manual no mapa ou vinculacao por telemetria/Bluetooth/Wi-Fi.',
-                            style: TextStyle(fontSize: 12),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Cancelar'),
-                  ),
-                  ElevatedButton(
-                    key: const Key('add_device_save_button'),
-                    onPressed: () async {
-                      if (!formKey.currentState!.validate()) return;
-                      if (selectedOwnerUid == null ||
-                          selectedOwnerUid!.trim().isEmpty) {
-                        if (context.mounted) {
-                          AppFeedback.error(
-                            'Selecione um dono valido para a coleira.',
-                          );
-                        }
-                        return;
-                      }
-
-                      if (!manualPositionChosen &&
-                          _normalizeRefId(selectedGatewayId).isNotEmpty) {
-                        await syncSelectedGatewayConnection(setState);
-                        if (!context.mounted) return;
-                      }
-
-                      final normalizedLoraId =
-                          normalizeLoraDeviceId(loraIdCtrl.text);
-                      if (normalizedLoraId == null) {
-                        if (context.mounted) {
-                          AppFeedback.error(
-                            'Informe um ID LoRa numerico maior que zero para a coleira.',
-                          );
-                        }
-                        return;
-                      }
-
-                      final hasBinding = selectedDetectedDeviceId != null &&
-                          selectedDetectedDeviceId!.trim().isNotEmpty;
-                      final liveDetectedPosition = hasBinding
-                          ? positionFromDetectedCollar(
-                              selectedDetectedDeviceId,
-                              discoveredCollars,
-                            )
-                          : null;
-                      final telemetryPosition =
-                          _telemetryPositionForDeviceId(normalizedLoraId);
-                      final cloudTelemetryPosition = manualPositionChosen
-                          ? null
-                          : await telemetryPositionFromCloud(normalizedLoraId);
-                      if (!context.mounted) return;
-                      if (!manualPositionChosen &&
-                          cloudTelemetryPosition != null) {
-                        setState(
-                            () => selectedPosition = cloudTelemetryPosition);
-                      }
-                      final effectivePosition = manualPositionChosen
-                          ? selectedPosition
-                          : (telemetryPosition ??
-                              cloudTelemetryPosition ??
-                              liveDetectedPosition ??
-                              selectedPosition);
-                      LatLng? bleReadPosition;
-                      if (hasBinding &&
-                          !manualPositionChosen &&
-                          effectivePosition == null &&
-                          selectedDetectedDeviceId != null &&
-                          selectedDetectedDeviceId!.trim().isNotEmpty) {
-                        final bleRead =
-                            await bleService.requestCollarPositionByBleRead(
-                          collarId: selectedDetectedDeviceId!.trim(),
-                        );
-                        if (!context.mounted) return;
-                        if (bleRead != null) {
-                          bleReadPosition = LatLng(bleRead.lat, bleRead.lon);
-                          setState(() => selectedPosition = bleReadPosition);
-                        }
-                      }
-                      final effectivePositionWithBle =
-                          effectivePosition ?? bleReadPosition;
-                      if (!hasBinding && effectivePosition == null) {
-                        if (context.mounted) {
-                          AppFeedback.error(
-                            'Selecione ponto no mapa ou vincule uma coleira detectada (telemetria/Bluetooth/Wi-Fi).',
-                          );
-                        }
-                        return;
-                      }
-                      if (hasBinding && effectivePositionWithBle == null) {
-                        if (context.mounted) {
-                          final bleReason = bleService.lastError?.trim();
-                          AppFeedback.warning(
-                            (bleReason == null || bleReason.isEmpty)
-                                ? 'Coleira vinculada sem coordenadas GPS. Aguarde telemetria, tente Bluetooth/Wi-Fi novamente ou selecione o ponto manualmente.'
-                                : 'Coleira vinculada sem coordenadas GPS ($bleReason). Aguarde telemetria, tente Bluetooth/Wi-Fi novamente ou selecione o ponto manualmente.',
-                          );
-                        }
-                        return;
-                      }
-
-                      try {
-                        await fb.addDevice(
-                          ownerUid: selectedOwnerUid ?? uid,
-                          name: nameCtrl.text.trim(),
-                          status: statusCtrl.text.trim(),
-                          deviceId: normalizedLoraId,
-                          lat: effectivePositionWithBle?.latitude,
-                          lon: effectivePositionWithBle?.longitude,
-                          propertyId: propertyId,
-                          gatewayId: selectedGatewayId,
-                        );
-                        if (context.mounted) {
-                          Navigator.pop(context);
-                          AppFeedback.success(
-                            'Coleira incluida com sucesso.',
-                          );
-                        }
-                      } catch (e) {
-                        if (!context.mounted) return;
-                        AppFeedback.error('Erro ao salvar coleira: $e');
-                      }
-                    },
-                    child: const Text('Salvar'),
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
-      );
-    } finally {
-      dialogIsOpen = false;
-    }
   }
 
   Future<void> _showAddGatewayDialog(BuildContext context) async {
-    final auth = context.read<AuthService>();
-    final fb = context.read<CloudService>();
-    final gatewayService = context.read<GatewayService>();
-    final bleService = context.read<BluetoothDiscoveryService>();
-    final uid = auth.user?.uid;
-    if (uid == null) return;
-    if (!gatewayService.isConnected) {
-      gatewayService.connect();
-    }
-    unawaited(bleService.startScan());
-
-    final properties =
-        await fb.getRuralProperties(uid: uid, isAdmin: auth.isAdmin);
-    if (!context.mounted) return;
-    String? propertyId =
-        properties.isNotEmpty ? properties.first['id'].toString() : null;
-    String propertyLabel(Map<String, dynamic> property) =>
-        (property['name'] ?? property['id']).toString();
-    Map<String, dynamic>? findPropertyById(String? id) {
-      if (id == null || id.trim().isEmpty) return null;
-      return properties.cast<Map<String, dynamic>?>().firstWhere(
-            (p) => p?['id'].toString() == id,
-            orElse: () => null,
-          );
-    }
-
-    LatLng? selectedPosition;
-    List<Map<String, dynamic>> networkDiscoveredGateways = [];
-    final connectedGateway = gatewayService.connectedGatewayCandidate;
-    if (connectedGateway != null) {
-      networkDiscoveredGateways = [connectedGateway];
-    }
-    String? selectedDetectedGatewayId = networkDiscoveredGateways.isNotEmpty
-        ? networkDiscoveredGateways.first['gateway_id']?.toString()
-        : null;
-    bool scanningNearbyGateways = false;
-    final gatewayIdCtrl =
-        TextEditingController(text: selectedDetectedGatewayId ?? '');
-    final nameCtrl = TextEditingController();
-    final statusCtrl = TextEditingController(text: 'active');
-    final hostCtrl =
-        TextEditingController(text: ManualSettings.defaultGatewayWsHost);
-    final propertyCtrl = TextEditingController(
-      text: findPropertyById(propertyId) == null
-          ? ''
-          : propertyLabel(findPropertyById(propertyId)!),
-    );
-    bool isMatrix = false;
-    final formKey = GlobalKey<FormState>();
-
-    void syncPropertyController(String? id) {
-      final selectedProperty = findPropertyById(id);
-      propertyCtrl.text =
-          selectedProperty == null ? '' : propertyLabel(selectedProperty);
-      propertyCtrl.selection =
-          TextSelection.collapsed(offset: propertyCtrl.text.length);
-    }
-
-    String mergeSource(String? current, String next) {
-      if (current == null || current.isEmpty) return next;
-      if (current == next) return current;
-      final parts = current.split('+');
-      if (parts.contains(next)) return current;
-      if ((current == 'network' && next == 'ble') ||
-          (current == 'ble' && next == 'network')) {
-        return 'network+ble';
-      }
-      return '$current+$next';
-    }
-
-    List<Map<String, dynamic>> mergedDiscoveredGateways() {
-      final byId = <String, Map<String, dynamic>>{};
-
-      for (final net in networkDiscoveredGateways) {
-        final id = net['gateway_id']?.toString();
-        if (id == null || id.isEmpty) continue;
-        byId[id] = {
-          ...net,
-          'gateway_id': id,
-          'source_type': 'network',
-        };
-      }
-
-      for (final ble in bleService.discoveredGateways) {
-        final id = ble['gateway_id']?.toString();
-        if (id == null || id.isEmpty) continue;
-        final current = byId[id];
-        if (current == null) {
-          byId[id] = {
-            ...ble,
-            'gateway_id': id,
-            'source_type': 'ble',
-          };
-          continue;
-        }
-
-        current['source_type'] =
-            mergeSource(current['source_type']?.toString(), 'ble');
-        final ws = ble['host_ws']?.toString();
-        if ((current['host_ws']?.toString().trim() ?? '').isEmpty &&
-            ws != null &&
-            ws.isNotEmpty) {
-          current['host_ws'] = ws;
-        }
-        if ((current['name']?.toString().trim() ?? '').isEmpty &&
-            (ble['name']?.toString().trim() ?? '').isNotEmpty) {
-          current['name'] = ble['name'];
-        }
-        byId[id] = current;
-      }
-
-      final out = byId.values.toList();
-      out.sort(
-        (a, b) =>
-            (a['gateway_id'] as String).compareTo(b['gateway_id'] as String),
-      );
-      return out;
-    }
-
-    String gatewaySourceLabel(Map<String, dynamic> g) {
-      final source = (g['source_type'] ?? '').toString();
-      if (source == 'network+ble' || source == 'ble+network') {
-        return 'Rede+BLE';
-      }
-      if (source == 'network') return 'Rede';
-      if (source == 'ble') return 'BLE';
-      return source;
-    }
-
-    void applyDetectedGateway(Map<String, dynamic> detected) {
-      final gatewayId = detected['gateway_id']?.toString();
-      if (gatewayId == null || gatewayId.isEmpty) return;
-      selectedDetectedGatewayId = gatewayId;
-      if (gatewayIdCtrl.text.trim().isEmpty ||
-          gatewayIdCtrl.text.trim() == selectedDetectedGatewayId) {
-        gatewayIdCtrl.text = gatewayId;
-      }
-      if (gatewayIdCtrl.text.trim().isEmpty) {
-        gatewayIdCtrl.text = gatewayId;
-      }
-      final ws = detected['host_ws']?.toString();
-      if (ws != null && ws.isNotEmpty) {
-        hostCtrl.text = ws;
-      }
-      if (nameCtrl.text.trim().isEmpty || nameCtrl.text.startsWith('Gateway')) {
-        nameCtrl.text = detected['name']?.toString() ?? 'Gateway $gatewayId';
-      }
-      final explicit = detected['is_matrix'] ?? detected['isMatrix'];
-      if (explicit is bool) {
-        isMatrix = explicit;
-      } else {
-        final kind = (detected['kind'] ?? '').toString().toLowerCase();
-        if (kind == 'gateway_matrix' ||
-            kind == 'matrix' ||
-            gatewayId.toUpperCase().startsWith('RT-M-')) {
-          isMatrix = true;
-        }
-      }
-    }
-
-    final initiallyDiscovered = mergedDiscoveredGateways();
-    if (initiallyDiscovered.isNotEmpty) {
-      applyDetectedGateway(initiallyDiscovered.first);
-    }
-
-    await showDialog<void>(
-      context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (context, setState) => AnimatedBuilder(
-          animation: Listenable.merge([gatewayService, bleService]),
-          builder: (context, _) {
-            final discoveredGateways = mergedDiscoveredGateways();
-
-            return AlertDialog(
-              title: const Text('Incluir gateway'),
-              content: Form(
-                key: formKey,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      DropdownMenu<String>(
-                        key: const Key('add_gateway_property_dropdown'),
-                        controller: propertyCtrl,
-                        width: MediaQuery.of(context).size.width * 0.72,
-                        requestFocusOnTap: true,
-                        enableFilter: true,
-                        enableSearch: true,
-                        label: const Text('Propriedade rural'),
-                        hintText: 'Digite para filtrar',
-                        initialSelection: propertyId,
-                        dropdownMenuEntries: properties
-                            .map(
-                              (p) => DropdownMenuEntry<String>(
-                                value: p['id'].toString(),
-                                label: propertyLabel(p),
-                              ),
-                            )
-                            .toList(),
-                        onSelected: (v) => setState(() {
-                          propertyId = v;
-                          syncPropertyController(v);
-                        }),
-                      ),
-                      const SizedBox(height: 8),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Wrap(
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          spacing: 10,
-                          runSpacing: 8,
-                          children: [
-                            Text(
-                              gatewayService.isConnected
-                                  ? 'Gateway conectado'
-                                  : 'Gateway desconectado',
-                            ),
-                            OutlinedButton.icon(
-                              key: const Key('add_gateway_connect_button'),
-                              onPressed: gatewayService.connect,
-                              icon: Icon(
-                                gatewayService.isConnected
-                                    ? Icons.wifi
-                                    : Icons.wifi_off,
-                              ),
-                              label: Text(
-                                gatewayService.isConnected
-                                    ? 'Reconectar'
-                                    : 'Conectar gateway',
-                              ),
-                            ),
-                            OutlinedButton.icon(
-                              key: const Key('add_gateway_scan_ble_button'),
-                              onPressed: bleService.isScanning
-                                  ? null
-                                  : () => bleService.startScan(),
-                              icon: Icon(
-                                bleService.isScanning
-                                    ? Icons.bluetooth_connected
-                                    : Icons.bluetooth_searching,
-                              ),
-                              label: Text(
-                                bleService.isScanning
-                                    ? 'Buscando BLE...'
-                                    : 'Buscar Bluetooth',
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if ((bleService.lastError ?? '').isNotEmpty)
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: Text(
-                              'BLE: ${bleService.lastError}',
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                        ),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Wrap(
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          spacing: 10,
-                          children: [
-                            OutlinedButton.icon(
-                              key: const Key('add_gateway_scan_network_button'),
-                              onPressed: scanningNearbyGateways
-                                  ? null
-                                  : () async {
-                                      setState(
-                                          () => scanningNearbyGateways = true);
-                                      final found = await gatewayService
-                                          .discoverGatewaysOnLocalNetwork();
-                                      if (!context.mounted) return;
-                                      setState(() {
-                                        scanningNearbyGateways = false;
-                                        networkDiscoveredGateways = found;
-                                        final connected = gatewayService
-                                            .connectedGatewayCandidate;
-                                        if (connected != null &&
-                                            connected['gateway_id'] != null &&
-                                            networkDiscoveredGateways.every(
-                                              (g) =>
-                                                  g['gateway_id']?.toString() !=
-                                                  connected['gateway_id']
-                                                      ?.toString(),
-                                            )) {
-                                          networkDiscoveredGateways = [
-                                            connected,
-                                            ...networkDiscoveredGateways,
-                                          ];
-                                        }
-                                        final discoveredGateways =
-                                            mergedDiscoveredGateways();
-                                        if (discoveredGateways.isEmpty) return;
-                                        final selected = discoveredGateways
-                                            .cast<Map<String, dynamic>?>()
-                                            .firstWhere(
-                                              (g) =>
-                                                  g?['gateway_id']
-                                                      ?.toString() ==
-                                                  selectedDetectedGatewayId,
-                                              orElse: () => null,
-                                            );
-                                        applyDetectedGateway(
-                                          selected ?? discoveredGateways.first,
-                                        );
-                                      });
-                                    },
-                              icon: const Icon(Icons.search),
-                              label: const Text('Buscar gateways na rede'),
-                            ),
-                            if (scanningNearbyGateways)
-                              const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                          ],
-                        ),
-                      ),
-                      DropdownButtonFormField<String>(
-                        key: const Key('add_gateway_detected_dropdown'),
-                        initialValue: selectedDetectedGatewayId ?? '',
-                        items: <DropdownMenuItem<String>>[
-                          const DropdownMenuItem<String>(
-                            value: '',
-                            child:
-                                Text('Nao vincular agora (usar mapa manual)'),
-                          ),
-                          ...discoveredGateways.map(
-                            (g) => DropdownMenuItem<String>(
-                              value: g['gateway_id']?.toString() ?? '',
-                              child: Text(
-                                () {
-                                  final extras = <String>[];
-                                  final src = gatewaySourceLabel(g);
-                                  if (src.isNotEmpty) extras.add(src);
-                                  final ip = g['ip']?.toString();
-                                  if (ip != null && ip.isNotEmpty) {
-                                    extras.add(ip);
-                                  }
-                                  if (extras.isEmpty) {
-                                    return '${g['name'] ?? 'Gateway'}';
-                                  }
-                                  return '${g['name'] ?? 'Gateway'} (${extras.join(', ')})';
-                                }(),
-                              ),
-                            ),
-                          ),
-                        ],
-                        onChanged: (v) => setState(() {
-                          if (v == null || v.isEmpty) {
-                            selectedDetectedGatewayId = null;
-                            return;
-                          }
-                          final detected = discoveredGateways
-                              .cast<Map<String, dynamic>?>()
-                              .firstWhere(
-                                (g) => g?['gateway_id']?.toString() == v,
-                                orElse: () => null,
-                              );
-                          if (detected == null) return;
-                          applyDetectedGateway(detected);
-                        }),
-                        decoration: const InputDecoration(
-                          labelText: 'Gateway detectado (Wi-Fi/Bluetooth)',
-                        ),
-                      ),
-                      if (discoveredGateways.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.only(top: 6, bottom: 2),
-                          child: Text(
-                            'Nenhum gateway detectado ainda. Continue no modo manual ou tente Wi-Fi/Bluetooth.',
-                          ),
-                        ),
-                      TextFormField(
-                        key: const Key('add_gateway_id_input'),
-                        controller: gatewayIdCtrl,
-                        decoration:
-                            const InputDecoration(labelText: 'ID do gateway'),
-                        validator: (v) => (v == null || v.trim().isEmpty)
-                            ? 'Informe o ID do gateway'
-                            : null,
-                      ),
-                      TextFormField(
-                        key: const Key('add_gateway_name_input'),
-                        controller: nameCtrl,
-                        decoration:
-                            const InputDecoration(labelText: 'Nome do gateway'),
-                        validator: (v) => (v == null || v.trim().isEmpty)
-                            ? 'Informe o nome'
-                            : null,
-                      ),
-                      TextFormField(
-                        key: const Key('add_gateway_status_input'),
-                        controller: statusCtrl,
-                        decoration: const InputDecoration(labelText: 'Status'),
-                      ),
-                      TextFormField(
-                        key: const Key('add_gateway_host_input'),
-                        controller: hostCtrl,
-                        decoration:
-                            const InputDecoration(labelText: 'Host (opcional)'),
-                      ),
-                      if (auth.isAdmin)
-                        SwitchListTile(
-                          contentPadding: EdgeInsets.zero,
-                          value: isMatrix,
-                          onChanged: (v) => setState(() => isMatrix = v),
-                          title: const Text('Gateway matriz'),
-                          subtitle: const Text(
-                            'Ative para cadastrar este gateway como matriz.',
-                          ),
-                        )
-                      else
-                        ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: const Text('Tipo de gateway'),
-                          subtitle: Text(isMatrix ? 'Matriz' : 'Comum'),
-                        ),
-                      const SizedBox(height: 8),
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: const Icon(Icons.location_on),
-                        title: const Text('Posicao do gateway'),
-                        subtitle: Text(
-                          selectedPosition == null
-                              ? 'Nenhuma posicao selecionada'
-                              : '${selectedPosition!.latitude.toStringAsFixed(6)}, ${selectedPosition!.longitude.toStringAsFixed(6)}',
-                        ),
-                        trailing: TextButton(
-                          onPressed: () async {
-                            final selectedProperty = properties
-                                .cast<Map<String, dynamic>?>()
-                                .firstWhere(
-                                  (p) => p?['id'].toString() == propertyId,
-                                  orElse: () => null,
-                                );
-                            final picked = await Navigator.push<LatLng>(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => MapPointPickerScreen(
-                                  initial: selectedPosition,
-                                  propertyPolygon:
-                                      _polygonFromProperty(selectedProperty),
-                                ),
-                              ),
-                            );
-                            if (picked != null) {
-                              setState(() => selectedPosition = picked);
-                            }
-                          },
-                          child: const Text('Selecionar'),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Obrigatorio escolher uma opcao: ponto manual no mapa ou vinculacao por Wi-Fi/Bluetooth.',
-                          style: TextStyle(fontSize: 12),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancelar'),
-                ),
-                ElevatedButton(
-                  key: const Key('add_gateway_save_button'),
-                  onPressed: () async {
-                    if (!formKey.currentState!.validate()) return;
-                    if (propertyId == null || propertyId!.trim().isEmpty) {
-                      if (context.mounted) {
-                        AppFeedback.error('Selecione a propriedade rural.');
-                      }
-                      return;
-                    }
-                    final hasBinding = selectedDetectedGatewayId != null &&
-                        selectedDetectedGatewayId!.trim().isNotEmpty;
-                    final hasManualPosition = selectedPosition != null;
-                    if (!hasBinding && !hasManualPosition) {
-                      if (context.mounted) {
-                        AppFeedback.error(
-                          'Selecione ponto no mapa ou vincule um gateway detectado (Wi-Fi/Bluetooth).',
-                        );
-                      }
-                      return;
-                    }
-                    await fb.addGateway(
-                      name: nameCtrl.text.trim(),
-                      status: statusCtrl.text.trim(),
-                      isMatrix: isMatrix,
-                      gatewayId: hasBinding
-                          ? selectedDetectedGatewayId!.trim()
-                          : gatewayIdCtrl.text.trim(),
-                      host: hostCtrl.text.trim().isEmpty
-                          ? null
-                          : hostCtrl.text.trim(),
-                      propertyId: propertyId,
-                      lat:
-                          hasManualPosition ? selectedPosition!.latitude : null,
-                      lon: hasManualPosition
-                          ? selectedPosition!.longitude
-                          : null,
-                    );
-                    if (context.mounted) Navigator.pop(context);
-                  },
-                  child: const Text('Salvar'),
-                ),
-              ],
-            );
-          },
-        ),
-      ),
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const AddGatewayScreen()),
     );
   }
 
@@ -2902,114 +1495,10 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _openPlusActions(BuildContext context) {
-    final auth = context.read<AuthService>();
-    showModalBottomSheet<void>(
-      context: context,
-      builder: (_) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              key: const Key('home_action_new_area'),
-              leading: const Icon(Icons.map),
-              title: const Text('Novo poligono'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const AreaEditorScreen()),
-                );
-              },
-            ),
-            ListTile(
-              key: const Key('home_action_start_herding'),
-              leading: const Icon(Icons.alt_route),
-              title: const Text('Solicitar arrebanhamento'),
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const HerdingScreen()),
-                );
-              },
-            ),
-            if (auth.isAdmin)
-              ListTile(
-                key: const Key('home_action_add_collar'),
-                leading: const Icon(Icons.pets),
-                title: const Text('Incluir coleira'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  await _showAddDeviceDialog(context);
-                },
-              ),
-            if (auth.isAdmin)
-              ListTile(
-                key: const Key('home_action_add_gateway'),
-                leading: const Icon(Icons.wifi),
-                title: const Text('Incluir gateway'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  await _showAddGatewayDialog(context);
-                },
-              ),
-            if (auth.isAdmin)
-              ListTile(
-                key: const Key('home_action_repair_cloud_state'),
-                leading: const Icon(Icons.sync_problem),
-                title: const Text('Reparar estado cloud'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  try {
-                    final result = await context
-                        .read<CloudService>()
-                        .repairCloudState(apply: true);
-                    if (!context.mounted) return;
-                    AppFeedback.success(
-                      'Estado cloud reparado: propriedades=${result['propertyCount'] ?? 0}, gateways=${result['gatewayCount'] ?? 0}.',
-                    );
-                  } catch (e) {
-                    if (!context.mounted) return;
-                    AppFeedback.error(_repairCloudStateErrorMessage(e));
-                  }
-                },
-              ),
-            if (auth.isAdmin)
-              ListTile(
-                key: const Key('home_action_add_property'),
-                leading: const Icon(Icons.landscape),
-                title: const Text('Incluir propriedade rural'),
-                onTap: () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const RuralPropertyEditorScreen(),
-                    ),
-                  );
-                },
-              ),
-            if (auth.isAdmin)
-              ListTile(
-                key: const Key('home_action_update_role'),
-                leading: const Icon(Icons.admin_panel_settings),
-                title: const Text('Vincular adm'),
-                onTap: () async {
-                  Navigator.pop(context);
-                  await _showUpdateRoleDialog(context);
-                },
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
-    final gateway = context.watch<GatewayService>();
+    context.watch<GatewayService>();
     final filters = context.watch<MapFilterService>();
     final uid = auth.user?.uid;
     final authKey = resolveHomeAuthKey(uid: uid, role: auth.role);
@@ -3030,33 +1519,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _updateStreamsIfNeeded(uid: currentUid, isAdmin: auth.isAdmin);
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Home (${auth.isAdmin ? 'adm' : 'user'})'),
-        bottom: auth.isProfileLoading
-            ? const PreferredSize(
-                preferredSize: Size.fromHeight(4),
-                child: LinearProgressIndicator(minHeight: 4),
-              )
-            : null,
-        actions: [
-          IconButton(
-            key: const Key('home_connect_gateway_button'),
-            icon: const Icon(Icons.wifi),
-            onPressed: gateway.connect,
-          ),
-          IconButton(
-            key: const Key('home_refresh_button'),
-            icon: const Icon(Icons.refresh),
-            onPressed: _refreshFromDatabase,
-            tooltip: 'Atualizar',
-          ),
-          IconButton(
-            key: const Key('home_logout_button'),
-            icon: const Icon(Icons.logout),
-            onPressed: () => context.read<AuthService>().signOut(),
-          ),
-        ],
-      ),
       body: StreamBuilder<List<Map<String, dynamic>>>(
         key: ValueKey('props-$currentUid-$_refreshTick'),
         stream: _propertiesStream,
@@ -3190,11 +1652,13 @@ class _HomeScreenState extends State<HomeScreen> {
                               return selectedGatewayIds.contains(gatewayId);
                             }).toList();
 
-                      final markers = <Marker>[];
+                      final collarMarkers = <Marker>[];
+                      final gatewayMarkers = <Marker>[];
+                      List<Marker> markers = const [];
                       final polygons = <Polygon>[];
                       final areaLabelMarkers = <Marker>[];
                       try {
-                        markers.addAll(
+                        collarMarkers.addAll(
                           devices.map((d) {
                             final position = _resolvedMarkerTelemetryForDevice(
                               d,
@@ -3228,7 +1692,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         for (final g in gateways) {
                           final point = _gatewayMarkerPoint(g);
                           if (point == null) continue;
-                          markers.add(
+                          gatewayMarkers.add(
                             Marker(
                               point: point,
                               width: 40,
@@ -3245,6 +1709,12 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           );
                         }
+
+                        markers = switch (_mapChipFilter) {
+                          'collars' => collarMarkers,
+                          'gateways' => gatewayMarkers,
+                          _ => [...collarMarkers, ...gatewayMarkers],
+                        };
 
                         for (final a in filteredAreas) {
                           final raw = (a['perimeter'] as List?) ?? const [];
@@ -3424,166 +1894,215 @@ class _HomeScreenState extends State<HomeScreen> {
                           ? 14.0
                           : _countryOverviewZoom(center.latitude);
 
-                      return Column(
+                      return Stack(
                         children: [
-                          Container(
-                            width: double.infinity,
-                            color: Colors.green.withValues(alpha: 0.08),
-                            padding: const EdgeInsets.all(10),
-                            child: Text(
-                              'Propriedades: ${properties.length} | Areas: ${filteredAreas.length} | Coleiras: ${devices.length} | Gateways: ${gateways.length}'
-                              '${filters.hasAnyFilter ? ' (filtrado)' : ''}',
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
-                          Expanded(
-                            child: Stack(
+                          Positioned.fill(
+                            child: FlutterMap(
+                              mapController: _mapController,
+                              options: MapOptions(
+                                initialCenter: center,
+                                initialZoom: initialZoom,
+                                initialCameraFit: fitBounds == null
+                                    ? null
+                                    : CameraFit.bounds(
+                                        bounds: fitBounds,
+                                        padding: const EdgeInsets.all(40),
+                                      ),
+                                onTap: (_, p) => selectPolygonAt(p),
+                              ),
                               children: [
-                                FlutterMap(
-                                  mapController: _mapController,
-                                  options: MapOptions(
-                                    initialCenter: center,
-                                    initialZoom: initialZoom,
-                                    initialCameraFit: fitBounds == null
-                                        ? null
-                                        : CameraFit.bounds(
-                                            bounds: fitBounds,
-                                            padding: const EdgeInsets.all(40),
+                                TileLayer(
+                                  urlTemplate:
+                                      'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                  subdomains: const ['a', 'b', 'c'],
+                                  userAgentPackageName: ManualSettings
+                                      .mapUserAgentPackageName,
+                                ),
+                                PolygonLayer(polygons: polygons),
+                                MarkerLayer(markers: areaLabelMarkers),
+                                MarkerLayer(markers: markers),
+                                if (_userPosition != null)
+                                  MarkerLayer(
+                                    markers: [
+                                      Marker(
+                                        point: _userPosition!,
+                                        width: 42,
+                                        height: 42,
+                                        child: Transform.rotate(
+                                          angle: _userHeading *
+                                              (math.pi / 180.0),
+                                          child: const Icon(
+                                            Icons.navigation,
+                                            color: Colors.blue,
+                                            size: 34,
                                           ),
-                                    onTap: (_, p) => selectPolygonAt(p),
-                                  ),
-                                  children: [
-                                    TileLayer(
-                                      urlTemplate:
-                                          'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                                      subdomains: const ['a', 'b', 'c'],
-                                      userAgentPackageName: ManualSettings
-                                          .mapUserAgentPackageName,
-                                    ),
-                                    PolygonLayer(polygons: polygons),
-                                    MarkerLayer(markers: areaLabelMarkers),
-                                    MarkerLayer(markers: markers),
-                                    if (_userPosition != null)
-                                      MarkerLayer(
-                                        markers: [
-                                          Marker(
-                                            point: _userPosition!,
-                                            width: 42,
-                                            height: 42,
-                                            child: Transform.rotate(
-                                              angle: _userHeading *
-                                                  (math.pi / 180.0),
-                                              child: const Icon(
-                                                Icons.navigation,
-                                                color: Colors.blue,
-                                                size: 34,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    if (_selectedPolygonAnchor != null)
-                                      MarkerLayer(
-                                        markers: [
-                                          Marker(
-                                            point: LatLng(
-                                              _selectedPolygonAnchor!.latitude,
-                                              _selectedPolygonAnchor!
-                                                      .longitude +
-                                                  0.00025,
-                                            ),
-                                            width: 40,
-                                            height: 40,
-                                            child: FloatingActionButton.small(
-                                              heroTag: 'edit-polygon',
-                                              onPressed: () =>
-                                                  _openSelectedPolygonEditor(
-                                                      context),
-                                              child: const Icon(Icons.edit),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    const Scalebar(
-                                      alignment: Alignment.bottomRight,
-                                      padding: EdgeInsets.only(
-                                        right: 12,
-                                        bottom: 12,
-                                      ),
-                                      lineColor: Color(0xFF173120),
-                                      textStyle: TextStyle(
-                                        color: Color(0xFF173120),
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600,
-                                      ),
+                                        ),
                                       ),
                                     ],
                                   ),
-                                if (homeIssues.isNotEmpty)
-                                  Positioned(
-                                    top: 12,
-                                    left: 12,
+                                if (_selectedPolygonAnchor != null)
+                                  MarkerLayer(
+                                    markers: [
+                                      Marker(
+                                        point: LatLng(
+                                          _selectedPolygonAnchor!.latitude,
+                                          _selectedPolygonAnchor!.longitude +
+                                              0.00025,
+                                        ),
+                                        width: 40,
+                                        height: 40,
+                                        child: FloatingActionButton.small(
+                                          heroTag: 'edit-polygon',
+                                          onPressed: () =>
+                                              _openSelectedPolygonEditor(
+                                                  context),
+                                          child: const Icon(Icons.edit),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                const Scalebar(
+                                  alignment: Alignment.bottomRight,
+                                  padding: EdgeInsets.only(
                                     right: 12,
-                                    child: Material(
-                                      color: Colors.transparent,
-                                      child: Container(
-                                        padding: const EdgeInsets.all(12),
-                                        decoration: BoxDecoration(
-                                          color: const Color(0xFFFDECEC),
-                                          borderRadius:
-                                              BorderRadius.circular(12),
-                                          border: Border.all(
-                                            color: const Color(0xFFE5A5A5),
-                                          ),
-                                        ),
-                                        child: Row(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            const Padding(
-                                              padding:
-                                                  EdgeInsets.only(top: 2),
-                                              child: Icon(
-                                                Icons.warning_amber_rounded,
-                                                color: Color(0xFFB3261E),
-                                              ),
-                                            ),
-                                            const SizedBox(width: 10),
-                                            Expanded(
-                                              child: Text(
-                                                homeIssues.join('\n'),
-                                                style: const TextStyle(
-                                                  color: Color(0xFF5F1111),
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
+                                    bottom: 12,
                                   ),
-                                Positioned(
-                                  left: 12,
-                                  bottom: 12,
-                                  child: Column(
-                                    children: [
-                                      FloatingActionButton.small(
-                                        heroTag: 'north-up',
-                                        onPressed: _resetNorthUp,
-                                        child: const Icon(Icons.explore),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      FloatingActionButton.small(
-                                        heroTag: 'center-user',
-                                        onPressed: _centerOnUser,
-                                        child: const Icon(Icons.my_location),
-                                      ),
-                                    ],
+                                  lineColor: Colors.white54,
+                                  textStyle: TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
                               ],
                             ),
+                          ),
+                          Positioned(
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            child: SafeArea(
+                              bottom: false,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                        16, 12, 16, 8),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: _MapSearchBar(
+                                            count: devices.length +
+                                                gateways.length,
+                                            onTap: () => _openPropertySearch(
+                                                allProperties),
+                                            selectedPropertyName:
+                                                _selectedPropertyName,
+                                            onClear: () => setState(
+                                                () => _selectedPropertyName =
+                                                    null),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        _NotifBell(
+                                          onTap: () => Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (_) =>
+                                                  const EventsScreen(),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  RTFilterChips(
+                                    chips: [
+                                      RTFilterChipData(
+                                        id: 'all',
+                                        label: 'Todos',
+                                        icon: Icons.layers_outlined,
+                                        count: devices.length +
+                                            gateways.length,
+                                      ),
+                                      RTFilterChipData(
+                                        id: 'collars',
+                                        label: 'Coleiras',
+                                        count: devices.length,
+                                      ),
+                                      RTFilterChipData(
+                                        id: 'gateways',
+                                        label: 'Gateways',
+                                        icon: Icons.router_outlined,
+                                        count: gateways.length,
+                                      ),
+                                    ],
+                                    selectedIds: {_mapChipFilter},
+                                    onToggle: (id) => setState(
+                                        () => _mapChipFilter = id),
+                                  ),
+                                  const SizedBox(height: 8),
+                                ],
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            left: 12,
+                            bottom: 8,
+                            child: _MapControlsStack(
+                              onNorth: _resetNorthUp,
+                              onLocate: _centerOnUser,
+                              onLayers: () => AppFeedback.warning(
+                                  'Seleção de camadas em breve.'),
+                            ),
+                          ),
+                          if (homeIssues.isNotEmpty)
+                            Positioned(
+                              top: 140,
+                              left: 12,
+                              right: 64,
+                              child: Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: RTColors.dangerSoft,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: RTColors.danger
+                                        .withValues(alpha: 0.4),
+                                  ),
+                                ),
+                                child: Row(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 2),
+                                      child: Icon(
+                                        Icons.warning_amber_rounded,
+                                        color: RTColors.danger,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        homeIssues.join('\n'),
+                                        style: RTTypography.bodySmall
+                                            .copyWith(
+                                          color: RTColors.danger,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          Positioned(
+                            right: 16,
+                            bottom: 8,
+                            child: _buildHomeFab(context, auth),
                           ),
                         ],
                       );
@@ -3595,36 +2114,397 @@ class _HomeScreenState extends State<HomeScreen> {
           );
         },
       ),
-      bottomNavigationBar: BottomAppBar(
-        child: Row(
-          children: [
-            IconButton(
-              key: const Key('home_open_actions_button'),
-              icon: const Icon(Icons.add_circle_outline),
-              tooltip: 'Acoes',
-              onPressed: () => _openPlusActions(context),
-            ),
-            IconButton(
-              key: const Key('home_open_events_button'),
-              icon: const Icon(Icons.notifications_outlined),
-              tooltip: 'Telemetria',
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const EventsScreen()),
-              ),
-            ),
-            const Spacer(),
-            IconButton(
-              key: const Key('home_open_profile_button'),
-              icon: const Icon(Icons.person_outline),
-              tooltip: 'Perfil',
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const ProfileScreen()),
-              ),
-            ),
-          ],
+    );
+  }
+
+  Widget _buildHomeFab(BuildContext context, AuthService auth) {
+    final actions = <RTFabAction>[
+      RTFabAction(
+        icon: Icons.crop_free,
+        label: 'Novo polígono',
+        actionKey: const Key('home_action_new_area'),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const AreaEditorScreen()),
         ),
+      ),
+      RTFabAction(
+        icon: Icons.route_outlined,
+        label: 'Solicitar arrebanhamento',
+        actionKey: const Key('home_action_start_herding'),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const HerdingScreen()),
+        ),
+      ),
+      if (auth.isAdmin)
+        RTFabAction(
+          icon: Icons.pets_outlined,
+          label: 'Incluir coleira',
+          actionKey: const Key('home_action_add_collar'),
+          onTap: () => _showAddDeviceDialog(context),
+        ),
+      if (auth.isAdmin)
+        RTFabAction(
+          icon: Icons.wifi,
+          label: 'Incluir gateway',
+          actionKey: const Key('home_action_add_gateway'),
+          onTap: () => _showAddGatewayDialog(context),
+        ),
+      if (auth.isAdmin)
+        RTFabAction(
+          icon: Icons.sync_problem_outlined,
+          label: 'Reparar estado cloud',
+          actionKey: const Key('home_action_repair_cloud_state'),
+          tone: RTColors.warn,
+          onTap: () async {
+            try {
+              final result = await context
+                  .read<CloudService>()
+                  .repairCloudState(apply: true);
+              if (!context.mounted) return;
+              AppFeedback.success(
+                'Estado cloud reparado: propriedades=${result['propertyCount'] ?? 0}, gateways=${result['gatewayCount'] ?? 0}.',
+              );
+            } catch (e) {
+              if (!context.mounted) return;
+              AppFeedback.error(_repairCloudStateErrorMessage(e));
+            }
+          },
+        ),
+      if (auth.isAdmin)
+        RTFabAction(
+          icon: Icons.landscape_outlined,
+          label: 'Incluir propriedade rural',
+          actionKey: const Key('home_action_add_property'),
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const RuralPropertyEditorScreen(),
+            ),
+          ),
+        ),
+      if (auth.isAdmin)
+        RTFabAction(
+          icon: Icons.admin_panel_settings_outlined,
+          label: 'Vincular adm',
+          actionKey: const Key('home_action_update_role'),
+          onTap: () => _showUpdateRoleDialog(context),
+        ),
+    ];
+
+    return RTFab(
+      fabKey: const Key('home_open_actions_button'),
+      label: 'Novo',
+      icon: Icons.add,
+      actions: actions,
+    );
+  }
+}
+
+class _MapSearchBar extends StatelessWidget {
+  const _MapSearchBar({
+    required this.count,
+    this.onTap,
+    this.selectedPropertyName,
+    this.onClear,
+  });
+
+  final int count;
+  final VoidCallback? onTap;
+  final String? selectedPropertyName;
+  final VoidCallback? onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasSelection = selectedPropertyName != null;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: 48,
+        decoration: BoxDecoration(
+          color: RTColors.bg.withValues(alpha: 0.96),
+          borderRadius: BorderRadius.circular(RTRadius.r3),
+          border: Border.all(
+            color: hasSelection ? RTColors.primary : RTColors.hair,
+          ),
+          boxShadow: RTElevation.sh1,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.only(left: 14, right: 4),
+          child: Row(
+            children: [
+              Icon(
+                Icons.search,
+                size: 20,
+                color: hasSelection ? RTColors.primary : RTColors.inkMute,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  hasSelection
+                      ? selectedPropertyName!
+                      : 'Buscar propriedade…',
+                  style: RTTypography.body.copyWith(
+                    color: hasSelection ? RTColors.ink : RTColors.inkMute,
+                    fontWeight: hasSelection
+                        ? FontWeight.w600
+                        : FontWeight.normal,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (hasSelection)
+                GestureDetector(
+                  onTap: onClear,
+                  behavior: HitTestBehavior.opaque,
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Icon(Icons.close,
+                        size: 18, color: RTColors.inkSoft),
+                  ),
+                )
+              else ...[
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: RTColors.bgAlt,
+                    borderRadius: BorderRadius.circular(RTRadius.rFull),
+                  ),
+                  child: Text(
+                    '$count',
+                    style: RTTypography.mono.copyWith(fontSize: 11),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Icon(Icons.keyboard_arrow_down,
+                    size: 18, color: RTColors.inkSoft),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NotifBell extends StatelessWidget {
+  const _NotifBell({this.onTap});
+
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          color: RTColors.bg.withValues(alpha: 0.96),
+          borderRadius: BorderRadius.circular(RTRadius.r3),
+          border: Border.all(color: RTColors.hair),
+          boxShadow: RTElevation.sh1,
+        ),
+        child: Icon(
+          Icons.notifications_outlined,
+          size: 22,
+          color: RTColors.inkSoft,
+        ),
+      ),
+    );
+  }
+}
+
+class _MapControlsStack extends StatelessWidget {
+  const _MapControlsStack({
+    required this.onNorth,
+    required this.onLocate,
+    required this.onLayers,
+  });
+
+  final VoidCallback onNorth;
+  final VoidCallback onLocate;
+  final VoidCallback onLayers;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _controlBtn(Icons.layers_outlined, 'Camadas', onLayers),
+        _controlBtn(Icons.my_location, 'Centralizar', onLocate),
+        _controlBtn(Icons.explore_outlined, 'Norte', onNorth),
+      ],
+    );
+  }
+
+  Widget _controlBtn(IconData icon, String tooltip, VoidCallback onTap) {
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 44,
+          height: 44,
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          decoration: BoxDecoration(
+            color: RTColors.primary,
+            borderRadius: BorderRadius.circular(RTRadius.r3),
+            boxShadow: RTElevation.sh1,
+          ),
+          child: Icon(icon, size: 22, color: Colors.white),
+        ),
+      ),
+    );
+  }
+}
+
+class _PropertyPickerSheet extends StatefulWidget {
+  const _PropertyPickerSheet({required this.properties});
+
+  final List<Map<String, dynamic>> properties;
+
+  @override
+  State<_PropertyPickerSheet> createState() => _PropertyPickerSheetState();
+}
+
+class _PropertyPickerSheetState extends State<_PropertyPickerSheet> {
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<Map<String, dynamic>> get _filtered {
+    if (_query.isEmpty) return widget.properties;
+    final q = _query.toLowerCase();
+    return widget.properties
+        .where((p) =>
+            (p['name'] ?? '').toString().toLowerCase().contains(q))
+        .toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final screen = MediaQuery.of(context).size;
+    final filtered = _filtered;
+
+    return SizedBox(
+      height: screen.height * 0.6,
+      child: Column(
+        children: [
+          // Handle
+          Padding(
+            padding: const EdgeInsets.only(top: 12, bottom: 8),
+            child: Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: RTColors.hair,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          // Search field
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: TextField(
+              controller: _searchCtrl,
+              autofocus: true,
+              decoration: InputDecoration(
+                hintText: 'Buscar propriedade…',
+                hintStyle:
+                    RTTypography.body.copyWith(color: RTColors.inkMute),
+                prefixIcon:
+                    Icon(Icons.search, size: 20, color: RTColors.inkMute),
+                suffixIcon: _query.isNotEmpty
+                    ? IconButton(
+                        icon:
+                            Icon(Icons.close, size: 18, color: RTColors.inkSoft),
+                        onPressed: () {
+                          _searchCtrl.clear();
+                          setState(() => _query = '');
+                        },
+                      )
+                    : null,
+                filled: true,
+                fillColor: RTColors.bgAlt,
+                contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(RTRadius.r3),
+                  borderSide: BorderSide(color: RTColors.hair),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(RTRadius.r3),
+                  borderSide: BorderSide(color: RTColors.hair),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(RTRadius.r3),
+                  borderSide: BorderSide(color: RTColors.primary),
+                ),
+              ),
+              onChanged: (v) => setState(() => _query = v),
+            ),
+          ),
+          // List
+          Expanded(
+            child: filtered.isEmpty
+                ? Center(
+                    child: Text(
+                      'Nenhuma propriedade encontrada.',
+                      style: RTTypography.bodySmall
+                          .copyWith(color: RTColors.inkMute),
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: filtered.length,
+                    itemBuilder: (ctx, i) {
+                      final p = filtered[i];
+                      final name =
+                          (p['name'] ?? 'Propriedade').toString();
+                      final rawPoints = p['points'] as List<dynamic>?;
+                      final hasPolygon =
+                          rawPoints != null && rawPoints.isNotEmpty;
+                      return ListTile(
+                        leading: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: RTColors.primarySoft,
+                            borderRadius:
+                                BorderRadius.circular(RTRadius.r2),
+                          ),
+                          child: Icon(
+                            Icons.crop_square_outlined,
+                            size: 20,
+                            color: RTColors.primary,
+                          ),
+                        ),
+                        title: Text(name, style: RTTypography.body),
+                        subtitle: hasPolygon
+                            ? Text(
+                                '${rawPoints.length} vértices',
+                                style: RTTypography.bodySmall
+                                    .copyWith(color: RTColors.inkMute),
+                              )
+                            : Text(
+                                'Sem polígono definido',
+                                style: RTTypography.bodySmall
+                                    .copyWith(color: RTColors.inkMute),
+                              ),
+                        trailing: Icon(Icons.chevron_right,
+                            color: RTColors.inkSoft),
+                        onTap: () => Navigator.pop(ctx, p),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }

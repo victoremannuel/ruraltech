@@ -46,9 +46,7 @@ ruraltech10-firebase-adminsdk-fbsvc-66b85a4f95.json
 /gateway-matriz/build/
 /diag-esp32-sensors/build/
 .DS_Store
-/gateway-matriz/manual_settings.local.h
 /app/android/key.properties
-graphify-out
 .build_*/
 /.vscode/*
 /temp/*
@@ -56,5 +54,14 @@ graphify-out
 **/node_modules
 /scripts/migration/.env
 /scripts/migration/package-lock.json
-.gitignore
 .env
+/.obsidian/**
+/obsidian
+
+# keep graph outputs, skip heavy/local-only files
+graphify-out/cache/            # optional: commit for shared extraction speed, skip to keep repo small
+graphify-out/manifest.json     # mtime-based, invalid after git clone — always gitignore this
+graphify-out/cost.json         # local token tracking, not useful to share
+/.venv/                        # optional: commit for shared extraction speed, skip to keep repo small
+
+**/graphify-out/

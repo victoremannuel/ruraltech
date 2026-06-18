@@ -24,7 +24,7 @@ Todos os fluxos de dados do sistema, do app até a coleira e de volta ao app.
 ### Fluxo 1: Edição de Propriedade → SET_FENCE Automático
 
 ```
-App salva rural_properties.points (Supabase)
+App salva rural_properties.points (Supabase [[modelagem-dados-supabase]])
 → Supabase trigger onWrite → autoSyncPropertyFence
 → Cria SET_FENCE determinístico (cmd_id = SHA256(property_id+polygon))
 → Grava em Supabase property_commands
@@ -32,7 +32,7 @@ App salva rural_properties.points (Supabase)
 → Gateway Matriz: stream RTDB (prioritário) + polling fallback
 → Matriz envia SET_FENCE via LoRa para TODAS as coleiras da propriedade
 → Coleira: aplica polígono em NVS + emite polygon_apply_result
-→ Matriz: grava propertyEvents + propertyCommandEvents
+→ Matriz: grava propertyEvents + propertyCommandEvents [[regras-negocio]]
 → App: lê log via Supabase Realtime
 → App abre evento: consulta polígono atual, busca telemetria histórica
 → App renderiza preview SVG dentro da sanfona do evento
@@ -66,7 +66,7 @@ App chama CloudService.enqueueScopedCommand(command, propertyId, ...)
 → App recebe via Realtime
 ```
 
-### Fluxo 4: Operação de Herding
+### Fluxo 4: Operação de Herding [[regras-negocio]]
 
 ```
 App HerdingScreen:

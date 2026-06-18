@@ -255,7 +255,6 @@ class _TopFeedbackBanner extends StatelessWidget {
                 ),
               ),
               IconButton(
-                tooltip: 'Fechar aviso',
                 onPressed: _appFeedbackController.clear,
                 color: Colors.white,
                 splashRadius: 18,

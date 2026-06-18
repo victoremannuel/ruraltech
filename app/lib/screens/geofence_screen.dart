@@ -1,9 +1,17 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
+import '../components/domain/rt_confirm_lora.dart';
+import '../components/primitives/rt_button.dart';
 import '../config/manual_settings.dart';
+import '../design/colors.dart';
+import '../design/tokens.dart';
+import '../design/typography.dart';
 import '../services/auth_service.dart';
 import '../services/cloud_service.dart';
 import '../utils/top_feedback.dart';
@@ -33,6 +41,7 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
   late LatLng _center;
   final List<LatLng> _polygonPoints = [];
   bool _isLoadingSavedFence = true;
+  bool _isPublishing = false;
 
   @override
   void initState() {
@@ -67,7 +76,7 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
 
   Future<void> _publishFence() async {
     if (_polygonPoints.length < 3) {
-      AppFeedback.error('Adicione ao menos 3 pontos ao poligono.');
+      AppFeedback.error('Adicione ao menos 3 pontos ao polígono.');
       return;
     }
 
@@ -83,44 +92,172 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
     }
     final cloud = context.read<CloudService>();
 
+    setState(() => _isPublishing = true);
     final points =
         _polygonPoints.map((p) => <double>[p.latitude, p.longitude]).toList();
-    await cloud.saveFence(widget.deviceId, uid, points);
     try {
-      await cloud.enqueueScopedCommand(
-        command: 'SET_FENCE',
-        propertyId: propertyId,
-        requestedByUid: uid,
-        requestedByRole: auth.role,
-        targetDeviceIds: <String>[widget.deviceId],
-        payload: {'points': points},
-      );
-      if (!mounted) return;
-      AppFeedback.success('Cerca salva e enfileirada para a matriz.');
-    } catch (e) {
-      if (!mounted) return;
-      AppFeedback.warning(
-        'Cerca salva, mas falhou o enfileiramento para envio LoRa ($e).',
-      );
+      await cloud.saveFence(widget.deviceId, uid, points);
+      try {
+        await cloud.enqueueScopedCommand(
+          command: 'SET_FENCE',
+          propertyId: propertyId,
+          requestedByUid: uid,
+          requestedByRole: auth.role,
+          targetDeviceIds: <String>[widget.deviceId],
+          payload: {'points': points},
+        );
+        if (!mounted) return;
+        AppFeedback.success('Cerca salva e enfileirada para a matriz.');
+      } catch (e) {
+        if (!mounted) return;
+        AppFeedback.warning(
+          'Cerca salva, mas falhou o enfileiramento para envio LoRa ($e).',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isPublishing = false);
     }
+  }
+
+  Future<bool> _confirmDiscard(BuildContext context) async {
+    if (_polygonPoints.isEmpty) return true;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Descartar alterações?'),
+        content: const Text(
+            'Você tem vértices não publicados. Deseja sair sem publicar a cerca?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Continuar editando'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style:
+                TextButton.styleFrom(foregroundColor: RTColors.danger),
+            child: const Text('Descartar'),
+          ),
+        ],
+      ),
+    );
+    return result == true;
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Geofence no mapa')),
-      body: Column(
-        children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            color: Colors.green.withValues(alpha: 0.08),
-            child: Text(
-              'Toque no mapa para adicionar vertices. Pontos: ${_polygonPoints.length}/$_maxFencePoints',
-            ),
+    final topPad = MediaQuery.of(context).padding.top;
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        final ok = await _confirmDiscard(context);
+        if (ok && context.mounted) Navigator.pop(context);
+      },
+      child: Scaffold(
+      extendBodyBehindAppBar: true,
+      appBar: AppBar(
+        backgroundColor: Colors.black.withValues(alpha: 0.45),
+        foregroundColor: Colors.white,
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
+        iconTheme: const IconThemeData(color: Colors.white),
+        titleTextStyle:
+            RTTypography.h3.copyWith(color: Colors.white, fontSize: 17),
+        title: Text('Geofence · ${widget.deviceId}'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () async {
+            final ok = await _confirmDiscard(context);
+            if (ok && context.mounted) Navigator.pop(context);
+          },
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadSavedFence,
+            tooltip: 'Recarregar',
           ),
-          if (_isLoadingSavedFence) const LinearProgressIndicator(minHeight: 2),
-          Expanded(
+          IconButton(
+            icon: const Icon(Icons.more_horiz),
+            tooltip: 'Mais',
+            onPressed: () {
+              HapticFeedback.selectionClick();
+              showModalBottomSheet<void>(
+                context: context,
+                builder: (ctx) => SafeArea(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ListTile(
+                        leading: const Icon(Icons.file_upload_outlined),
+                        title: const Text('Importar GPX'),
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          AppFeedback.warning(
+                              'Importação GPX disponível em breve.');
+                        },
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.file_download_outlined),
+                        title: const Text('Exportar'),
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          AppFeedback.warning(
+                              'Exportação disponível em breve.');
+                        },
+                      ),
+                      ListTile(
+                        leading:
+                            Icon(Icons.delete_sweep_outlined, color: RTColors.danger),
+                        title: Text('Limpar tudo',
+                            style: TextStyle(color: RTColors.danger)),
+                        onTap: () async {
+                          Navigator.pop(ctx);
+                          if (_polygonPoints.isEmpty) return;
+                          final ok = await showDialog<bool>(
+                            context: context,
+                            builder: (d) => AlertDialog(
+                              title: const Text('Limpar todos os vértices?'),
+                              actions: [
+                                TextButton(
+                                  onPressed: () =>
+                                      Navigator.pop(d, false),
+                                  child: const Text('Cancelar'),
+                                ),
+                                TextButton(
+                                  onPressed: () =>
+                                      Navigator.pop(d, true),
+                                  style: TextButton.styleFrom(
+                                      foregroundColor: RTColors.danger),
+                                  child: const Text('Limpar'),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (ok == true && mounted) {
+                            HapticFeedback.mediumImpact();
+                            setState(_polygonPoints.clear);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+        flexibleSpace: ClipRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+            child: Container(color: Colors.transparent),
+          ),
+        ),
+      ),
+      body: Stack(
+        children: [
+          Positioned.fill(
             child: FlutterMap(
               options: MapOptions(
                 initialCenter: _center,
@@ -137,8 +274,8 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
               ),
               children: [
                 TileLayer(
-                  urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  subdomains: const ['a', 'b', 'c'],
+                  urlTemplate:
+                      'https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
                   userAgentPackageName: ManualSettings.mapUserAgentPackageName,
                 ),
                 PolygonLayer(
@@ -146,9 +283,9 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
                     if (_polygonPoints.length >= 3)
                       Polygon(
                         points: _polygonPoints,
-                        color: Colors.green.withValues(alpha: 0.25),
-                        borderColor: Colors.green,
-                        borderStrokeWidth: 3,
+                        color: RTColors.accent.withValues(alpha: 0.18),
+                        borderColor: RTColors.accent,
+                        borderStrokeWidth: 2,
                       ),
                   ],
                 ),
@@ -158,37 +295,17 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
                       Polyline(
                         points: _polygonPoints,
                         strokeWidth: 2,
-                        color: Colors.green.shade700,
+                        color: RTColors.accent.withValues(alpha: 0.7),
                       ),
                   ],
                 ),
-                MarkerLayer(
-                  markers: _polygonPoints
-                      .map(
-                        (p) => Marker(
-                          point: p,
-                          width: 18,
-                          height: 18,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: Colors.green.shade800,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 2),
-                            ),
-                          ),
-                        ),
-                      )
-                      .toList(),
-                ),
+                MarkerLayer(markers: _buildVertexMarkers()),
                 const Scalebar(
                   alignment: Alignment.bottomRight,
-                  padding: EdgeInsets.only(
-                    right: 12,
-                    bottom: 12,
-                  ),
-                  lineColor: Color(0xFF173120),
+                  padding: EdgeInsets.only(right: 12, bottom: 12),
+                  lineColor: Colors.white54,
                   textStyle: TextStyle(
-                    color: Color(0xFF173120),
+                    color: Colors.white70,
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
                   ),
@@ -196,45 +313,252 @@ class _GeofenceScreenState extends State<GeofenceScreen> {
               ],
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    key: const Key('geofence_undo_button'),
-                    onPressed: _polygonPoints.isEmpty
-                        ? null
-                        : () {
-                            setState(() => _polygonPoints.removeLast());
-                          },
-                    child: const Text('Desfazer'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton(
-                    key: const Key('geofence_clear_button'),
-                    onPressed: _polygonPoints.isEmpty
-                        ? null
-                        : () {
-                            setState(_polygonPoints.clear);
-                          },
-                    child: const Text('Limpar'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ElevatedButton(
-                    key: const Key('geofence_publish_button'),
-                    onPressed: _publishFence,
-                    child: const Text('Publicar'),
-                  ),
-                ),
-              ],
+          if (_isLoadingSavedFence)
+            Positioned(
+              top: kToolbarHeight + topPad,
+              left: 0,
+              right: 0,
+              child: const LinearProgressIndicator(minHeight: 2),
+            ),
+          Positioned(
+            top: kToolbarHeight + topPad + 12,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: _HudPill(
+                vertices: _polygonPoints.length,
+                maxVertices: _maxFencePoints,
+              ),
             ),
           ),
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: _buildActionsBar(),
+          ),
         ],
+      ),
+    ),  // Scaffold
+    );  // PopScope
+  }
+
+
+  List<Marker> _buildVertexMarkers() {
+    final markers = <Marker>[];
+    for (var i = 0; i < _polygonPoints.length; i++) {
+      final point = _polygonPoints[i];
+      final idx = i;
+      markers.add(
+        Marker(
+          point: point,
+          width: 28,
+          height: 28,
+          child: GestureDetector(
+            onLongPress: () {
+              HapticFeedback.mediumImpact();
+              setState(() => _polygonPoints.removeAt(idx));
+            },
+            child: Container(
+              decoration: BoxDecoration(
+                color: RTColors.primaryDeep,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+                boxShadow: RTElevation.sh2,
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                '${idx + 1}',
+                style: RTTypography.monoSmall.copyWith(
+                  color: RTColors.onPrimary,
+                  fontSize: 11,
+                  height: 1.0,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    return markers;
+  }
+
+  Widget _buildActionsBar() {
+    final hasPoints = _polygonPoints.isNotEmpty;
+    final canPublish = _polygonPoints.length >= 3 && !_isPublishing;
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.12)),
+              ),
+              child: Row(children: [
+                Expanded(
+                  child: _GhostBtn(
+                    key: const Key('geofence_undo_button'),
+                    icon: Icons.undo,
+                    label: 'Desfazer',
+                    onPressed: hasPoints
+                        ? () => setState(() => _polygonPoints.removeLast())
+                        : null,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _GhostBtn(
+                    key: const Key('geofence_clear_button'),
+                    icon: Icons.delete_outline,
+                    label: 'Limpar',
+                    onPressed: hasPoints
+                        ? () async {
+                            final ok = await showDialog<bool>(
+                              context: context,
+                              builder: (d) => AlertDialog(
+                                title:
+                                    const Text('Limpar todos os vértices?'),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(d, false),
+                                    child: const Text('Cancelar'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(d, true),
+                                    style: TextButton.styleFrom(
+                                        foregroundColor: RTColors.danger),
+                                    child: const Text('Limpar'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (ok == true && mounted) {
+                              HapticFeedback.mediumImpact();
+                              setState(_polygonPoints.clear);
+                            }
+                          }
+                        : null,
+                  ),
+                ),
+              ]),
+            ),
+            const SizedBox(height: 8),
+            const RTConfirmLoRa(
+                message: 'Comandos LoRa são irreversíveis'),
+            const SizedBox(height: 12),
+            RTButton(
+              key: const Key('geofence_publish_button'),
+              label: 'Publicar cerca via LoRa',
+              variant: RTButtonVariant.accent,
+              size: RTButtonSize.lg,
+              fullWidth: true,
+              trailing: Icons.arrow_forward,
+              loading: _isPublishing,
+              onPressed: canPublish ? _publishFence : null,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HudPill extends StatelessWidget {
+  const _HudPill({required this.vertices, required this.maxVertices});
+
+  final int vertices;
+  final int maxVertices;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(999),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.55),
+            borderRadius: BorderRadius.circular(999),
+            border:
+                Border.all(color: Colors.white.withValues(alpha: 0.15)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: RTColors.accent,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '$vertices / $maxVertices vértices',
+                style: RTTypography.mono
+                    .copyWith(color: Colors.white, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GhostBtn extends StatelessWidget {
+  const _GhostBtn({
+    super.key,
+    required this.icon,
+    required this.label,
+    this.onPressed,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onPressed != null;
+    return GestureDetector(
+      onTap: onPressed,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: enabled ? 0.08 : 0.03),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+              color: Colors.white.withValues(alpha: enabled ? 0.15 : 0.05)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon,
+                size: 16,
+                color: Colors.white
+                    .withValues(alpha: enabled ? 0.9 : 0.3)),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: RTTypography.label.copyWith(
+                fontSize: 13,
+                color: Colors.white.withValues(alpha: enabled ? 0.9 : 0.3),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

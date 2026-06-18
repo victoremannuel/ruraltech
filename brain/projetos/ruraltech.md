@@ -39,6 +39,15 @@ Sistema em 3 camadas físicas (coleira → gateway → cloud) com app de gestão
 - `command_contract_test.cpp` — contrato firmware compilado com g++
 - `arduino-cli compile` — coleira, gateway, gateway-matriz
 
+### Comandos úteis de firmware
+
+- Descobrir porta USB: `arduino-cli board list`
+- Compilar coleira: `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs coleira`
+- Gravar coleira: `arduino-cli upload -p <PORTA_USB> --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs coleira`
+- Compilar matriz: `arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz`
+- Gravar matriz: `arduino-cli upload -p <PORTA_USB> --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz`
+- Monitor serial: `arduino-cli monitor -p <PORTA_USB> -c baudrate=115200`
+
 ## Related
 
 [[visao-geral]]

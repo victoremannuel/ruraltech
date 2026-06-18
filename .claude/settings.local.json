@@ -30,7 +30,15 @@
       "Bash(rtk git:*)",
       "Bash(supabase functions:*)",
       "Bash(python3:*)",
-      "Bash(rtk pip:*)"
+      "Bash(rtk pip:*)",
+      "Bash(git commit -m ' *)",
+      "Bash(rtk ls *)",
+      "Bash(rtk find *)",
+      "Bash(rtk grep *)",
+      "Bash(dart analyze *)",
+      "Bash(awk '/^  [^_].*\\\\\\(.*\\\\\\)/ && !/^  final/ && !/^  const/ && !/^  var/ {print NR\": \"$0}' /Users/victoremannuel/dev-claude/ruraltech/app/lib/services/cloud_service.dart)",
+      "Bash(awk '/^  [^_][a-zA-Z].*\\\\{$/ {print NR\": \"$0}' /Users/victoremannuel/dev-claude/ruraltech/app/lib/services/cloud_service.dart)",
+      "Bash(flutter --version)"
     ]
   }
 }
