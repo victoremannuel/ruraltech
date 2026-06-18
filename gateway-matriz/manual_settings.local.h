@@ -9,7 +9,7 @@
 #define RT_MATRIX_DISABLE_LORA_REPLAY_FOR_TESTS 0 //desativa o replay 1(modo teste) 0(modo produção)
 #define RT_CFG_GATEWAY_RELAY_ENABLED 0
 
-#define RT_CFG_BACKHAUL_WIFI_SSID "VICTOR_E_CAROL-IoT"
+#define RT_CFG_BACKHAUL_WIFI_SSID "VEST"
 #define RT_CFG_BACKHAUL_WIFI_PASS "naoteinteressa"
 
 #define RT_CFG_SUPABASE_EDGE_HOST "nhoewnfuyjbtpklrotbf.supabase.co"
