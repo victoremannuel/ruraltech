@@ -232,3 +232,5 @@ Date:
 - minimize token usage by using structured knowledge
 - avoid redundant reads
 - build context before answering
+
+## Imported Claude Cowork project instructions

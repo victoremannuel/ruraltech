@@ -51,7 +51,7 @@
             "state": {
               "type": "search",
               "state": {
-                "query": "tag:#graphify/document",
+                "query": "tag:#graphify/EXTRACTED",
                 "matchingCase": false,
                 "explainSearch": false,
                 "collapseAll": false,
@@ -248,7 +248,7 @@
       "infranodus-graph-view:InfraNodus Graph View": false
     }
   },
-  "active": "f8a8bea65135ed05",
+  "active": "98fd5c02a4762fd8",
   "lastOpenFiles": [
     "tarefas/design_handoff_ruraltech_v2/components/Tokens.jsx",
     "tarefas/design_handoff_ruraltech_v2/components/Primitives.jsx",
