@@ -15,6 +15,8 @@ Substitui o envio JSON textual para comandos de cerca, oferecendo:
 - Planner de chunking baseado em tamanho real do frame
 - Seção radio-crítica na matriz sem I/O de cloud entre `BEGIN` e o estado terminal
 - Retry idempotente de fragmentos, sem reaplicar pontos já aceitos
+- Janela síncrona de COMMIT imediatamente após o ACK do último fragmento
+- Flush cloud terminal-first, coalescido e limitado por orçamento cooperativo
 
 ## Components
 
@@ -69,6 +71,9 @@ Substitui o envio JSON textual para comandos de cerca, oferecendo:
    Duplicata já aceita: responde ACK sem anexar pontos novamente.
 
 3. COMMIT
+   Coleira: após o ACK final, abre janela síncrona de 10 s para COMMIT.
+            Valida binding, scope, tipo externo, header, tipo interno,
+            radio_command_id e session_nonce antes de reutilizar applyDownlink.
    Matriz: frame = {type: COMMIT, fence_crc}
    → LoRa TX
    ← APPLY_STATUS (success=true/false, reasonCode)
@@ -86,8 +91,15 @@ Após o `RTR_PAGE_ACK`, a matriz entra em `RPV2_RADIO_CRITICAL_ENTER` antes do
 `FENCE_BEGIN`. Atualizações de transporte ficam em uma fila fixa de 16 entradas;
 `rtdbWrite`, publicação de resultado e eventos não executam nesse intervalo.
 
-Ao concluir ou abortar, a guarda emite `RPV2_RADIO_CRITICAL_EXIT` e drena os
-estados em ordem. Cada item registra tentativas e próximo instante elegível;
+Ao concluir ou abortar, a guarda emite `RPV2_RADIO_CRITICAL_EXIT` e tenta um
+único item. Todos os call sites normais usam orçamento 1, com máximo absoluto 2,
+slice de 750 ms e intervalo mínimo de 250 ms. O watchdog é alimentado antes e
+depois de cada publicação. Status terminal do comando ativo tem prioridade;
+estados intermediários repetitivos são coalescidos, enquanto ACKs de fragmentos
+permanecem distintos. Após publicar o terminal, intermediários supersededidos do
+mesmo comando/dispositivo são removidos para impedir regressão cloud.
+
+Cada item registra tentativas e próximo instante elegível;
 falhas usam backoff de 1 s, 3 s, 10 s e depois 30 s, sem `delay()` e sem hot
 loop. O item só é removido após publicação completa, e o contexto do command ID
 deve coincidir com o comando ativo. Se o backhaul estiver indisponível, o
@@ -102,6 +114,11 @@ silencioso nos estados ativos, sessões de wake, feedback ou fila diferida.
 A janela imediata de pontos é configurável e usa 10 segundos na bancada.
 Quando expira, a sessão preserva contexto mínimo por um grace period limitado.
 Ao final desse prazo, staging e modo RTR são limpos sem ativar cerca incompleta.
+
+Após o último ACK de pontos, a coleira abre uma janela imediata de COMMIT de
+10 segundos. Se o COMMIT não chegar, mantém somente a espera limitada por mais
+15 segundos; ao expirar, encerra a sessão com `commit_wait_timeout`, em vez de
+aguardar todo o wake lock.
 
 ### Estruturas Binárias
 
@@ -215,10 +232,13 @@ App (Realtime)
 | Timeout de etapa | `no_ack_timeout`, reasonCode persistido |
 | Ponto não cabe no frame | Planner falha com `fence_single_point_chunk_too_large` |
 | Cloud bloqueia próximo fragmento | Status diferido em RAM e flush pós-sessão |
+| COMMIT chega logo após o ACK final fora da escuta normal | Janela síncrona de COMMIT com validação completa e grace timeout |
 | ACK perdido causa reenvio | Fragmento anterior é ACKado idempotentemente |
 | Heap instável no drain de eventos | Burst limitado e consumo somente após TX |
 | Command ID longo perde correlação cloud | Política compartilhada de 128 bytes e cópia estrita |
 | Falha cloud causa hot loop no flush | Retry cooperativo com due time e backoff limitado |
+| Flush acumulado dispara watchdog | Um item por slice, limite temporal, gap mínimo e feed antes/depois da publicação |
+| Intermediário antigo sobrescreve terminal | Prioridade terminal e limpeza de estados supersededidos após sucesso |
 | Registro de auditoria maior colide com GPS na EEPROM | Fila versionada v3 com 8 slots, mantendo o limite reservado |
 
 ## Related
@@ -228,5 +248,6 @@ App (Realtime)
 [[regras-negocio]]
 [[padroes-implementacao]]
 [[estabilizacao-transporte-rpv2-2026-06-19]]
+[[estabilizacao-commit-window-flush-slicing-rpv2-2026-06-19]]
 
 #arquitetura #ruraltech

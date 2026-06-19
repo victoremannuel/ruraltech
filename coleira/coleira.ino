@@ -194,6 +194,11 @@ static bool waitForRpv2PointsImmediatelyAfterAck(
     uint32_t sessionNonce,
     uint16_t expectedFragment,
     uint32_t ackTxAtMs);
+static bool waitForRpv2CommitImmediatelyAfterAck(
+    uint64_t scopeId,
+    uint64_t radioCommandId,
+    uint32_t sessionNonce,
+    uint32_t ackTxAtMs);
 static void clearActiveRpv2FenceSession(const char* reason, bool rememberReplay);
 static void rememberRpv2Replay(uint64_t radioCommandId, uint32_t sessionNonce);
 
@@ -234,7 +239,9 @@ struct Rpv2FenceSessionState {
   bool active = false;
   bool stageComplete = false;
   bool syncPointsWindowActive = false;
+  bool syncCommitWindowActive = false;
   bool waitingForRetryFragment = false;
+  bool waitingForCommit = false;
   uint64_t scopeId = 0;
   uint64_t radioCommandId = 0;
   uint32_t sessionNonce = 0;
@@ -246,6 +253,7 @@ struct Rpv2FenceSessionState {
   uint16_t retryExpectedFragment = 0;
   uint16_t nextPointIndex = 0;
   uint32_t retryGraceUntilMs = 0;
+  uint32_t commitGraceUntilMs = 0;
   Polygon fence{};
   PolygonAuditContext audit{};
 } rpv2FenceSession_;
@@ -270,6 +278,8 @@ constexpr uint32_t kRpv2BeginImmediateRxWindowMs =
     cfg::RPV2_BEGIN_IMMEDIATE_RX_WINDOW_MS;
 constexpr uint32_t kRpv2PointsImmediateRxWindowMs =
     cfg::RPV2_POINTS_IMMEDIATE_RX_WINDOW_MS;
+constexpr uint32_t kRpv2CommitImmediateRxWindowMs =
+    cfg::RPV2_COMMIT_IMMEDIATE_RX_WINDOW_MS;
 
 static void randomNonce(uint8_t* nonce12) {
   for (int i = 0; i < 12; ++i) nonce12[i] = (uint8_t)esp_random();
@@ -1627,7 +1637,25 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
         (unsigned long)header.sessionNonce,
         (unsigned)header.fragmentIndex,
         (unsigned long)(pointsAckTxAtMs - pointsAckPrepareAtMs));
-    if (pointsAckTxOk &&
+    const bool openCommitWindow =
+        rpv2transport::shouldOpenCommitWindow(
+            pointsAckTxOk,
+            rpv2FenceSession_.active,
+            rpv2FenceSession_.stageComplete,
+            rpv2FenceSession_.expectedFragment,
+            rpv2FenceSession_.totalChunks);
+    if (openCommitWindow && !rpv2FenceSession_.syncCommitWindowActive) {
+      rpv2FenceSession_.waitingForCommit = true;
+      rpv2FenceSession_.commitGraceUntilMs =
+          pointsAckTxAtMs + cfg::RPV2_COMMIT_IMMEDIATE_RX_WINDOW_MS +
+          cfg::RPV2_COMMIT_WAIT_GRACE_MS;
+      waitForRpv2CommitImmediatelyAfterAck(
+          frame.scopeId,
+          header.radioCommandId,
+          header.sessionNonce,
+          pointsAckTxAtMs);
+    } else if (
+        pointsAckTxOk &&
         rpv2FenceSession_.active &&
         !rpv2FenceSession_.stageComplete &&
         rpv2FenceSession_.expectedFragment <= rpv2FenceSession_.totalChunks &&
@@ -3173,6 +3201,137 @@ static bool waitForRpv2PointsImmediatelyAfterAck(
   return false;
 }
 
+static bool waitForRpv2CommitImmediatelyAfterAck(
+    uint64_t scopeId,
+    uint64_t radioCommandId,
+    uint32_t sessionNonce,
+    uint32_t ackTxAtMs) {
+  if (!rpv2FenceSession_.active ||
+      !rpv2FenceSession_.stageComplete ||
+      !rpv2FenceSession_.waitingForCommit ||
+      !rtrSessionMode_.active ||
+      !rtrSessionMode_.rpv2InProgress ||
+      rpv2FenceSession_.radioCommandId != radioCommandId ||
+      rpv2FenceSession_.sessionNonce != sessionNonce) {
+    return false;
+  }
+
+  const uint32_t windowStartAtMs = millis();
+  LOGI(
+      "RPV2_COMMIT_RX_WINDOW_BEGIN radioCommandId=%llu sessionNonce=%lu ackTxAtMs=%lu atMs=%lu deltaMs=%lu windowMs=%lu",
+      (unsigned long long)radioCommandId,
+      (unsigned long)sessionNonce,
+      (unsigned long)ackTxAtMs,
+      (unsigned long)windowStartAtMs,
+      (unsigned long)(windowStartAtMs - ackTxAtMs),
+      (unsigned long)kRpv2CommitImmediateRxWindowMs);
+
+  rpv2FenceSession_.syncCommitWindowActive = true;
+  const uint32_t deadlineAtMs =
+      windowStartAtMs + kRpv2CommitImmediateRxWindowMs;
+  while ((int32_t)(millis() - deadlineAtMs) <= 0) {
+    feedWatchdogIfEnabled();
+    const uint32_t nowMs = millis();
+    const uint32_t remainingMs = deadlineAtMs - nowMs;
+    LoRaFrame down{};
+    if (!lora.receiveFrame(down, remainingMs)) break;
+
+    LOGI(
+        "RPV2_COMMIT_RX_WINDOW_FRAME rawLen=%u msgType=%u seq=%lu rssi=%d snr=%.1f",
+        (unsigned)rtrWindowDiag_.lastDownlinkRawLen,
+        (unsigned)down.msgType,
+        (unsigned long)down.seq,
+        (int)lora.lastRssi(),
+        lora.lastSnr());
+    if (!bindingReady_) {
+      LOGW(
+          "RPV2_COMMIT_RX_REJECT reason=binding_missing radioCommandId=%llu",
+          (unsigned long long)radioCommandId);
+      continue;
+    }
+    if (scopeId == 0 || down.scopeId == 0 || down.scopeId != scopeId ||
+        down.scopeId != bindingScopeIdValue()) {
+      LOGW(
+          "RPV2_COMMIT_RX_REJECT reason=scope_mismatch radioCommandId=%llu frameScopeId=%016llX expectedScopeId=%016llX",
+          (unsigned long long)radioCommandId,
+          (unsigned long long)down.scopeId,
+          (unsigned long long)scopeId);
+      continue;
+    }
+    if (down.msgType != MsgType::SET_FENCE) {
+      LOGW(
+          "RPV2_COMMIT_RX_REJECT reason=unexpected_type radioCommandId=%llu outerMsgType=%u",
+          (unsigned long long)radioCommandId,
+          (unsigned)down.msgType);
+      continue;
+    }
+
+    rpv2::Header header{};
+    if (!rpv2::decodeHeader(down.payload, down.payloadLen, &header)) {
+      LOGW(
+          "RPV2_COMMIT_RX_REJECT reason=decode_header radioCommandId=%llu",
+          (unsigned long long)radioCommandId);
+      continue;
+    }
+    if (header.msgType != rpv2::FENCE_COMMIT) {
+      LOGW(
+          "RPV2_COMMIT_RX_REJECT reason=unexpected_type radioCommandId=%llu innerMsgType=%u",
+          (unsigned long long)radioCommandId,
+          (unsigned)header.msgType);
+      continue;
+    }
+    if (!rpv2transport::commitSessionMatches(
+            radioCommandId,
+            sessionNonce,
+            header.radioCommandId,
+            header.sessionNonce)) {
+      LOGW(
+          "RPV2_COMMIT_RX_REJECT reason=session_mismatch radioCommandId=%llu rxRadioCommandId=%llu rxSessionNonce=%lu",
+          (unsigned long long)radioCommandId,
+          (unsigned long long)header.radioCommandId,
+          (unsigned long)header.sessionNonce);
+      continue;
+    }
+
+    applyDownlink(down);
+    if (!rpv2FenceSession_.active) {
+      LOGI(
+          "RPV2_COMMIT_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=session_closed atMs=%lu",
+          (unsigned long long)radioCommandId,
+          (unsigned long)sessionNonce,
+          (unsigned long)millis());
+      return true;
+    }
+    if (rpv2FenceSession_.radioCommandId != radioCommandId ||
+        rpv2FenceSession_.sessionNonce != sessionNonce) {
+      LOGW(
+          "RPV2_COMMIT_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=session_replaced atMs=%lu",
+          (unsigned long long)radioCommandId,
+          (unsigned long)sessionNonce,
+          (unsigned long)millis());
+      return true;
+    }
+
+    rpv2FenceSession_.syncCommitWindowActive = false;
+    LOGI(
+        "RPV2_COMMIT_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=commit_rx atMs=%lu",
+        (unsigned long long)radioCommandId,
+        (unsigned long)sessionNonce,
+        (unsigned long)millis());
+    return true;
+  }
+
+  rpv2FenceSession_.syncCommitWindowActive = false;
+  LOGW(
+      "RPV2_COMMIT_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=timeout atMs=%lu timeoutMs=%lu graceMs=%lu",
+      (unsigned long long)radioCommandId,
+      (unsigned long)sessionNonce,
+      (unsigned long)millis(),
+      (unsigned long)kRpv2CommitImmediateRxWindowMs,
+      (unsigned long)cfg::RPV2_COMMIT_WAIT_GRACE_MS);
+  return false;
+}
+
 static void applyDownlink(const LoRaFrame& frame) {
   const bool targetMatch = (frame.deviceId == cfg::DEVICE_ID) || (frame.deviceId == 0);
   if (!targetMatch) return;
@@ -3969,6 +4128,19 @@ void loop() {
         (unsigned long)rpv2FenceSession_.sessionNonce,
         (unsigned)rpv2FenceSession_.retryExpectedFragment);
     clearActiveRpv2FenceSession("points_retry_timeout", true);
+    handledDownlink = true;
+  }
+  if (rpv2transport::commitWaitExpired(
+          rpv2FenceSession_.active,
+          rpv2FenceSession_.stageComplete,
+          rpv2FenceSession_.waitingForCommit,
+          millis(),
+          rpv2FenceSession_.commitGraceUntilMs)) {
+    LOGW(
+        "RPV2_SESSION_ABORT reason=commit_wait_timeout radioCommandId=%llu sessionNonce=%lu",
+        (unsigned long long)rpv2FenceSession_.radioCommandId,
+        (unsigned long)rpv2FenceSession_.sessionNonce);
+    clearActiveRpv2FenceSession("commit_wait_timeout", true);
     handledDownlink = true;
   }
 

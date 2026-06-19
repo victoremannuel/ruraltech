@@ -56,6 +56,45 @@ int main() {
   assert(rpv2transport::statusFlushDue(100, 0));
   assert(!rpv2transport::statusFlushDue(99, 100));
   assert(rpv2transport::statusFlushDue(100, 100));
+  assert(
+      rpv2transport::clampStatusFlushBudget(1) ==
+      rpv2transport::STATUS_FLUSH_NORMAL_BUDGET);
+  assert(
+      rpv2transport::clampStatusFlushBudget(15) ==
+      rpv2transport::STATUS_FLUSH_MAX_BUDGET);
+  assert(!rpv2transport::statusFlushSliceExpired(100, 849));
+  assert(rpv2transport::statusFlushSliceExpired(100, 850));
+  assert(rpv2transport::statusFlushGapElapsed(0, 1));
+  assert(!rpv2transport::statusFlushGapElapsed(100, 349));
+  assert(rpv2transport::statusFlushGapElapsed(100, 350));
+  assert(rpv2transport::statusFlushPriority(true, true) <
+         rpv2transport::statusFlushPriority(false, true));
+  assert(rpv2transport::statusFlushPriority(false, true) <
+         rpv2transport::statusFlushPriority(true, false));
+  assert(rpv2transport::isCoalescableStatus("awaiting_points_ack"));
+  assert(rpv2transport::isCoalescableStatus("rpv2_commit_sent"));
+  assert(!rpv2transport::isCoalescableStatus("rpv2_points_ack"));
+  assert(!rpv2transport::isCoalescableStatus("applied"));
+  assert(rpv2transport::canReplaceQueuedStatus(true, false));
+  assert(!rpv2transport::canReplaceQueuedStatus(false, false));
+  assert(!rpv2transport::canReplaceQueuedStatus(false, true));
+  assert(!rpv2transport::canReplaceQueuedStatus(true, true));
+
+  assert(rpv2transport::shouldOpenCommitWindow(true, true, true, 2, 2));
+  assert(!rpv2transport::shouldOpenCommitWindow(true, true, false, 1, 2));
+  assert(!rpv2transport::shouldOpenCommitWindow(false, true, true, 2, 2));
+  assert(rpv2transport::commitSessionMatches(10, 20, 10, 20));
+  assert(!rpv2transport::commitSessionMatches(10, 20, 11, 20));
+  assert(!rpv2transport::commitSessionMatches(10, 20, 10, 21));
+  assert(
+      !rpv2transport::commitWaitExpired(
+          true, true, true, 14999, 15000));
+  assert(
+      rpv2transport::commitWaitExpired(
+          true, true, true, 15000, 15000));
+  assert(
+      !rpv2transport::commitWaitExpired(
+          true, true, false, 15000, 15000));
 
   assert(rpv2transport::statusFlushAllowed(false, true, true, true, 1));
   assert(!rpv2transport::statusFlushAllowed(true, true, true, true, 1));

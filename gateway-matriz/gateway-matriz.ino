@@ -296,6 +296,7 @@ struct DeferredRpv2Status {
 
 constexpr uint8_t kDeferredRpv2StatusCapacity = 16;
 DeferredRpv2Status deferredRpv2Statuses[kDeferredRpv2StatusCapacity]{};
+uint32_t deferredRpv2StatusLastSliceAtMs = 0;
 bool rpv2RadioCriticalActive = false;
 uint32_t rpv2RadioCriticalStartedAtMs = 0;
 uint32_t rpv2RadioCriticalDeviceId = 0;
@@ -451,6 +452,10 @@ static uint8_t deferredRpv2StatusCount();
 static uint8_t deferredRpv2StatusCountForCommand(const char* commandId);
 static int findNextDueDeferredRpv2Status(uint32_t nowMs);
 static void clearDeferredRpv2Status(uint8_t idx, const char* reason);
+static void clearSupersededDeferredRpv2Statuses(
+    uint8_t publishedIdx,
+    const char* commandId,
+    uint32_t deviceId);
 static String payloadBytesToString(const uint8_t* data, size_t len);
 static void fillCloudWriteTrace(
     CloudWriteTrace* trace,
@@ -3274,6 +3279,41 @@ static bool enqueueDeferredRpv2Status(
     uint16_t fragmentIndex,
     uint16_t acceptedPoints) {
   if (!status || !status[0]) return false;
+  if (!terminal && rpv2transport::isCoalescableStatus(status)) {
+    for (uint8_t i = 0; i < kDeferredRpv2StatusCapacity; ++i) {
+      DeferredRpv2Status& candidate = deferredRpv2Statuses[i];
+      if (!candidate.used || candidate.flushing || candidate.terminal ||
+          candidate.deviceId != deviceId ||
+          strcmp(candidate.commandId, activeSimpleCommand.commandId) != 0 ||
+          strcmp(candidate.status, status) != 0) {
+        continue;
+      }
+      candidate.ok = ok;
+      candidate.radioCommandId = rpv2RadioCriticalCommandId;
+      candidate.sessionNonce = rpv2RadioCriticalSessionNonce;
+      candidate.reasonCode = reasonCode;
+      candidate.fragmentIndex = fragmentIndex;
+      candidate.acceptedPoints = acceptedPoints;
+      candidate.attempts = 0;
+      candidate.nextAttemptAtMs = 0;
+      candidate.lastAttemptAtMs = 0;
+      candidate.lastError[0] = '\0';
+      copyStringToBuffer(
+          candidate.reason,
+          sizeof(candidate.reason),
+          reason ? reason : "");
+      LOGI(
+          "RPV2_STATUS_DEFERRED_COALESCE index=%u deviceId=%lu commandId=%s status=%s fragmentIndex=%u acceptedPoints=%u",
+          (unsigned)i,
+          (unsigned long)deviceId,
+          candidate.commandId,
+          candidate.status,
+          (unsigned)fragmentIndex,
+          (unsigned)acceptedPoints);
+      return true;
+    }
+  }
+
   int slot = -1;
   uint32_t oldestAtMs = UINT32_MAX;
   int oldestNonTerminal = -1;
@@ -3288,16 +3328,26 @@ static bool enqueueDeferredRpv2Status(
       oldestNonTerminal = i;
     }
   }
-  if (slot < 0) slot = oldestNonTerminal;
+  if (slot < 0 && terminal) slot = oldestNonTerminal;
   if (slot < 0) {
     LOGW(
-        "RPV2_STATUS_DEFERRED_DROP deviceId=%lu status=%s reason=terminal_queue_full",
+        "RPV2_STATUS_DEFERRED_DROP deviceId=%lu status=%s reason=%s",
         (unsigned long)deviceId,
-        status);
+        status,
+        terminal ? "terminal_queue_full" : "queue_full");
     return false;
   }
 
   DeferredRpv2Status& entry = deferredRpv2Statuses[slot];
+  if (entry.used) {
+    LOGW(
+        "RPV2_STATUS_DEFERRED_REPLACE index=%d oldStatus=%s oldTerminal=%d newStatus=%s newTerminal=%d",
+        slot,
+        entry.status,
+        entry.terminal ? 1 : 0,
+        status,
+        terminal ? 1 : 0);
+  }
   entry = DeferredRpv2Status{};
   entry.used = true;
   entry.terminal = terminal;
@@ -3362,6 +3412,7 @@ static uint8_t deferredRpv2StatusCountForCommand(const char* commandId) {
 
 static int findNextDueDeferredRpv2Status(uint32_t nowMs) {
   int slot = -1;
+  uint8_t bestPriority = UINT8_MAX;
   uint32_t oldestAtMs = UINT32_MAX;
   for (uint8_t i = 0; i < kDeferredRpv2StatusCapacity; ++i) {
     const DeferredRpv2Status& entry = deferredRpv2Statuses[i];
@@ -3369,7 +3420,15 @@ static int findNextDueDeferredRpv2Status(uint32_t nowMs) {
         !rpv2transport::statusFlushDue(nowMs, entry.nextAttemptAtMs)) {
       continue;
     }
-    if (entry.queuedAtMs <= oldestAtMs) {
+    const bool activeCommandMatch =
+        rpv2transport::statusFlushContextMatches(
+            entry.commandId, activeSimpleCommand.commandId);
+    const uint8_t priority =
+        rpv2transport::statusFlushPriority(
+            entry.terminal, activeCommandMatch);
+    if (priority < bestPriority ||
+        (priority == bestPriority && entry.queuedAtMs <= oldestAtMs)) {
+      bestPriority = priority;
       oldestAtMs = entry.queuedAtMs;
       slot = i;
     }
@@ -3388,7 +3447,24 @@ static void clearDeferredRpv2Status(uint8_t idx, const char* reason) {
   deferredRpv2Statuses[idx] = DeferredRpv2Status{};
 }
 
+static void clearSupersededDeferredRpv2Statuses(
+    uint8_t publishedIdx,
+    const char* commandId,
+    uint32_t deviceId) {
+  if (!commandId || !commandId[0]) return;
+  for (uint8_t i = 0; i < kDeferredRpv2StatusCapacity; ++i) {
+    const DeferredRpv2Status& entry = deferredRpv2Statuses[i];
+    if (i == publishedIdx || !entry.used || entry.terminal ||
+        strcmp(entry.commandId, commandId) != 0 ||
+        (deviceId != 0 && entry.deviceId != deviceId)) {
+      continue;
+    }
+    clearDeferredRpv2Status(i, "superseded_by_terminal");
+  }
+}
+
 static void drainDeferredRpv2Statuses(uint8_t budget) {
+  budget = rpv2transport::clampStatusFlushBudget(budget);
   if (budget == 0) return;
   const uint8_t queuedBefore = deferredRpv2StatusCount();
   if (queuedBefore == 0 || isRpv2RadioCriticalActive()) return;
@@ -3401,21 +3477,33 @@ static void drainDeferredRpv2Statuses(uint8_t budget) {
     return;
   }
   const uint32_t nowMs = millis();
+  if (!rpv2transport::statusFlushGapElapsed(
+          deferredRpv2StatusLastSliceAtMs, nowMs)) {
+    return;
+  }
   if (findNextDueDeferredRpv2Status(nowMs) < 0) return;
+  deferredRpv2StatusLastSliceAtMs = nowMs;
+  const uint32_t sliceStartedAtMs = nowMs;
   LOGI(
-      "RPV2_STATUS_FLUSH_BEGIN queued=%u budget=%u commandId=%s",
+      "RPV2_STATUS_FLUSH_BEGIN queued=%u budget=%u commandId=%s sliceMaxMs=%lu",
       (unsigned)queuedBefore,
       (unsigned)budget,
-      activeSimpleCommand.commandId);
+      activeSimpleCommand.commandId,
+      (unsigned long)rpv2transport::STATUS_FLUSH_MAX_SLICE_MS);
   uint8_t flushed = 0;
   uint8_t failed = 0;
   uint8_t attempted = 0;
   while (attempted < budget) {
-    const int slot = findNextDueDeferredRpv2Status(nowMs);
+    const uint32_t itemNowMs = millis();
+    if (rpv2transport::statusFlushSliceExpired(
+            sliceStartedAtMs, itemNowMs)) {
+      break;
+    }
+    const int slot = findNextDueDeferredRpv2Status(itemNowMs);
     if (slot < 0) break;
     DeferredRpv2Status& entry = deferredRpv2Statuses[slot];
     entry.flushing = true;
-    entry.lastAttemptAtMs = nowMs;
+    entry.lastAttemptAtMs = itemNowMs;
     attempted++;
     LOGI(
         "RPV2_STATUS_FLUSH_ITEM_BEGIN index=%d commandId=%s status=%s attempts=%u",
@@ -3425,6 +3513,8 @@ static void drainDeferredRpv2Statuses(uint8_t budget) {
         (unsigned)entry.attempts);
 
     bool published = false;
+    const uint32_t publishStartedAtMs = millis();
+    feedWatchdogIfEnabled();
     if (!rpv2transport::statusFlushContextMatches(
             entry.commandId, activeSimpleCommand.commandId)) {
       copyStringToBuffer(
@@ -3449,22 +3539,31 @@ static void drainDeferredRpv2Statuses(uint8_t budget) {
           entry.status,
           entry.reason[0] ? entry.reason : nullptr);
     }
+    feedWatchdogIfEnabled();
+    const uint32_t publishFinishedAtMs = millis();
+    const uint32_t publishMs = publishFinishedAtMs - publishStartedAtMs;
 
     entry.flushing = false;
     if (published) {
       LOGI(
-          "RPV2_STATUS_FLUSH_ITEM_OK index=%d commandId=%s status=%s queuedForMs=%lu",
+          "RPV2_STATUS_FLUSH_ITEM_OK index=%d commandId=%s status=%s queuedForMs=%lu publishMs=%lu sliceElapsedMs=%lu",
           slot,
           entry.commandId,
           entry.status,
-          (unsigned long)(millis() - entry.queuedAtMs));
+          (unsigned long)(publishFinishedAtMs - entry.queuedAtMs),
+          (unsigned long)publishMs,
+          (unsigned long)(publishFinishedAtMs - sliceStartedAtMs));
+      if (entry.terminal) {
+        clearSupersededDeferredRpv2Statuses(
+            (uint8_t)slot, entry.commandId, entry.deviceId);
+      }
       clearDeferredRpv2Status((uint8_t)slot, "flushed");
       flushed++;
       continue;
     }
 
     const uint32_t backoffMs = rpv2transport::scheduleStatusFlushRetry(
-        entry.attempts, entry.nextAttemptAtMs, nowMs);
+        entry.attempts, entry.nextAttemptAtMs, publishFinishedAtMs);
     if (!entry.lastError[0]) {
       copyStringToBuffer(
           entry.lastError,
@@ -3473,23 +3572,27 @@ static void drainDeferredRpv2Statuses(uint8_t budget) {
     }
     failed++;
     LOGW(
-        "RPV2_STATUS_FLUSH_ITEM_FAIL index=%d commandId=%s status=%s attempts=%u backoffMs=%lu nextAttemptAtMs=%lu reason=%s",
+        "RPV2_STATUS_FLUSH_ITEM_FAIL index=%d commandId=%s status=%s attempts=%u backoffMs=%lu nextAttemptAtMs=%lu reason=%s publishMs=%lu sliceElapsedMs=%lu",
         slot,
         entry.commandId,
         entry.status,
         (unsigned)entry.attempts,
         (unsigned long)backoffMs,
         (unsigned long)entry.nextAttemptAtMs,
-        entry.lastError);
+        entry.lastError,
+        (unsigned long)publishMs,
+        (unsigned long)(publishFinishedAtMs - sliceStartedAtMs));
     break;
   }
+  const uint32_t sliceFinishedAtMs = millis();
   LOGI(
-      "RPV2_STATUS_FLUSH_END queuedBefore=%u attempted=%u flushed=%u failed=%u remaining=%u",
+      "RPV2_STATUS_FLUSH_END queuedBefore=%u attempted=%u flushed=%u failed=%u remaining=%u elapsedMs=%lu",
       (unsigned)queuedBefore,
       (unsigned)attempted,
       (unsigned)flushed,
       (unsigned)failed,
-      (unsigned)deferredRpv2StatusCount());
+      (unsigned)deferredRpv2StatusCount(),
+      (unsigned long)(sliceFinishedAtMs - sliceStartedAtMs));
 }
 
 static bool hasDeferredRpv2StatusForActiveCommand() {
@@ -3531,7 +3634,8 @@ class Rpv2RadioCriticalGuard {
         radioCommandId_,
         succeeded_ ? "completed" : "failed",
         terminalReason);
-    drainDeferredRpv2Statuses(kDeferredRpv2StatusCapacity);
+    drainDeferredRpv2Statuses(
+        rpv2transport::STATUS_FLUSH_NORMAL_BUDGET);
   }
 
   void markSucceeded() { succeeded_ = true; }
@@ -3741,7 +3845,8 @@ static void finalizeFenceCommandIfAllTargetsTerminal() {
   if (strcmp(activeSimpleCommand.command, "SET_FENCE") != 0) return;
   if (!allActiveSimpleTargetsTerminal()) return;
   if (hasDeferredRpv2StatusForActiveCommand()) {
-    drainDeferredRpv2Statuses(kDeferredRpv2StatusCapacity);
+    drainDeferredRpv2Statuses(
+        rpv2transport::STATUS_FLUSH_NORMAL_BUDGET);
     if (hasDeferredRpv2StatusForActiveCommand()) {
       LOGW(
           "RPV2_STATUS_FLUSH_PENDING commandId=%s reason=backhaul_unavailable",
@@ -8850,7 +8955,8 @@ void loop() {
   }
 
   if (cfg::FEATURE_CLOUD) {
-    drainDeferredRpv2Statuses(1);
+    drainDeferredRpv2Statuses(
+        rpv2transport::STATUS_FLUSH_NORMAL_BUDGET);
     finalizeFenceCommandIfAllTargetsTerminal();
     processNextQueuedCommand();
   }
@@ -8874,7 +8980,8 @@ void loop() {
     const uint64_t nowMs = unixNowMs(unixNowSec());
     if (activeSimpleCommand.expiresAtMs != 0 && nowMs >= activeSimpleCommand.expiresAtMs) {
       if (hasDeferredRpv2StatusForActiveCommand()) {
-        drainDeferredRpv2Statuses(kDeferredRpv2StatusCapacity);
+        drainDeferredRpv2Statuses(
+            rpv2transport::STATUS_FLUSH_NORMAL_BUDGET);
         if (hasDeferredRpv2StatusForActiveCommand()) {
           LOGW(
               "RPV2_COMMAND_EXPIRY_DEFERRED commandId=%s reason=status_flush_pending",
