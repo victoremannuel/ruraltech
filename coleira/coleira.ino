@@ -51,6 +51,7 @@
 #include "../firmware/shared/radio_proto_v2_crc.h"
 #include "../firmware/shared/radio_proto_v2_id.h"
 #include "../firmware/shared/radio_proto_v2_reason_codes.h"
+#include "../firmware/shared/rpv2_transport_policy.h"
 
 SensorsManager sensors;
 SmartGps smartGps;
@@ -228,6 +229,7 @@ struct Rpv2FenceSessionState {
   bool active = false;
   bool stageComplete = false;
   bool syncPointsWindowActive = false;
+  bool waitingForRetryFragment = false;
   uint64_t scopeId = 0;
   uint64_t radioCommandId = 0;
   uint32_t sessionNonce = 0;
@@ -236,7 +238,9 @@ struct Rpv2FenceSessionState {
   uint16_t totalPoints = 0;
   uint16_t totalChunks = 0;
   uint16_t expectedFragment = 1;
+  uint16_t retryExpectedFragment = 0;
   uint16_t nextPointIndex = 0;
+  uint32_t retryGraceUntilMs = 0;
   Polygon fence{};
   PolygonAuditContext audit{};
 } rpv2FenceSession_;
@@ -257,17 +261,18 @@ struct RtrSessionModeState {
   MsgType commandType = MsgType::SET_FENCE;
 } rtrSessionMode_;
 
-constexpr uint32_t kRpv2BeginImmediateRxWindowMs = 3000;
-constexpr uint32_t kRpv2PointsImmediateRxWindowMs = 3000;
+constexpr uint32_t kRpv2BeginImmediateRxWindowMs =
+    cfg::RPV2_BEGIN_IMMEDIATE_RX_WINDOW_MS;
+constexpr uint32_t kRpv2PointsImmediateRxWindowMs =
+    cfg::RPV2_POINTS_IMMEDIATE_RX_WINDOW_MS;
 
 static void randomNonce(uint8_t* nonce12) {
   for (int i = 0; i < 12; ++i) nonce12[i] = (uint8_t)esp_random();
 }
 
-static String scopeIdToHex(uint64_t scopeId) {
-  char out[17];
-  snprintf(out, sizeof(out), "%016llX", (unsigned long long)scopeId);
-  return String(out);
+static void scopeIdToHex(char* out, size_t outLen, uint64_t scopeId) {
+  if (!out || outLen == 0) return;
+  snprintf(out, outLen, "%016llX", (unsigned long long)scopeId);
 }
 
 static uint64_t parseScopeIdHex(const char* raw) {
@@ -1473,6 +1478,52 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
       sendRpv2Nack(frame, header, rpv2::FENCE_POINTS, header.fragmentIndex, rpv2::REASON_INVALID_HEADER, rpv2FenceSession_.expectedFragment, 0);
       return true;
     }
+    if (header.fragmentIndex < rpv2FenceSession_.expectedFragment) {
+      const bool immediatelyPrevious =
+          rpv2transport::isImmediatelyPreviousFragment(
+              header.fragmentIndex,
+              rpv2FenceSession_.expectedFragment);
+      const bool matchesAcceptedRange =
+          rpv2transport::acceptedRangeEndsAt(
+              prefix.startPointIndex,
+              prefix.pointCount,
+              rpv2FenceSession_.nextPointIndex);
+      bool matchesAcceptedPayload = matchesAcceptedRange;
+      if (matchesAcceptedPayload) {
+        for (uint8_t i = 0; i < prefix.pointCount; ++i) {
+          const uint16_t pointIndex =
+              static_cast<uint16_t>(prefix.startPointIndex + i);
+          if (pointIndex >= rpv2FenceSession_.fence.count ||
+              static_cast<int32_t>(
+                  rpv2FenceSession_.fence.points[pointIndex].lat * 10000000.0) !=
+                  points[i].latE7 ||
+              static_cast<int32_t>(
+                  rpv2FenceSession_.fence.points[pointIndex].lon * 10000000.0) !=
+                  points[i].lonE7) {
+            matchesAcceptedPayload = false;
+            break;
+          }
+        }
+      }
+      if (immediatelyPrevious && matchesAcceptedPayload) {
+        LOGW(
+            "RPV2_POINTS_DUPLICATE_ACK radioCommandId=%llu sessionNonce=%lu fragmentIndex=%u nextExpected=%u acceptedPoints=%u",
+            (unsigned long long)header.radioCommandId,
+            (unsigned long)header.sessionNonce,
+            (unsigned)header.fragmentIndex,
+            (unsigned)rpv2FenceSession_.expectedFragment,
+            (unsigned)rpv2FenceSession_.fence.count);
+        sendRpv2Ack(
+            frame,
+            header,
+            rpv2::FENCE_POINTS,
+            header.fragmentIndex,
+            rpv2FenceSession_.expectedFragment,
+            rpv2FenceSession_.fence.count,
+            0);
+        return true;
+      }
+    }
     if (header.fragmentIndex != rpv2FenceSession_.expectedFragment) {
       sendRpv2Nack(frame, header, rpv2::FENCE_POINTS, header.fragmentIndex, rpv2::REASON_POINTS_OUT_OF_ORDER, rpv2FenceSession_.expectedFragment, 0);
       return true;
@@ -1496,6 +1547,9 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
     }
     rpv2FenceSession_.nextPointIndex += prefix.pointCount;
     rpv2FenceSession_.expectedFragment++;
+    rpv2FenceSession_.waitingForRetryFragment = false;
+    rpv2FenceSession_.retryExpectedFragment = 0;
+    rpv2FenceSession_.retryGraceUntilMs = 0;
     holdRpv2Session(header.radioCommandId, header.sessionNonce, "points_rx");
     LOGI(
         "RPV2_STAGE_PROGRESS radioCommandId=%llu sessionNonce=%lu nextPointIndex=%u totalPoints=%u expectedFragment=%u",
@@ -3006,7 +3060,12 @@ static bool waitForRpv2PointsImmediatelyAfterAck(
           (unsigned long)header.sessionNonce);
       continue;
     }
-    if (header.fragmentIndex != rpv2FenceSession_.expectedFragment) {
+    const bool expectedOrPrevious =
+        header.fragmentIndex == rpv2FenceSession_.expectedFragment ||
+        rpv2transport::isImmediatelyPreviousFragment(
+            header.fragmentIndex,
+            rpv2FenceSession_.expectedFragment);
+    if (!expectedOrPrevious) {
       LOGW(
           "RPV2_POINTS_RX_REJECT reason=fragment_mismatch radioCommandId=%llu expectedFragment=%u rxFragmentIndex=%u",
           (unsigned long long)radioCommandId,
@@ -3056,6 +3115,10 @@ static bool waitForRpv2PointsImmediatelyAfterAck(
   }
 
   rpv2FenceSession_.syncPointsWindowActive = false;
+  rpv2FenceSession_.waitingForRetryFragment = true;
+  rpv2FenceSession_.retryExpectedFragment = expectedFragment;
+  rpv2FenceSession_.retryGraceUntilMs =
+      millis() + cfg::RPV2_SESSION_GRACE_AFTER_POINTS_TIMEOUT_MS;
   LOGW(
       "RPV2_POINTS_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=timeout atMs=%lu expectedFragment=%u timeoutMs=%lu",
       (unsigned long long)radioCommandId,
@@ -3063,6 +3126,13 @@ static bool waitForRpv2PointsImmediatelyAfterAck(
       (unsigned long)millis(),
       (unsigned)expectedFragment,
       (unsigned long)kRpv2PointsImmediateRxWindowMs);
+  LOGW(
+      "RPV2_POINTS_RETRY_WAIT_BEGIN radioCommandId=%llu sessionNonce=%lu expectedFragment=%u graceMs=%lu retryWindowMs=%lu",
+      (unsigned long long)radioCommandId,
+      (unsigned long)sessionNonce,
+      (unsigned)expectedFragment,
+      (unsigned long)cfg::RPV2_SESSION_GRACE_AFTER_POINTS_TIMEOUT_MS,
+      (unsigned long)cfg::RPV2_POINTS_RETRY_RX_WINDOW_MS);
   return false;
 }
 
@@ -3794,6 +3864,11 @@ void loop() {
   if (cfg::RTR_FORCE_DISCOVERY_RX_OPEN && rxWindowMs < rtrv1::DISCOVERY_RX_WINDOW_MS) {
     rxWindowMs = rtrv1::DISCOVERY_RX_WINDOW_MS;
   }
+  if (rpv2FenceSession_.active &&
+      rpv2FenceSession_.waitingForRetryFragment &&
+      rxWindowMs < cfg::RPV2_POINTS_RETRY_RX_WINDOW_MS) {
+    rxWindowMs = cfg::RPV2_POINTS_RETRY_RX_WINDOW_MS;
+  }
   bool handledDownlink = false;
   logLoopCheckpoint("before_lora_receive");
   rtrdiag::noteDiscoveryWindowOpen(&rtrWindowDiag_, false, millis(), rxWindowMs);
@@ -3829,11 +3904,40 @@ void loop() {
     delay(cfg::LORA_POST_COMMAND_EVENT_HOLDOFF_MS);
   }
 
+  if (rpv2FenceSession_.active &&
+      rpv2FenceSession_.waitingForRetryFragment &&
+      rpv2transport::deadlineReached(
+          millis(),
+          rpv2FenceSession_.retryGraceUntilMs)) {
+    LOGW(
+        "RPV2_SESSION_ABORT reason=points_retry_timeout radioCommandId=%llu sessionNonce=%lu expectedFragment=%u",
+        (unsigned long long)rpv2FenceSession_.radioCommandId,
+        (unsigned long)rpv2FenceSession_.sessionNonce,
+        (unsigned)rpv2FenceSession_.retryExpectedFragment);
+    clearActiveRpv2FenceSession("points_retry_timeout", true);
+    handledDownlink = true;
+  }
+
   EventRecord pending;
-  uint8_t eventBudget = otaSessionLikelyActive ? cfg::OTA_UPLOAD_EVENT_BURST : 0xFF;
+  uint8_t eventBudget = otaSessionLikelyActive
+      ? cfg::OTA_UPLOAD_EVENT_BURST
+      : cfg::LORA_EVENT_DRAIN_BURST_NORMAL;
+  uint8_t eventsSent = 0;
+  uint8_t eventsFailed = 0;
   logLoopCheckpoint("before_pending_events");
-  if (!cfg::DEBUG_DISABLE_PENDING_EVENT_DRAIN && !isRtrSessionModeActive()) {
-    while (!handledDownlink && bindingReady_ && storage.popEvent(pending)) {
+  if (!cfg::DEBUG_DISABLE_PENDING_EVENT_DRAIN &&
+      !isRtrSessionModeActive() &&
+      !rpv2FenceSession_.active) {
+    LOGI(
+        "EVENT_DRAIN_BEGIN free_heap=%u min_heap=%u queueCount=%u budget=%u",
+        (unsigned)ESP.getFreeHeap(),
+        (unsigned)ESP.getMinFreeHeap(),
+        (unsigned)storage.count(),
+        (unsigned)eventBudget);
+    while (!handledDownlink &&
+           bindingReady_ &&
+           eventBudget > 0 &&
+           storage.peekEvent(pending)) {
       LoRaFrame ev;
       ev.deviceId = cfg::DEVICE_ID;
       ev.scopeId = pending.scopeId != 0 ? pending.scopeId : bindingScopeIdValue();
@@ -3847,7 +3951,9 @@ void loop() {
       d["event_code"] = (int)pending.type;
       d["d1"] = pending.d1;
       d["d2"] = pending.d2;
-      d["scope_id"] = scopeIdToHex(ev.scopeId);
+      char scopeHex[17]{};
+      scopeIdToHex(scopeHex, sizeof(scopeHex), ev.scopeId);
+      d["scope_id"] = scopeHex;
       if (eventUsesOperationId(pending.type) &&
           pending.payload.operationId[0] != '\0') {
         d["operation_id"] = pending.payload.operationId;
@@ -3889,6 +3995,9 @@ void loop() {
             "Evento LoRa invalido type=%u bytes=%u",
             (unsigned)pending.type,
             (unsigned)eventPayloadBytes);
+        storage.ackEvent();
+        eventsFailed++;
+        eventBudget--;
         continue;
       }
       ev.payloadLen = serializeJson(d, ev.payload, sizeof(ev.payload));
@@ -3897,18 +4006,41 @@ void loop() {
             "Evento LoRa truncado type=%u payload=%u",
             (unsigned)pending.type,
             (unsigned)ev.payloadLen);
+        storage.ackEvent();
+        eventsFailed++;
+        eventBudget--;
         continue;
       }
-      if (!lora.sendFrame(ev)) break;
+      if (!lora.sendFrame(ev)) {
+        eventsFailed++;
+        break;
+      }
+      if (!storage.ackEvent()) {
+        LOGW("EVENT_DRAIN_ACK_FAIL type=%u", (unsigned)pending.type);
+        eventsFailed++;
+        break;
+      }
+      eventsSent++;
+      eventBudget--;
       logPendingEventCheckpoint("after_pending_event_send", pending, ev);
       if (otaSessionLikelyActive) {
-        if (--eventBudget == 0) break;
         ArduinoOTA.handle();
         delay(2);
       }
     }
+    LOGI(
+        "EVENT_DRAIN_END sent=%u failed=%u remaining=%u free_heap=%u min_heap=%u",
+        (unsigned)eventsSent,
+        (unsigned)eventsFailed,
+        (unsigned)storage.count(),
+        (unsigned)ESP.getFreeHeap(),
+        (unsigned)ESP.getMinFreeHeap());
   } else {
-    LOGW("Pending event drain desabilitado para bancada");
+    LOGI(
+        "EVENT_DRAIN_SKIPPED debugDisabled=%d rtrActive=%d rpv2Active=%d",
+        cfg::DEBUG_DISABLE_PENDING_EVENT_DRAIN ? 1 : 0,
+        isRtrSessionModeActive() ? 1 : 0,
+        rpv2FenceSession_.active ? 1 : 0);
   }
   logLoopCheckpoint("after_pending_events_loop");
 

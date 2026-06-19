@@ -62,6 +62,7 @@ constexpr uint8_t OTA_AP_MAX_CLIENTS = 2;
 constexpr uint32_t OTA_DISABLE_GUARD_MS = 300000;
 constexpr uint16_t OTA_UPLOAD_RX_WINDOW_MS = 120;
 constexpr uint8_t OTA_UPLOAD_EVENT_BURST = 2;
+constexpr uint8_t LORA_EVENT_DRAIN_BURST_NORMAL = 2;
 constexpr uint32_t MAINTENANCE_BOOT_WINDOW_MS = 30000;
 
 // BLE discovery for app onboarding
@@ -103,6 +104,11 @@ constexpr bool RTR_DISABLE_DEEP_SLEEP_FOR_BENCH = false;
 constexpr bool RTR_FORCE_DISCOVERY_RX_OPEN = false;
 constexpr uint32_t RTR_BENCH_HOLD_AFTER_UPLINK_MS = 0;
 constexpr uint32_t RTR_BENCH_SECONDARY_WINDOW_MS = 0;
+constexpr uint32_t RPV2_BEGIN_IMMEDIATE_RX_WINDOW_MS = 3000;
+// Bench stabilization value. Reduce only after measured ACK-to-next-TX P95 is known.
+constexpr uint32_t RPV2_POINTS_IMMEDIATE_RX_WINDOW_MS = 10000;
+constexpr uint32_t RPV2_POINTS_RETRY_RX_WINDOW_MS = 2500;
+constexpr uint32_t RPV2_SESSION_GRACE_AFTER_POINTS_TIMEOUT_MS = 15000;
 
 // Segurança animal
 constexpr uint8_t MAX_PULSES_PER_10_MIN = 3;

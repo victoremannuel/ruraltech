@@ -13,6 +13,8 @@ Substitui o envio JSON textual para comandos de cerca, oferecendo:
 - Sessão com estado (staging em memória)
 - Confirmação explícita de aplicação (`APPLY_STATUS`)
 - Planner de chunking baseado em tamanho real do frame
+- Seção radio-crítica na matriz sem I/O de cloud entre `BEGIN` e o estado terminal
+- Retry idempotente de fragmentos, sem reaplicar pontos já aceitos
 
 ## Components
 
@@ -27,12 +29,15 @@ Substitui o envio JSON textual para comandos de cerca, oferecendo:
 | `radio_proto_v2_constants` | `firmware/shared/radio_proto_v2_constants.h` | Constantes do protocolo |
 | `radio_proto_v2_id` | `firmware/shared/radio_proto_v2_id.h` | FNV-1a 64 para radio_command_id |
 | `radio_proto_v2_reason_codes` | `firmware/shared/radio_proto_v2_reason_codes.h` | Códigos de erro/status |
+| `rpv2_transport_policy` | `firmware/shared/rpv2_transport_policy.h` | Política compartilhada de retry, duplicidade e deadlines |
+| Fila de status diferidos | `gateway-matriz/gateway-matriz.ino` | Preserva progresso em RAM e faz flush após a seção radio-crítica |
 
 ### Coleira
 
 | Componente | Arquivo | Responsabilidade |
 |---|---|---|
 | `coleira.ino` | `coleira/coleira.ino` | Recepção binária, validação, staging, apply |
+| `StorageQueue` | `coleira/StorageQueue.*` | Drain transacional `peek → send → ack`, com burst limitado |
 
 ### Testes
 
@@ -59,6 +64,8 @@ Substitui o envio JSON textual para comandos de cerca, oferecendo:
            frame = {type: POINTS, chunk_index, points[], chunk_crc}
    → LoRa TX (N frames)
    ← ACK/NACK por chunk
+   Timeout: retransmite o mesmo fragmento até 3 tentativas.
+   Duplicata já aceita: responde ACK sem anexar pontos novamente.
 
 3. COMMIT
    Matriz: frame = {type: COMMIT, fence_crc}
@@ -71,6 +78,22 @@ Substitui o envio JSON textual para comandos de cerca, oferecendo:
            transportState=pending|sending|waiting|applied|failed
            reasonCode=<codigo>
 ```
+
+### Seção radio-crítica e deferral de cloud
+
+Após o `RTR_PAGE_ACK`, a matriz entra em `RPV2_RADIO_CRITICAL_ENTER` antes do
+`FENCE_BEGIN`. Atualizações de transporte ficam em uma fila fixa de 16 entradas;
+`rtdbWrite`, publicação de resultado e eventos não executam nesse intervalo.
+
+Ao concluir ou abortar, a guarda emite `RPV2_RADIO_CRITICAL_EXIT` e drena os
+estados em ordem. Se o backhaul estiver indisponível, o comando ativo permanece
+retido até que o estado terminal possa ser publicado.
+
+### Timeout e recovery da coleira
+
+A janela imediata de pontos é configurável e usa 10 segundos na bancada.
+Quando expira, a sessão preserva contexto mínimo por um grace period limitado.
+Ao final desse prazo, staging e modo RTR são limpos sem ativar cerca incompleta.
 
 ### Estruturas Binárias
 
@@ -183,6 +206,9 @@ App (Realtime)
 | Memória insuficiente | NACK com reasonCode, aborta sessão |
 | Timeout de etapa | `no_ack_timeout`, reasonCode persistido |
 | Ponto não cabe no frame | Planner falha com `fence_single_point_chunk_too_large` |
+| Cloud bloqueia próximo fragmento | Status diferido em RAM e flush pós-sessão |
+| ACK perdido causa reenvio | Fragmento anterior é ACKado idempotentemente |
+| Heap instável no drain de eventos | Burst limitado e consumo somente após TX |
 
 ## Related
 
@@ -190,5 +216,6 @@ App (Realtime)
 [[fluxo-comandos]]
 [[regras-negocio]]
 [[padroes-implementacao]]
+[[estabilizacao-transporte-rpv2-2026-06-19]]
 
 #arquitetura #ruraltech
