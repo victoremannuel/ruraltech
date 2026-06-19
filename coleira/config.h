@@ -113,6 +113,7 @@ constexpr uint32_t RPV2_SESSION_GRACE_AFTER_POINTS_TIMEOUT_MS = 15000;
 constexpr uint32_t RPV2_COMMIT_IMMEDIATE_RX_WINDOW_MS = 10000;
 constexpr uint32_t RPV2_COMMIT_WAIT_GRACE_MS = 15000;
 constexpr uint32_t RPV2_SESSION_MAX_MS = 60000;
+constexpr bool RPV2_DEBUG_CRC_VECTOR_LOGS = true;
 
 // Segurança animal
 constexpr uint8_t MAX_PULSES_PER_10_MIN = 3;

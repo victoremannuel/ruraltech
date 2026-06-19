@@ -102,6 +102,14 @@ jobs:
             firmware/tests/rpv2_transport_policy_test.cpp \
             -o /tmp/rpv2_transport_policy_test
           /tmp/rpv2_transport_policy_test
+          g++ -std=c++17 -Wall -Wextra -pedantic \
+            firmware/tests/rtr_wake_policy_test.cpp \
+            -o /tmp/rtr_wake_policy_test
+          /tmp/rtr_wake_policy_test
+          g++ -std=c++17 -Wall -Wextra -pedantic \
+            firmware/tests/rpv2_fence_crc_test.cpp \
+            -o /tmp/rpv2_fence_crc_test
+          /tmp/rpv2_fence_crc_test
 
   firmware-regression:
     name: Firmware Regression Compile

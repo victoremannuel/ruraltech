@@ -136,6 +136,7 @@ constexpr uint32_t SIMPLE_COMMAND_ACK_POST_FLUSH_DELAY_MS = 150;
 constexpr uint32_t HERD_OPERATION_RETRY_MS = 15000;
 constexpr uint32_t HERD_OPERATION_TIMEOUT_MS = 600000;
 constexpr uint32_t HERD_OPERATION_STATUS_PUBLISH_MS = 3000;
+constexpr bool RPV2_DEBUG_CRC_VECTOR_LOGS = true;
 
 // Relay entre gateways (multi-hop best effort)
 constexpr bool GATEWAY_RELAY_ENABLED = cfg_manual::GATEWAY_RELAY_ENABLED;

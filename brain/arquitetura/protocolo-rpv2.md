@@ -17,6 +17,9 @@ Substitui o envio JSON textual para comandos de cerca, oferecendo:
 - Retry idempotente de fragmentos, sem reaplicar pontos já aceitos
 - Janela síncrona de COMMIT imediatamente após o ACK do último fragmento
 - Flush cloud terminal-first, coalescido e limitado por orçamento cooperativo
+- CRC canônico compartilhado sobre `count + latE7 + lonE7` em little-endian explícito
+- Preservação dos pontos E7 recebidos na coleira, sem round-trip por `double` antes do COMMIT
+- Encerramento imediato de RPv2/RTR após `crc_mismatch` terminal
 
 ## Components
 
@@ -27,6 +30,7 @@ Substitui o envio JSON textual para comandos de cerca, oferecendo:
 | `LoRaGateway` | `LoRaGateway.cpp` | Envio binário, medição de frame seguro, planner |
 | `radio_proto_v2_codec` | `firmware/shared/radio_proto_v2_codec.h` | Codificação/decodificação binária |
 | `radio_proto_v2_crc` | `firmware/shared/radio_proto_v2_crc.h` | Cálculo CRC32 |
+| `rpv2_fence_crc` | `firmware/shared/rpv2_fence_crc.h` | Contrato canônico host-compatible: count `u16 LE`, seguido de lat/lon `i32 LE`, CRC32 IEEE |
 | `radio_proto_v2_types` | `firmware/shared/radio_proto_v2_types.h` | Estruturas binárias on-wire |
 | `radio_proto_v2_constants` | `firmware/shared/radio_proto_v2_constants.h` | Constantes do protocolo |
 | `radio_proto_v2_id` | `firmware/shared/radio_proto_v2_id.h` | FNV-1a 64 para radio_command_id |
@@ -77,6 +81,8 @@ Substitui o envio JSON textual para comandos de cerca, oferecendo:
    Coleira: após o ACK final, abre janela síncrona de 10 s para COMMIT.
             Valida binding, scope, tipo externo, header, tipo interno,
             radio_command_id e session_nonce antes de reutilizar applyDownlink.
+            Calcula o CRC diretamente do vetor E7 preservado durante a remontagem;
+            o `Polygon` em double é usado para geofence, não como fonte do CRC.
    Matriz: frame = {type: COMMIT, fence_crc}
    → LoRa TX
    ← APPLY_STATUS (success=true/false, reasonCode)
@@ -161,10 +167,10 @@ recente provar que está acordado. Dois ajustes (2026-06-19):
   sempre stale → churn `PAGING_WAITING_UPLINK` → `waiting_uplink_timeout`.
   `FAST_PAGE_DEADLINE_MS` permanece apenas como métrica em `computeFastPathMetric`.
 - **Timeout de espera de uplink dinâmico:** no estado `PAGING_WAITING_UPLINK`, o
-  timeout vem de `rtrwakepolicy::waitingUplinkTimeoutMs(estimatedCycleMs, floor=180s,
+  timeout vem de `rtrwakepolicy::waitingUplinkTimeoutMs(estimatedCycleMs, floor=300s,
   margin=30s)` = `max(floor, 2×cycle + margin)`, usando `estimatedCycleMs` da
   presença do dispositivo — proporcional ao duty cycle/deep sleep real, em vez de
-  um valor fixo.
+  um valor fixo. A aritmética satura em `UINT32_MAX`.
 
 ### Estruturas Binárias
 
@@ -263,7 +269,7 @@ App (Realtime)
 ## Technologies
 
 - **LoRa SX127x**: RF 915MHz, SF7-9, bandwidth 125-250kHz
-- **CRC32**: Polynomial 0xEDB88320 (IEEE)
+- **CRC32**: Polynomial 0xEDB88320 (IEEE), serialização canônica little-endian sem dependência de padding
 - **FNV-1a 64**: Hash para radio_command_id
 - **int40_t**: Coordenadas lat/lon * 1e7 (5 bytes cada)
 - **EEPROM/Flash**: Staging de pontos em memória (coleira)
@@ -274,6 +280,7 @@ App (Realtime)
 |---|---|
 | Perda de chunk no ar | ACK/NACK por etapa, timeout de retransmissão |
 | CRC falha | Staging descartado, sessão resetada |
+| Divergência float/E7 | Vetor E7 canônico preservado desde `FENCE_POINTS` e reutilizado no COMMIT |
 | Memória insuficiente | NACK com reasonCode, aborta sessão |
 | Timeout de etapa | `no_ack_timeout`, reasonCode persistido |
 | Ponto não cabe no frame | Planner falha com `fence_single_point_chunk_too_large` |

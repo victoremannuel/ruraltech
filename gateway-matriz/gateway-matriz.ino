@@ -322,7 +322,7 @@ constexpr uint8_t kMaxPendingWakeSessions = cfg::MAX_HERD_OPERATION_DEVICES;
 constexpr uint8_t kMaxDevicePresenceEntries = cfg::MAX_HERD_OPERATION_DEVICES;
 constexpr uint32_t kRecentWakeHintMs = 4000;
 constexpr uint32_t kSetFenceLocalStallTimeoutMs = 30000UL;
-constexpr uint32_t kPendingWakeWaitingUplinkTimeoutMs = 180000UL;
+constexpr uint32_t kPendingWakeWaitingUplinkTimeoutMs = 300000UL;
 PendingWakeSession pendingWakeSessions[kMaxPendingWakeSessions]{};
 rtrwake::Presence devicePresence[kMaxDevicePresenceEntries]{};
 rtrdiag::PageSnapshot lastPageDiag{};
@@ -5414,6 +5414,33 @@ static bool buildFenceRpv2Plan(
   return ok;
 }
 
+static void logCanonicalFenceCrcVector(
+    const char* commandId,
+    uint64_t radioCommandId,
+    const rpv2fencecrc::FencePointE7* points,
+    uint16_t count,
+    uint32_t crc) {
+  if (!cfg::RPV2_DEBUG_CRC_VECTOR_LOGS) return;
+  LOGI(
+      "RPV2_CRC_VECTOR_BEGIN role=matrix commandId=%s radioCommandId=%llu count=%u",
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)count);
+  for (uint16_t i = 0; i < count; ++i) {
+    LOGI(
+        "RPV2_CRC_POINT role=matrix index=%u latE7=%ld lonE7=%ld",
+        (unsigned)i,
+        (long)points[i].latE7,
+        (long)points[i].lonE7);
+  }
+  LOGI(
+      "RPV2_CRC_VECTOR_END role=matrix commandId=%s radioCommandId=%llu count=%u crc=%lu",
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)count,
+      (unsigned long)crc);
+}
+
 static bool executeFenceCommandRpv2Plan(
     uint32_t deviceId,
     uint64_t scopeId,
@@ -5783,6 +5810,12 @@ static bool executeFenceCommandRpv2Plan(
     }
   }
 
+  logCanonicalFenceCrcVector(
+      commandId,
+      radioCommandId,
+      plan.points,
+      plan.totalPoints,
+      plan.fenceCrc32);
   rpv2::FenceCommitBody commit{};
   commit.totalPoints = plan.totalPoints;
   commit.totalChunks = plan.totalChunks;

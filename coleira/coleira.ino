@@ -244,6 +244,7 @@ struct Rpv2FenceSessionState {
   uint32_t retryGraceUntilMs = 0;
   uint32_t commitGraceUntilMs = 0;
   uint32_t lastAckTxAtMs = 0;
+  rpv2fencecrc::FencePointE7 canonicalPoints[rpv2::MAX_FENCE_POINTS]{};
   Polygon fence{};
   PolygonAuditContext audit{};
 } rpv2FenceSession_;
@@ -1414,6 +1415,30 @@ static bool sendRpv2ApplyStatus(
   return sendRpv2BinaryReply(cmd, static_cast<uint8_t>(MsgType::EVENT), payload, len);
 }
 
+static void logCanonicalFenceCrcVector(
+    uint64_t radioCommandId,
+    const rpv2fencecrc::FencePointE7* points,
+    uint16_t count,
+    uint32_t crc) {
+  if (!cfg::RPV2_DEBUG_CRC_VECTOR_LOGS) return;
+  LOGI(
+      "RPV2_CRC_VECTOR_BEGIN role=collar radioCommandId=%llu count=%u",
+      (unsigned long long)radioCommandId,
+      (unsigned)count);
+  for (uint16_t i = 0; i < count; ++i) {
+    LOGI(
+        "RPV2_CRC_POINT role=collar index=%u latE7=%ld lonE7=%ld",
+        (unsigned)i,
+        (long)points[i].latE7,
+        (long)points[i].lonE7);
+  }
+  LOGI(
+      "RPV2_CRC_VECTOR_END role=collar radioCommandId=%llu count=%u crc=%lu",
+      (unsigned long long)radioCommandId,
+      (unsigned)count,
+      (unsigned long)crc);
+}
+
 static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
   rpv2::Header header{};
   if (!rpv2::decodeHeader(frame.payload, frame.payloadLen, &header)) {
@@ -1525,11 +1550,9 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
           const uint16_t pointIndex =
               static_cast<uint16_t>(prefix.startPointIndex + i);
           if (pointIndex >= rpv2FenceSession_.fence.count ||
-              static_cast<int32_t>(
-                  rpv2FenceSession_.fence.points[pointIndex].lat * 10000000.0) !=
+              rpv2FenceSession_.canonicalPoints[pointIndex].latE7 !=
                   points[i].latE7 ||
-              static_cast<int32_t>(
-                  rpv2FenceSession_.fence.points[pointIndex].lon * 10000000.0) !=
+              rpv2FenceSession_.canonicalPoints[pointIndex].lonE7 !=
                   points[i].lonE7) {
             matchesAcceptedPayload = false;
             break;
@@ -1573,9 +1596,13 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
       return true;
     }
     for (uint8_t i = 0; i < prefix.pointCount; ++i) {
-      GeoPoint& dst = rpv2FenceSession_.fence.points[rpv2FenceSession_.fence.count++];
+      const uint8_t pointIndex = rpv2FenceSession_.fence.count;
+      rpv2FenceSession_.canonicalPoints[pointIndex].latE7 = points[i].latE7;
+      rpv2FenceSession_.canonicalPoints[pointIndex].lonE7 = points[i].lonE7;
+      GeoPoint& dst = rpv2FenceSession_.fence.points[pointIndex];
       dst.lat = static_cast<double>(points[i].latE7) / 10000000.0;
       dst.lon = static_cast<double>(points[i].lonE7) / 10000000.0;
+      rpv2FenceSession_.fence.count++;
     }
     rpv2FenceSession_.nextPointIndex += prefix.pointCount;
     rpv2FenceSession_.expectedFragment++;
@@ -1648,21 +1675,25 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
       sendRpv2Nack(frame, header, rpv2::FENCE_COMMIT, 0, rpv2::REASON_STAGE_NOT_COMPLETE, rpv2FenceSession_.expectedFragment, rpv2FenceSession_.fence.count);
       return true;
     }
-    rpv2::EncodedPoint encoded[rpv2::MAX_FENCE_POINTS]{};
-    for (uint8_t i = 0; i < rpv2FenceSession_.fence.count; ++i) {
-      encoded[i].latE7 = static_cast<int32_t>(rpv2FenceSession_.fence.points[i].lat * 10000000.0);
-      encoded[i].lonE7 = static_cast<int32_t>(rpv2FenceSession_.fence.points[i].lon * 10000000.0);
-    }
-    const uint32_t crc = rpv2::crc32Fence(encoded, rpv2FenceSession_.fence.count);
+    const uint32_t crc = rpv2fencecrc::computeCanonicalFenceCrc(
+        rpv2FenceSession_.canonicalPoints,
+        rpv2FenceSession_.fence.count);
+    logCanonicalFenceCrcVector(
+        header.radioCommandId,
+        rpv2FenceSession_.canonicalPoints,
+        rpv2FenceSession_.fence.count,
+        crc);
     if (crc != body.fenceCrc32 || crc != body.stagedCrc32Expected) {
       LOGW(
-          "RPV2_CRC_FAIL radioCommandId=%llu sessionNonce=%lu crc=%lu expected=%lu stagedExpected=%lu",
+          "RPV2_CRC_FAIL radioCommandId=%llu sessionNonce=%lu crc=%lu expected=%lu stagedExpected=%lu count=%u",
           (unsigned long long)header.radioCommandId,
           (unsigned long)header.sessionNonce,
           (unsigned long)crc,
           (unsigned long)body.fenceCrc32,
-          (unsigned long)body.stagedCrc32Expected);
+          (unsigned long)body.stagedCrc32Expected,
+          (unsigned)rpv2FenceSession_.fence.count);
       sendRpv2Nack(frame, header, rpv2::FENCE_COMMIT, 0, rpv2::REASON_CRC_MISMATCH, rpv2FenceSession_.expectedFragment, crc);
+      clearActiveRpv2FenceSession("crc_mismatch", true);
       return true;
     }
     LOGI(

@@ -202,7 +202,8 @@ static inline bool buildFenceRpv2PlanStrict(
   }
 
   memcpy(plan->points, points, sizeof(rpv2::EncodedPoint) * pointCount);
-  plan->fenceCrc32 = crc32Fence(plan->points, pointCount);
+  plan->fenceCrc32 =
+      rpv2fencecrc::computeCanonicalFenceCrc(plan->points, pointCount);
 
   uint16_t startPointIndex = 0;
   while (startPointIndex < pointCount) {
