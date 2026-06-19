@@ -96,23 +96,55 @@ void StorageQueue::pushEvent(const EventRecord& ev) {
   }
 }
 
-bool StorageQueue::popEvent(EventRecord& ev) {
+bool StorageQueue::peekEvent(EventRecord& ev) {
   if (!initialized_) return false;
   if (!persistenceEnabled_) {
     if (ramHead_ == ramTail_) return false;
     ev = ramQueue_[ramTail_];
+    return true;
+  }
+
+  const uint16_t head = EEPROM.readUShort(headAddr_);
+  const uint16_t tail = EEPROM.readUShort(tailAddr_);
+  if (head == tail) return false;
+  EEPROM.get(slotAddr(tail), ev);
+  return true;
+}
+
+bool StorageQueue::ackEvent() {
+  if (!initialized_) return false;
+  if (!persistenceEnabled_) {
+    if (ramHead_ == ramTail_) return false;
     ramTail_ = (uint8_t)((ramTail_ + 1U) % cfg::EEPROM_EVENT_SLOTS);
     return true;
   }
 
-  uint16_t head = EEPROM.readUShort(headAddr_);
+  const uint16_t head = EEPROM.readUShort(headAddr_);
   uint16_t tail = EEPROM.readUShort(tailAddr_);
   if (head == tail) return false;
-  EEPROM.get(slotAddr(tail), ev);
   tail = (tail + 1) % cfg::EEPROM_EVENT_SLOTS;
   EEPROM.writeUShort(tailAddr_, tail);
   if (!EEPROM.commit()) {
     LOGW("StorageQueue: falha commit ao consumir evento");
+    return false;
   }
   return true;
+}
+
+bool StorageQueue::popEvent(EventRecord& ev) {
+  return peekEvent(ev) && ackEvent();
+}
+
+uint8_t StorageQueue::count() const {
+  if (!initialized_) return 0;
+  if (!persistenceEnabled_) {
+    return static_cast<uint8_t>(
+        (ramHead_ + cfg::EEPROM_EVENT_SLOTS - ramTail_) %
+        cfg::EEPROM_EVENT_SLOTS);
+  }
+  const uint16_t head = EEPROM.readUShort(headAddr_);
+  const uint16_t tail = EEPROM.readUShort(tailAddr_);
+  return static_cast<uint8_t>(
+      (head + cfg::EEPROM_EVENT_SLOTS - tail) %
+      cfg::EEPROM_EVENT_SLOTS);
 }

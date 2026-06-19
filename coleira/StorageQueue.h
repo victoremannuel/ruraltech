@@ -10,7 +10,10 @@ class StorageQueue {
  public:
   bool begin();
   void pushEvent(const EventRecord& ev);
+  bool peekEvent(EventRecord& ev);
+  bool ackEvent();
   bool popEvent(EventRecord& ev);
+  uint8_t count() const;
   bool persistenceEnabled() const { return persistenceEnabled_; }
 
  private:

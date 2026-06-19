@@ -98,6 +98,10 @@ jobs:
             firmware/tests/matrix_uplink_antireplay_test.cpp \
             -o /tmp/matrix_uplink_antireplay_test
           /tmp/matrix_uplink_antireplay_test
+          g++ -std=c++17 -Wall -Wextra -pedantic \
+            firmware/tests/rpv2_transport_policy_test.cpp \
+            -o /tmp/rpv2_transport_policy_test
+          /tmp/rpv2_transport_policy_test
 
   firmware-regression:
     name: Firmware Regression Compile
