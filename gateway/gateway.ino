@@ -504,6 +504,7 @@ static bool isRelayCandidate(const LoRaFrame& frame) {
          frame.msgType == MsgType::EVENT ||
          frame.msgType == MsgType::ACK ||
          frame.msgType == MsgType::NACK ||
+         frame.msgType == MsgType::RTR_CONTROL ||
          frame.msgType == MsgType::SET_FENCE ||
          frame.msgType == MsgType::SET_HERDING_PLAN ||
          frame.msgType == MsgType::SET_PARAMS ||
@@ -515,6 +516,7 @@ static const char* uplinkTypeLabel(MsgType t) {
   if (t == MsgType::EVENT) return "event";
   if (t == MsgType::ACK) return "ack";
   if (t == MsgType::NACK) return "nack";
+  if (t == MsgType::RTR_CONTROL) return "rtr_control";
   return "lora";
 }
 

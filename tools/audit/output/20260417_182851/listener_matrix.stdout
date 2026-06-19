@@ -1,0 +1,8 @@
+[listener] Porta fechada.
+[listener] Abrindo /dev/cu.usbserial-59470049741 @ 115200 baud
+[listener] Raw  → /Users/victoremannuel/Documents/dev/ruraltech/tools/audit/output/20260417_182851/serial_matrix_raw.log
+[listener] Sync → /Users/victoremannuel/Documents/dev/ruraltech/tools/audit/output/20260417_182851/serial_matrix_area_sync.jsonl
+[listener] Filtro commandId=AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:B3DD1772D1DF1EDC:23A00185B336A70A
+[listener] Escutando… Ctrl+C para parar.
+
+[listener] Arquivos salvos em /Users/victoremannuel/Documents/dev/ruraltech/tools/audit/output/20260417_182851

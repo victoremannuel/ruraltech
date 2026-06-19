@@ -1,0 +1,562 @@
+{
+  "directed": false,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "queue_stream_support_test.cpp",
+      "file_type": "code",
+      "source_file": "tests/queue_stream_support_test.cpp",
+      "source_location": "L1",
+      "id": "queue_stream_support_test",
+      "community": 2
+    },
+    {
+      "label": "feedText()",
+      "file_type": "code",
+      "source_file": "tests/queue_stream_support_test.cpp",
+      "source_location": "L6",
+      "id": "queue_stream_support_test_feedtext",
+      "community": 2
+    },
+    {
+      "label": "main()",
+      "file_type": "code",
+      "source_file": "tests/queue_stream_support_test.cpp",
+      "source_location": "L19",
+      "id": "queue_stream_support_test_main",
+      "community": 2
+    },
+    {
+      "label": "command_contract_test.cpp",
+      "file_type": "code",
+      "source_file": "tests/command_contract_test.cpp",
+      "source_location": "L1",
+      "id": "command_contract_test",
+      "community": 4
+    },
+    {
+      "label": "main()",
+      "file_type": "code",
+      "source_file": "tests/command_contract_test.cpp",
+      "source_location": "L6",
+      "id": "command_contract_test_main",
+      "community": 4
+    },
+    {
+      "label": "command_contract.cpp",
+      "file_type": "code",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L1",
+      "id": "command_contract",
+      "community": 0
+    },
+    {
+      "label": "rtcmd()",
+      "file_type": "code",
+      "source_file": "shared/command_contract.h",
+      "source_location": "L6",
+      "id": "command_contract_rtcmd",
+      "community": 0
+    },
+    {
+      "label": "skipSpaces()",
+      "file_type": "code",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L11",
+      "id": "command_contract_skipspaces",
+      "community": 1
+    },
+    {
+      "label": "equalsTokenIgnoreCase()",
+      "file_type": "code",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L19",
+      "id": "command_contract_equalstokenignorecase",
+      "community": 1
+    },
+    {
+      "label": "isValidCoordinate()",
+      "file_type": "code",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L37",
+      "id": "command_contract_isvalidcoordinate",
+      "community": 0
+    },
+    {
+      "label": "isAdminRole()",
+      "file_type": "code",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L42",
+      "id": "command_contract_isadminrole",
+      "community": 3
+    },
+    {
+      "label": "isValidScopeId()",
+      "file_type": "code",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L47",
+      "id": "command_contract_isvalidscopeid",
+      "community": 1
+    },
+    {
+      "label": "isTraceableCommandId()",
+      "file_type": "code",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L59",
+      "id": "command_contract_istraceablecommandid",
+      "community": 1
+    },
+    {
+      "label": "hasAdminModePermission()",
+      "file_type": "code",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L71",
+      "id": "command_contract_hasadminmodepermission",
+      "community": 3
+    },
+    {
+      "label": "targetIncludesGateway()",
+      "file_type": "code",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L79",
+      "id": "command_contract_targetincludesgateway",
+      "community": 1
+    },
+    {
+      "label": "targetIncludesCollars()",
+      "file_type": "code",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L86",
+      "id": "command_contract_targetincludescollars",
+      "community": 1
+    },
+    {
+      "label": "validateSetParamsPayload()",
+      "file_type": "code",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L94",
+      "id": "command_contract_validatesetparamspayload",
+      "community": 3
+    },
+    {
+      "label": "validatePointCount()",
+      "file_type": "code",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L107",
+      "id": "command_contract_validatepointcount",
+      "community": 0
+    },
+    {
+      "label": "validatePhaseCount()",
+      "file_type": "code",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L113",
+      "id": "command_contract_validatephasecount",
+      "community": 0
+    },
+    {
+      "label": "planPointChunks()",
+      "file_type": "code",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L120",
+      "id": "command_contract_planpointchunks",
+      "community": 0
+    },
+    {
+      "label": "validationCodeToReason()",
+      "file_type": "code",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L172",
+      "id": "command_contract_validationcodetoreason",
+      "community": 0
+    }
+  ],
+  "links": [
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/queue_stream_support_test.cpp",
+      "source_location": "L6",
+      "weight": 1.0,
+      "_src": "queue_stream_support_test",
+      "_tgt": "queue_stream_support_test_feedtext",
+      "source": "queue_stream_support_test",
+      "target": "queue_stream_support_test_feedtext",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/queue_stream_support_test.cpp",
+      "source_location": "L19",
+      "weight": 1.0,
+      "_src": "queue_stream_support_test",
+      "_tgt": "queue_stream_support_test_main",
+      "source": "queue_stream_support_test",
+      "target": "queue_stream_support_test_main",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/queue_stream_support_test.cpp",
+      "source_location": "L22",
+      "weight": 1.0,
+      "_src": "queue_stream_support_test_main",
+      "_tgt": "queue_stream_support_test_feedtext",
+      "source": "queue_stream_support_test_feedtext",
+      "target": "queue_stream_support_test_main",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/command_contract_test.cpp",
+      "source_location": "L4",
+      "weight": 1.0,
+      "_src": "command_contract_test",
+      "_tgt": "command_contract",
+      "source": "command_contract_test",
+      "target": "command_contract",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/command_contract_test.cpp",
+      "source_location": "L6",
+      "weight": 1.0,
+      "_src": "command_contract_test",
+      "_tgt": "command_contract_test_main",
+      "source": "command_contract_test",
+      "target": "command_contract_test_main",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.h",
+      "source_location": "L6",
+      "weight": 1.0,
+      "_src": "command_contract",
+      "_tgt": "command_contract_rtcmd",
+      "source": "command_contract",
+      "target": "command_contract_rtcmd",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L1",
+      "weight": 1.0,
+      "_src": "command_contract",
+      "_tgt": "command_contract",
+      "source": "command_contract",
+      "target": "command_contract",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L11",
+      "weight": 1.0,
+      "_src": "command_contract",
+      "_tgt": "command_contract_skipspaces",
+      "source": "command_contract",
+      "target": "command_contract_skipspaces",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L19",
+      "weight": 1.0,
+      "_src": "command_contract",
+      "_tgt": "command_contract_equalstokenignorecase",
+      "source": "command_contract",
+      "target": "command_contract_equalstokenignorecase",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L37",
+      "weight": 1.0,
+      "_src": "command_contract",
+      "_tgt": "command_contract_isvalidcoordinate",
+      "source": "command_contract",
+      "target": "command_contract_isvalidcoordinate",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L42",
+      "weight": 1.0,
+      "_src": "command_contract",
+      "_tgt": "command_contract_isadminrole",
+      "source": "command_contract",
+      "target": "command_contract_isadminrole",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L47",
+      "weight": 1.0,
+      "_src": "command_contract",
+      "_tgt": "command_contract_isvalidscopeid",
+      "source": "command_contract",
+      "target": "command_contract_isvalidscopeid",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L59",
+      "weight": 1.0,
+      "_src": "command_contract",
+      "_tgt": "command_contract_istraceablecommandid",
+      "source": "command_contract",
+      "target": "command_contract_istraceablecommandid",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L71",
+      "weight": 1.0,
+      "_src": "command_contract",
+      "_tgt": "command_contract_hasadminmodepermission",
+      "source": "command_contract",
+      "target": "command_contract_hasadminmodepermission",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L79",
+      "weight": 1.0,
+      "_src": "command_contract",
+      "_tgt": "command_contract_targetincludesgateway",
+      "source": "command_contract",
+      "target": "command_contract_targetincludesgateway",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L86",
+      "weight": 1.0,
+      "_src": "command_contract",
+      "_tgt": "command_contract_targetincludescollars",
+      "source": "command_contract",
+      "target": "command_contract_targetincludescollars",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L94",
+      "weight": 1.0,
+      "_src": "command_contract",
+      "_tgt": "command_contract_validatesetparamspayload",
+      "source": "command_contract",
+      "target": "command_contract_validatesetparamspayload",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L107",
+      "weight": 1.0,
+      "_src": "command_contract",
+      "_tgt": "command_contract_validatepointcount",
+      "source": "command_contract",
+      "target": "command_contract_validatepointcount",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L113",
+      "weight": 1.0,
+      "_src": "command_contract",
+      "_tgt": "command_contract_validatephasecount",
+      "source": "command_contract",
+      "target": "command_contract_validatephasecount",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L120",
+      "weight": 1.0,
+      "_src": "command_contract",
+      "_tgt": "command_contract_planpointchunks",
+      "source": "command_contract",
+      "target": "command_contract_planpointchunks",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L172",
+      "weight": 1.0,
+      "_src": "command_contract",
+      "_tgt": "command_contract_validationcodetoreason",
+      "source": "command_contract",
+      "target": "command_contract_validationcodetoreason",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L20",
+      "weight": 1.0,
+      "_src": "command_contract_equalstokenignorecase",
+      "_tgt": "command_contract_skipspaces",
+      "source": "command_contract_skipspaces",
+      "target": "command_contract_equalstokenignorecase",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L48",
+      "weight": 1.0,
+      "_src": "command_contract_isvalidscopeid",
+      "_tgt": "command_contract_skipspaces",
+      "source": "command_contract_skipspaces",
+      "target": "command_contract_isvalidscopeid",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L60",
+      "weight": 1.0,
+      "_src": "command_contract_istraceablecommandid",
+      "_tgt": "command_contract_skipspaces",
+      "source": "command_contract_skipspaces",
+      "target": "command_contract_istraceablecommandid",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L80",
+      "weight": 1.0,
+      "_src": "command_contract_targetincludesgateway",
+      "_tgt": "command_contract_skipspaces",
+      "source": "command_contract_skipspaces",
+      "target": "command_contract_targetincludesgateway",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L87",
+      "weight": 1.0,
+      "_src": "command_contract_targetincludescollars",
+      "_tgt": "command_contract_skipspaces",
+      "source": "command_contract_skipspaces",
+      "target": "command_contract_targetincludescollars",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L43",
+      "weight": 1.0,
+      "_src": "command_contract_isadminrole",
+      "_tgt": "command_contract_equalstokenignorecase",
+      "source": "command_contract_equalstokenignorecase",
+      "target": "command_contract_isadminrole",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L82",
+      "weight": 1.0,
+      "_src": "command_contract_targetincludesgateway",
+      "_tgt": "command_contract_equalstokenignorecase",
+      "source": "command_contract_equalstokenignorecase",
+      "target": "command_contract_targetincludesgateway",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L89",
+      "weight": 1.0,
+      "_src": "command_contract_targetincludescollars",
+      "_tgt": "command_contract_equalstokenignorecase",
+      "source": "command_contract_equalstokenignorecase",
+      "target": "command_contract_targetincludescollars",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L76",
+      "weight": 1.0,
+      "_src": "command_contract_hasadminmodepermission",
+      "_tgt": "command_contract_isadminrole",
+      "source": "command_contract_isadminrole",
+      "target": "command_contract_hasadminmodepermission",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L102",
+      "weight": 1.0,
+      "_src": "command_contract_validatesetparamspayload",
+      "_tgt": "command_contract_hasadminmodepermission",
+      "source": "command_contract_hasadminmodepermission",
+      "target": "command_contract_validatesetparamspayload",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "shared/command_contract.cpp",
+      "source_location": "L135",
+      "weight": 1.0,
+      "_src": "command_contract_planpointchunks",
+      "_tgt": "command_contract_validatepointcount",
+      "source": "command_contract_validatepointcount",
+      "target": "command_contract_planpointchunks",
+      "confidence_score": 1.0
+    }
+  ],
+  "hyperedges": []
+}

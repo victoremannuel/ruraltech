@@ -51,7 +51,7 @@
             "state": {
               "type": "search",
               "state": {
-                "query": "tag:#graphify/EXTRACTED",
+                "query": "tag:#graphify/document",
                 "matchingCase": false,
                 "explainSearch": false,
                 "collapseAll": false,
@@ -250,6 +250,19 @@
   },
   "active": "98fd5c02a4762fd8",
   "lastOpenFiles": [
+    "tarefas/correcao-lora-panic-coleira-matriz-2026-04-17.md",
+    "tarefas/auditoria-total-solucao-2026-04-11 2.md",
+    "tarefas/auditoria-pos-migracao-supabase 2.md",
+    "tarefas/auditoria-home-mapa-cinza-pos-login-2026-04-11 2.md",
+    "tarefas/auditoria-comunicacao-v2.3.2 2.md",
+    "tarefas/auditoria-comunicacao-v2.3.1 2.md",
+    "tarefas/auditoria-comunicacao-v2.3.0 2.md",
+    "tarefas/auditoria-area-sync-e2e.md",
+    "tarefas/auditoria-app-to-coleira-v2.4.0.md",
+    "tarefas/auditoria-app-mapa-gateway 2.md",
+    "tarefas/AUDIT_TELEMETRY_COMMAND_PIPELINE 2.md",
+    "draw 2.canvas",
+    "db 2.base",
     "tarefas/design_handoff_ruraltech_v2/components/Tokens.jsx",
     "tarefas/design_handoff_ruraltech_v2/components/Primitives.jsx",
     "tarefas/design_handoff_ruraltech_v2/components/MoreScreens.jsx",

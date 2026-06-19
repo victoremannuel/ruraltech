@@ -36,7 +36,8 @@ enum class MsgType : uint8_t {
   PING = 14,
   TIME_SYNC = 15,
   ACK = 16,
-  NACK = 17
+  NACK = 17,
+  RTR_CONTROL = 18
 };
 
 enum class PolygonApplyStatus : uint8_t {

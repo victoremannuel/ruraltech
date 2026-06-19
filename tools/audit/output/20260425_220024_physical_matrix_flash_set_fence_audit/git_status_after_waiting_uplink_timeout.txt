@@ -1,0 +1,2 @@
+ M gateway-matriz/gateway-matriz.ino
+?? tools/audit/output/20260425_220024_physical_matrix_flash_set_fence_audit/

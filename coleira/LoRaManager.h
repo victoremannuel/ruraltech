@@ -8,6 +8,7 @@
 #include "config.h"
 #include "LoRaProtocol.h"
 #include "CryptoEngine.h"
+#include "../firmware/shared/rtr_diag_support.h"
 
 class LoRaManager {
  public:
@@ -15,8 +16,15 @@ class LoRaManager {
   bool begin();
   bool sendFrame(LoRaFrame& frame);
   bool receiveFrame(LoRaFrame& frame, uint32_t windowMs);
+  void prepareForDeepSleep();
   int16_t lastRssi() const { return lastRssi_; }
   float lastSnr() const { return lastSnr_; }
+  uint32_t txCount() const { return txCount_; }
+  uint32_t txFailCount() const { return txFailCount_; }
+  uint32_t decryptFailCount() const { return decryptFailCount_; }
+  uint32_t nonceMismatchCount() const { return nonceMismatchCount_; }
+  uint32_t replayRejectCount() const { return replayRejectCount_; }
+  uint32_t lastAcceptedSeq() const { return lastAcceptedSeq_; }
 
  private:
   SX1276 radio_;
@@ -24,6 +32,14 @@ class LoRaManager {
   Preferences replayPrefs_;
   bool replayPrefsReady_ = false;
   uint32_t lastSeqSeen_ = 0;
+  uint32_t persistedSeqSeen_ = 0;
+  uint32_t txCount_ = 0;
+  uint32_t txFailCount_ = 0;
+  uint32_t decryptFailCount_ = 0;
+  uint32_t nonceMismatchCount_ = 0;
+  uint32_t replayRejectCount_ = 0;
+  uint32_t lastAcceptedSeq_ = 0;
   int16_t lastRssi_ = -120;
   float lastSnr_ = 0.0f;
+  bool persistReplayCheckpoint(uint32_t seq);
 };

@@ -724,6 +724,109 @@ class CloudService {
     }).eq('id', _idFromRefOrPath(operationId));
   }
 
+  /// Retorna o comando mais recente para um documento de origem (propriedade, área, operação).
+  ///
+  /// [propertyId] ID da propriedade.
+  /// [originDocType] Tipo: "ruralProperty", "area", "herdingOperation".
+  /// [originDocId] ID do documento de origem.
+  Future<Map<String, dynamic>?> getLatestCommandForOrigin({
+    required String propertyId,
+    required String originDocType,
+    required String originDocId,
+  }) async {
+    final normalizedPropertyId = _idFromRefOrPath(propertyId);
+    final normalizedDocType = _normalizeText(originDocType);
+    final normalizedDocId = _idFromRefOrPath(originDocId);
+    if (normalizedPropertyId.isEmpty ||
+        normalizedDocType.isEmpty ||
+        normalizedDocId.isEmpty) {
+      return null;
+    }
+    final result = await _client
+        .from('property_commands')
+        .select()
+        .eq('property_id', normalizedPropertyId)
+        .eq('origin_doc_type', normalizedDocType)
+        .eq('origin_doc_id', normalizedDocId)
+        .order('created_at_ms', ascending: false)
+        .limit(1)
+        .maybeSingle();
+    if (result == null) return null;
+    return _propertyCommandFromRow(Map<String, dynamic>.from(result));
+  }
+
+  /// Stream do comando mais recente por documento de origem.
+  ///
+  /// Ideal para acompanhar o status de propagação automática após salvar
+  /// uma propriedade ou área.
+  Stream<Map<String, dynamic>?> streamLatestCommandForOrigin({
+    required String propertyId,
+    required String originDocType,
+    required String originDocId,
+  }) {
+    final normalizedPropertyId = _idFromRefOrPath(propertyId);
+    final normalizedDocType = _normalizeText(originDocType);
+    final normalizedDocId = _idFromRefOrPath(originDocId);
+    if (normalizedPropertyId.isEmpty ||
+        normalizedDocType.isEmpty ||
+        normalizedDocId.isEmpty) {
+      return Stream.value(null);
+    }
+    return _client
+        .from('property_commands')
+        .stream(primaryKey: ['property_id', 'command_id'])
+        .map((rows) {
+      final matching = rows
+          .map((r) => Map<String, dynamic>.from(r))
+          .where((row) =>
+              _idFromRefOrPath(row['property_id']) == normalizedPropertyId &&
+              _normalizeText(row['origin_doc_type']) == normalizedDocType &&
+              _idFromRefOrPath(row['origin_doc_id']) == normalizedDocId)
+          .toList(growable: false);
+      if (matching.isEmpty) return null;
+      // Retorna o mais recente por created_at_ms
+      matching.sort((a, b) {
+        final aMs = _toInt(a['created_at_ms']) ?? 0;
+        final bMs = _toInt(b['created_at_ms']) ?? 0;
+        return bMs.compareTo(aMs);
+      });
+      return _propertyCommandFromRow(matching.first);
+    });
+  }
+
+  /// Converte um status de comando em uma mensagem amigável para o usuário.
+  ///
+  /// Retorna um mapa com `label` (texto curto) e `isTerminal` (se o fluxo acabou).
+  static Map<String, dynamic> commandStatusLabel(String? status) {
+    switch (status?.toLowerCase().trim()) {
+      case null:
+      case '':
+        return {'label': 'Aguardando...', 'isTerminal': false};
+      case 'queued':
+        return {'label': 'Enfileirado', 'isTerminal': false};
+      case 'dispatching':
+        return {'label': 'Distribuindo para coleiras...', 'isTerminal': false};
+      case 'acknowledged':
+        return {'label': 'Confirmado pela matriz', 'isTerminal': false};
+      case 'applied':
+      case 'success':
+        return {'label': 'Aplicado com sucesso', 'isTerminal': true};
+      case 'partial':
+        return {'label': 'Parcialmente aplicado', 'isTerminal': true};
+      case 'failed':
+      case 'nack':
+        return {'label': 'Falhou', 'isTerminal': true};
+      case 'expired':
+        return {'label': 'Expirado', 'isTerminal': true};
+      case 'rejected':
+        return {'label': 'Rejeitado', 'isTerminal': true};
+      case 'auto_sync_failed':
+        return {'label': 'Falha na sincronização automática', 'isTerminal': true};
+      default:
+        return {'label': status!, 'isTerminal': false};
+    }
+  }
+
   Stream<Map<String, dynamic>?> streamCommandStatus({
     required String propertyId,
     required String commandId,

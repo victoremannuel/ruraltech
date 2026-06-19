@@ -1,0 +1,20 @@
+23d7f93a feat: enhance canonical planner validation with robust auditing and cleanup
+c8db702f feat: add integration tests for matrix cloud fence dispatch and enhance planner functionality
+273b8d5b feat: enhance matrix planner runtime validation with comprehensive marker checks
+5ff9bf5b feat: implementa lógica de classificação de candidatos no planner RPv2 e adiciona logs de entrada/revisão
+01fe02eb feat: implementa lógica de planejamento progressivo para pontos no RPV2 e atualiza testes correspondentes
+2937aa5a Add provenance path validation logs and report for RuralTech firmware
+56b2b40c Add build information generation and provenance validation logs
+c2ae156a Implement firmware reflash and provenance validation tools
+8f12088e feat: implementa lógica para exigir uplink fresco após RTR_WAKE_HINT_STALE e atualiza testes correspondentes
+ccfd278a feat: adiciona lógica para bloqueio de RTR_PAGE com wake hint vencido e implementa testes correspondentes
+59aa5b81 feat: corrige erro de compilação isolando escopo em SESSION_IN_PROGRESS e preserva lógica WDT-safe
+255052ec feat: adiciona suporte ao diagnóstico do loop de wake, incluindo novos campos e logs
+ee28e429 feat: adiciona suporte a diagnóstico de RX bruto com contadores e logs para ruído e padrões inválidos
+1f83d6be feat: Enhance page acknowledgment handling and retry mechanisms
+99f8d751 .
+af3743ad feat: adiciona suporte a grace windows para sleep e retry na coleira, incluindo novos campos de status e métricas
+6980deab Implement RTR diagnostic support for downlink and page handling
+8a69fa70 feat: adiciona suporte a proveniência de firmware com geração e validação de metadados
+891dd586 feat: adiciona suporte a sessões RPV2 com registro de transições e melhorias no gerenciamento de estado
+a473f180 feat: implement fast-path handling for RTR_PAGE_ACK and enhance related tests

@@ -1,0 +1,6 @@
+ D tools/audit/__pycache__/check_firmware_provenance.cpython-314.pyc
+ D tools/audit/__pycache__/check_matrix_cloud_pretest.cpython-314.pyc
+ D tools/audit/__pycache__/flash_and_validate_firmware.cpython-314.pyc
+ D tools/audit/__pycache__/generate_build_info.cpython-314.pyc
+ D tools/audit/__pycache__/supabase_poller.cpython-314.pyc
+?? tools/audit/output/20260425_220024_physical_matrix_flash_set_fence_audit/

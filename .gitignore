@@ -1,3 +1,5 @@
+# ==== CODEX ====
+
 # Prerequisites
 *.d
 
@@ -54,6 +56,10 @@ ruraltech10-firebase-adminsdk-fbsvc-66b85a4f95.json
 **/node_modules
 /scripts/migration/.env
 /scripts/migration/package-lock.json
+*.env
+
+/gateway-matriz/manual_settings.local.h
+/firmware/shared/generated_build_info.h
 .env
 /.obsidian/**
 /obsidian
@@ -62,6 +68,11 @@ ruraltech10-firebase-adminsdk-fbsvc-66b85a4f95.json
 graphify-out/cache/            # optional: commit for shared extraction speed, skip to keep repo small
 graphify-out/manifest.json     # mtime-based, invalid after git clone — always gitignore this
 graphify-out/cost.json         # local token tracking, not useful to share
+graphify-out/
+graphify-out
+graphify-out/**
+
+.gitignore
 /.venv/                        # optional: commit for shared extraction speed, skip to keep repo small
 
 **/graphify-out/

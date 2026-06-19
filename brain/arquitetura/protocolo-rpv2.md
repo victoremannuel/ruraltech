@@ -1,0 +1,194 @@
+# Architecture: Protocolo RPv2 (Radio Protocol v2)
+
+#ruraltech
+#arquitetura
+
+## Overview
+
+Protocolo binário para transmissão de cercas virtuais (SET_FENCE) via LoRa, com sessão em 3 etapas (BEGIN → POINTS → COMMIT), validação CRC32 e confirmação de aplicação real.
+
+Substitui o envio JSON textual para comandos de cerca, oferecendo:
+- Maior eficiência de bytes (overhead reduzido por chunk)
+- Validação CRC32 por etapa e final
+- Sessão com estado (staging em memória)
+- Confirmação explícita de aplicação (`APPLY_STATUS`)
+- Planner de chunking baseado em tamanho real do frame
+
+## Components
+
+### Matriz (gateway-matriz)
+
+| Componente | Arquivo | Responsabilidade |
+|---|---|---|
+| `LoRaGateway` | `LoRaGateway.cpp` | Envio binário, medição de frame seguro, planner |
+| `radio_proto_v2_codec` | `firmware/shared/radio_proto_v2_codec.h` | Codificação/decodificação binária |
+| `radio_proto_v2_crc` | `firmware/shared/radio_proto_v2_crc.h` | Cálculo CRC32 |
+| `radio_proto_v2_types` | `firmware/shared/radio_proto_v2_types.h` | Estruturas binárias on-wire |
+| `radio_proto_v2_constants` | `firmware/shared/radio_proto_v2_constants.h` | Constantes do protocolo |
+| `radio_proto_v2_id` | `firmware/shared/radio_proto_v2_id.h` | FNV-1a 64 para radio_command_id |
+| `radio_proto_v2_reason_codes` | `firmware/shared/radio_proto_v2_reason_codes.h` | Códigos de erro/status |
+
+### Coleira
+
+| Componente | Arquivo | Responsabilidade |
+|---|---|---|
+| `coleira.ino` | `coleira/coleira.ino` | Recepção binária, validação, staging, apply |
+
+### Testes
+
+| Teste | Arquivo | Validação |
+|---|---|---|
+| `rpv2_codec_test` | `firmware/tests/rpv2_codec_test.cpp` | Codificação/decodificação |
+| `rpv2_crc_test` | `firmware/tests/rpv2_crc_test.cpp` | Cálculo CRC32 |
+| `rpv2_fence_planner_test` | `firmware/tests/rpv2_fence_planner_test.cpp` | Planner de chunking |
+
+## Flow
+
+### Sessão RPv2 (Matriz → Coleira)
+
+```
+1. BEGIN
+   Matriz: radio_command_id = FNV-1a 64(property_id + fence_hash)
+           fence_crc = CRC32(points array)
+           frame = {type: BEGIN, radio_command_id, pointCount, fence_crc, header_crc}
+   → LoRa TX
+   ← ACK/NACK da coleira (CRC OK, staging preparado)
+
+2. POINTS (chunk 0..N-1)
+   Matriz: planner calcula chunks com overhead real
+           frame = {type: POINTS, chunk_index, points[], chunk_crc}
+   → LoRa TX (N frames)
+   ← ACK/NACK por chunk
+
+3. COMMIT
+   Matriz: frame = {type: COMMIT, fence_crc}
+   → LoRa TX
+   ← APPLY_STATUS (success=true/false, reasonCode)
+
+4. Resultado
+   Matriz: persiste property_commands com:
+           transport=radio_fence_v2
+           transportState=pending|sending|waiting|applied|failed
+           reasonCode=<codigo>
+```
+
+### Estruturas Binárias
+
+**BEGIN (22 bytes on-wire):**
+```
+type: u8 (0x01)
+radio_command_id: u64 (FNV-1a 64)
+pointCount: u16
+fence_crc: u32 (CRC32 dos pontos)
+header_crc: u32 (CRC32 do header)
+```
+
+**POINTS (variável, máx ~100 bytes úteis):**
+```
+type: u8 (0x02)
+chunk_index: u8 (0..254)
+points_count: u8
+points: array de int40_t (lat*1e7, lon*1e7) → 10 bytes por ponto
+chunk_crc: u32
+```
+
+**COMMIT (10 bytes):**
+```
+type: u8 (0x03)
+chunk_index: u8 (0xFF = final)
+fence_crc: u32
+header_crc: u32
+```
+
+**ACK/NACK (6 bytes):**
+```
+type: u8 (0x10=ACK, 0x11=NACK)
+radio_command_id: u64 (eco)
+stage: u8 (BEGIN|POINTS|COMMIT)
+reasonCode: u8 (apenas NACK)
+```
+
+**APPLY_STATUS (10 bytes):**
+```
+type: u8 (0x12)
+radio_command_id: u64 (eco)
+success: u8 (0/1)
+reasonCode: u8
+crc: u32
+```
+
+### Planner de Chunking
+
+O planner calcula quantos pontos cabem em cada chunk testando payloads candidatos reais:
+
+```cpp
+// Pseudocódigo do planner
+for (candidate_count = max_points; candidate_count > 0; candidate_count--) {
+    build_test_chunk(candidate_count);
+    frame_size = measure_safe_frame_size(test_chunk);
+    if (frame_size <= LORA_MAX_PAYLOAD) {
+        return candidate_count; // cabe
+    }
+}
+return 0; // nem um ponto cabe
+```
+
+**Overhead por chunk:**
+- `type` (1B) + `chunk_index` (1B) + `points_count` (1B) + `chunk_crc` (4B) = 7B fixos
+- Pontos: 10 bytes cada (int40_t lat + int40_t lon)
+- Máximo útil: ~12 pontos por chunk (dependendo do perfil LoRa)
+
+## Data Flow
+
+```
+App (SET_FENCE JSON)
+  ↓
+Supabase Edge Function (queue-lora-command)
+  ↓
+Supabase property_commands + RTDB matrixCommandQueues
+  ↓
+Matriz (polling/stream)
+  ↓
+Normalização do payload (points em cascata)
+  ↓
+Planner RPv2 (calcula chunks)
+  ↓
+Sessão binária BEGIN → POINTS → COMMIT (LoRa)
+  ↓
+Coleira (valida CRC, staging, apply)
+  ↓
+APPLY_STATUS binário
+  ↓
+Matriz persiste resultado (transport=radio_fence_v2)
+  ↓
+Supabase propertyEvents / propertyCommandEvents
+  ↓
+App (Realtime)
+```
+
+## Technologies
+
+- **LoRa SX127x**: RF 915MHz, SF7-9, bandwidth 125-250kHz
+- **CRC32**: Polynomial 0xEDB88320 (IEEE)
+- **FNV-1a 64**: Hash para radio_command_id
+- **int40_t**: Coordenadas lat/lon * 1e7 (5 bytes cada)
+- **EEPROM/Flash**: Staging de pontos em memória (coleira)
+
+## Risks
+
+| Risco | Mitigação |
+|---|---|
+| Perda de chunk no ar | ACK/NACK por etapa, timeout de retransmissão |
+| CRC falha | Staging descartado, sessão resetada |
+| Memória insuficiente | NACK com reasonCode, aborta sessão |
+| Timeout de etapa | `no_ack_timeout`, reasonCode persistido |
+| Ponto não cabe no frame | Planner falha com `fence_single_point_chunk_too_large` |
+
+## Related
+
+[[fluxos-comunicacao-ponta-a-ponta]]
+[[fluxo-comandos]]
+[[regras-negocio]]
+[[padroes-implementacao]]
+
+#arquitetura #ruraltech

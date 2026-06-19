@@ -1,0 +1,6 @@
+M firmware/tests/rpv2_fence_planner_test.cpp
+ M gateway-matriz/gateway-matriz.ino
+ M tools/audit/__pycache__/flash_and_validate_firmware.cpython-314.pyc
+ M tools/audit/flash_and_validate_firmware.py
+?? firmware/tests/matrix_cloud_set_fence_dispatch_integration_test.cpp
+?? gateway-matriz/FenceRpv2Planner.h

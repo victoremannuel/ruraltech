@@ -1,0 +1,46 @@
+[I] FW_PROVENANCE role=matrix gitSha=%s gitShort=%s dirty=%s buildUtc=%s buildSource=%s firmwareVersion=%s profile=%s diagStage=%u runtimeId=%s
+[I] FW_PROVENANCE role=matrix gitSha=%s gitShort=%s dirty=%s buildUtc=%s buildSource=%s firmwareVersion=%s profile=%s diagStage=%u runtimeId=%s
+RPV2_PLANNER_REV
+[I] RPV2_PLANNER_REV rev=%s gitShort=%s
+[I] RPV2_PLANNER_REV rev=canonical_fence_planner_v1 gitShort=%s
+RPV2_PLANNER_REV
+[I] RPV2_PLANNER_REV rev=%s gitShort=%s
+[I] RPV2_PLANNER_REV rev=canonical_fence_planner_v1 gitShort=%s
+canonical_fence_planner_v1
+[I] RPV2_PLANNER_REV rev=canonical_fence_planner_v1 gitShort=%s
+canonical_fence_planner_v1
+[I] RPV2_PLANNER_REV rev=canonical_fence_planner_v1 gitShort=%s
+RPV2_PLAN_ENTER
+[I] RPV2_PLAN_ENTER deviceId=%lu commandId=%s totalPoints=%u maxFrame=%u source=%s
+RPV2_PLAN_ENTER
+[I] RPV2_PLAN_ENTER deviceId=%lu commandId=%s totalPoints=%u maxFrame=%u source=%s
+RPV2_PLAN_CANDIDATE_EVAL
+[I] RPV2_PLAN_CANDIDATE_EVAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u endPointIndex=%u pointCount=%u plainFrameSize=%u secureWireSize=%u wireLenFinal=%u limit=%u measurementOk=%u fitsLimit=%u classification=%s
+RPV2_PLAN_CANDIDATE_EVAL
+[I] RPV2_PLAN_CANDIDATE_EVAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u endPointIndex=%u pointCount=%u plainFrameSize=%u secureWireSize=%u wireLenFinal=%u limit=%u measurementOk=%u fitsLimit=%u classification=%s
+RPV2_PLAN_CHUNK_REJECT
+[W] RPV2_PLAN_CHUNK_REJECT deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u reason=%s wireLenFinal=%u limit=%u classification=%s
+RPV2_PLAN_CHUNK_REJECT
+[W] RPV2_PLAN_CHUNK_REJECT deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u reason=%s wireLenFinal=%u limit=%u classification=%s
+RPV2_PLAN_CHUNK_FIT
+[I] RPV2_PLAN_CHUNK_FIT deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u plainFrameSize=%u wireLenFinal=%u limit=%u
+RPV2_PLAN_CHUNK_FIT
+[I] RPV2_PLAN_CHUNK_FIT deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u plainFrameSize=%u wireLenFinal=%u limit=%u
+RPV2_PLAN_FINAL
+[I] RPV2_PLAN_FINAL deviceId=%lu commandId=%s planReady=%u chunkCount=%u totalPoints=%u minWireLen=%u maxWireLen=%u reason=%s
+RPV2_PLAN_FINAL
+[I] RPV2_PLAN_FINAL deviceId=%lu commandId=%s planReady=%u chunkCount=%u totalPoints=%u minWireLen=%u maxWireLen=%u reason=%s
+RPV2_PLAN_FAILED_TERMINAL
+[W] RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u reason=%s wireLenFinal=%u limit=%u classification=%s
+[W] RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu reason=%s
+RPV2_PLAN_FAILED_TERMINAL
+[W] RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u reason=%s wireLenFinal=%u limit=%u classification=%s
+[W] RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu reason=%s
+[AREA_SYNC][MATRIX][INFO][SIMPLE_COMMAND_CLEARED] commandId=%s command=%s reason=%s
+[AREA_SYNC][MATRIX][INFO][SIMPLE_COMMAND_CLEARED] commandId=%s command=%s reason=%s
+planner_or_dispatch_stall
+planner_or_dispatch_stall
+23d7f93aec0142efa0051903004f8e6b57d60b11
+23d7f93
+23d7f93aec0142efa0051903004f8e6b57d60b11
+23d7f93

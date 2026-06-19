@@ -39,6 +39,18 @@
 #include "HerdingController.h"
 #include "StateMachine.h"
 #include "../firmware/shared/command_contract.h"
+#include "../firmware/shared/AreaSyncLogger.h"
+#include "../firmware/shared/build_info.h"
+#include "../firmware/shared/rtr_diag_support.h"
+#include "../firmware/shared/radio_transport_v1_codec.h"
+#include "../firmware/shared/radio_transport_v1_collar_policy.h"
+#include "../firmware/shared/radio_transport_v1_constants.h"
+#include "../firmware/shared/radio_transport_v1_reason_codes.h"
+#include "../firmware/shared/radio_transport_v1_session_id.h"
+#include "../firmware/shared/radio_proto_v2_codec.h"
+#include "../firmware/shared/radio_proto_v2_crc.h"
+#include "../firmware/shared/radio_proto_v2_id.h"
+#include "../firmware/shared/radio_proto_v2_reason_codes.h"
 
 SensorsManager sensors;
 SmartGps smartGps;
@@ -81,6 +93,7 @@ bool supportsScopedLora_ = true;
 GpsData lastGpsForStatus_;
 bool hasLastGpsForStatus_ = false;
 uint32_t lastHealthReportDayKey_ = 0;
+uint32_t pendingHealthReportDayKey_ = 0;
 bool storageReady_ = false;
 bool loraReady_ = false;
 bool lastLoRaTxOk_ = false;
@@ -94,6 +107,8 @@ uint32_t bootMinFreeHeap_ = 0xFFFFFFFFUL;
 esp_reset_reason_t lastResetReason_ = ESP_RST_UNKNOWN;
 bool maintenanceWindowActive_ = false;
 char bootStage_[32] = "boot";
+rtrdiag::CollarWindowSnapshot rtrWindowDiag_;
+uint32_t lastUplinkTxAtMs_ = 0;
 static void logEvent(EventType type, int32_t d1, int32_t d2);
 static void logPolygonApplyResult(
     MsgType commandType,
@@ -109,6 +124,7 @@ static void logPolygonApplyResult(
     int32_t phaseCount = 0);
 static void copyStringToBuffer(char* dst, size_t dstSize, const char* src);
 static const char* eventTypeLabel(EventType type);
+static bool eventUsesOperationId(EventType type);
 static const char* commandLabel(MsgType type);
 static const char* polygonKindLabel(PolygonKind kind);
 static const char* originDocTypeLabel(OriginDocType type);
@@ -137,6 +153,12 @@ static void refreshBlePositionForOnboarding();
 static void printBootChecklist(bool bleInitOk, bool storageOk, bool loraOk);
 static void runSmartGpsSelfTest();
 static uint32_t gpsDayKey(const GpsData& gps);
+static void logLoopCheckpoint(const char* step);
+static void logPendingEventCheckpoint(
+    const char* step,
+    const EventRecord& pending,
+    const LoRaFrame& ev);
+static void flushDeferredHealthReportDayKey();
 static void persistHealthReportDayKey(uint32_t dayKey);
 static uint32_t loadPersistedHealthReportDayKey();
 static bool sendDailyHealthReport(const Telemetry& t, uint32_t intervalMs);
@@ -147,6 +169,27 @@ static void waitMaintenanceWindow();
 static void configureStatusServerRoutes();
 static void ensureStatusServerRunning();
 static void stopStatusServer();
+static void clearRtrSessionMode(const char* reason);
+static bool isRtrSessionModeActive();
+static void refreshRtrSessionActivity(const char* reason);
+static void holdRpv2Session(
+    uint64_t radioCommandId,
+    uint32_t sessionNonce,
+    const char* reason);
+static void logRtrDropReason(const char* reason, const LoRaFrame& frame);
+static void applyDownlink(const LoRaFrame& frame);
+static bool waitForRpv2BeginImmediatelyAfterPageAck(
+    uint64_t sessionId,
+    uint64_t scopeId,
+    uint32_t ackTxAtMs);
+static bool waitForRpv2PointsImmediatelyAfterAck(
+    uint64_t scopeId,
+    uint64_t radioCommandId,
+    uint32_t sessionNonce,
+    uint16_t expectedFragment,
+    uint32_t ackTxAtMs);
+static void clearActiveRpv2FenceSession(const char* reason, bool rememberReplay);
+static void rememberRpv2Replay(uint64_t radioCommandId, uint32_t sessionNonce);
 
 struct PolygonAuditContext {
   uint64_t scopeId = 0;
@@ -176,6 +219,47 @@ struct HerdChunkRxState {
   PolygonAuditContext audit{};
 } herdChunkRx_;
 
+struct Rpv2ReplayEntry {
+  uint64_t radioCommandId = 0;
+  uint32_t sessionNonce = 0;
+};
+
+struct Rpv2FenceSessionState {
+  bool active = false;
+  bool stageComplete = false;
+  bool syncPointsWindowActive = false;
+  uint64_t scopeId = 0;
+  uint64_t radioCommandId = 0;
+  uint32_t sessionNonce = 0;
+  uint32_t fenceCrc32 = 0;
+  uint32_t fenceVersion = 0;
+  uint16_t totalPoints = 0;
+  uint16_t totalChunks = 0;
+  uint16_t expectedFragment = 1;
+  uint16_t nextPointIndex = 0;
+  Polygon fence{};
+  PolygonAuditContext audit{};
+} rpv2FenceSession_;
+
+Rpv2ReplayEntry rpv2ReplayEntries_[rpv2::REPLAY_WINDOW_SESSIONS]{};
+uint8_t rpv2ReplayNextIdx_ = 0;
+
+struct RtrSessionModeState {
+  bool active = false;
+  bool waitingForBegin = false;
+  bool rpv2InProgress = false;
+  uint64_t sessionId = 0;
+  uint64_t scopeId = 0;
+  uint32_t pageMessageId = 0;
+  uint32_t wakeLockUntilMs = 0;
+  uint32_t lastActivityAtMs = 0;
+  uint16_t estimatedFragments = 0;
+  MsgType commandType = MsgType::SET_FENCE;
+} rtrSessionMode_;
+
+constexpr uint32_t kRpv2BeginImmediateRxWindowMs = 3000;
+constexpr uint32_t kRpv2PointsImmediateRxWindowMs = 3000;
+
 static void randomNonce(uint8_t* nonce12) {
   for (int i = 0; i < 12; ++i) nonce12[i] = (uint8_t)esp_random();
 }
@@ -189,6 +273,91 @@ static String scopeIdToHex(uint64_t scopeId) {
 static uint64_t parseScopeIdHex(const char* raw) {
   if (!raw || !raw[0]) return 0;
   return strtoull(raw, nullptr, 16);
+}
+
+static void clearRtrSessionMode(const char* reason) {
+  if (!rtrSessionMode_.active) return;
+  if (reason && strcmp(reason, "idle_timeout") == 0 && !rtrSessionMode_.rpv2InProgress) {
+    LOGW(
+        "RTR_PRESTART_TIMEOUT sessionId=%llu reason=%s",
+        (unsigned long long)rtrSessionMode_.sessionId,
+        reason);
+  }
+  LOGI(
+      "RTR_SESSION_MODE_EXIT sessionId=%llu reason=%s",
+      (unsigned long long)rtrSessionMode_.sessionId,
+      reason ? reason : "unknown");
+  rtrSessionMode_ = RtrSessionModeState{};
+}
+
+static bool isRtrSessionModeActive() {
+  if (!rtrSessionMode_.active) return false;
+  const uint32_t nowMs = millis();
+  if ((int32_t)(nowMs - rtrSessionMode_.wakeLockUntilMs) >= 0) {
+    clearRtrSessionMode("wake_lock_expired");
+    return false;
+  }
+  if (!rtrSessionMode_.rpv2InProgress &&
+      rtrSessionMode_.lastActivityAtMs != 0 &&
+      (uint32_t)(nowMs - rtrSessionMode_.lastActivityAtMs) >=
+          rtrv1::IDLE_SESSION_TIMEOUT_MS) {
+    clearRtrSessionMode("idle_timeout");
+    return false;
+  }
+  return true;
+}
+
+static void refreshRtrSessionActivity(const char* reason) {
+  if (!rtrSessionMode_.active) return;
+  rtrSessionMode_.lastActivityAtMs = millis();
+  rtrSessionMode_.wakeLockUntilMs =
+      rtrSessionMode_.lastActivityAtMs + rtrv1::SESSION_WAKE_LOCK_MS;
+  LOGI(
+      "RTR_SESSION_ACTIVITY sessionId=%llu reason=%s wakeLockUntilMs=%lu",
+      (unsigned long long)rtrSessionMode_.sessionId,
+      reason ? reason : "data",
+      (unsigned long)rtrSessionMode_.wakeLockUntilMs);
+}
+
+static void holdRpv2Session(
+    uint64_t radioCommandId,
+    uint32_t sessionNonce,
+    const char* reason) {
+  const uint32_t nowMs = millis();
+  const uint64_t sessionId =
+      rtrv1::makeSessionId(radioCommandId, cfg::DEVICE_ID, sessionNonce);
+  const bool wasActive = rtrSessionMode_.active;
+  rtrSessionMode_.active = true;
+  rtrSessionMode_.waitingForBegin = false;
+  rtrSessionMode_.rpv2InProgress = true;
+  rtrSessionMode_.sessionId = sessionId;
+  rtrSessionMode_.commandType = MsgType::SET_FENCE;
+  rtrSessionMode_.lastActivityAtMs = nowMs;
+  rtrSessionMode_.wakeLockUntilMs = nowMs + rtrv1::SESSION_WAKE_LOCK_MS;
+  LOGI(
+      "RPV2_SESSION_HOLD reason=%s sessionId=%llu wakeLockUntilMs=%lu",
+      reason ? reason : "rpv2",
+      (unsigned long long)rtrSessionMode_.sessionId,
+      (unsigned long)rtrSessionMode_.wakeLockUntilMs);
+  if (!wasActive) {
+    LOGI(
+        "RPV2_SESSION_REARM radioCommandId=%llu sessionNonce=%lu sessionId=%llu",
+        (unsigned long long)radioCommandId,
+        (unsigned long)sessionNonce,
+        (unsigned long long)rtrSessionMode_.sessionId);
+  }
+}
+
+static void logRtrDropReason(const char* reason, const LoRaFrame& frame) {
+  LOGW(
+      "RTR_RAW_DOWNLINK_DROP rawLen=%u msgType=%u rssi=%d snr=%.1f targetDeviceId=%lu scopeId=%016llX reason=%s",
+      (unsigned)frame.payloadLen,
+      (unsigned)frame.msgType,
+      (int)lora.lastRssi(),
+      lora.lastSnr(),
+      (unsigned long)frame.deviceId,
+      (unsigned long long)frame.scopeId,
+      reason ? reason : "unknown");
 }
 
 static const char* pickFirstText(
@@ -239,6 +408,32 @@ static void recordBootStage(const char* stage) {
       (unsigned long)freeHeap,
       (unsigned long)bootMinFreeHeap_,
       heapOk ? 1 : 0);
+}
+
+static void logLoopCheckpoint(const char* step) {
+  LOGI(
+      "LOOP checkpoint=%s free_heap=%lu min_heap=%lu",
+      step ? step : "-",
+      (unsigned long)ESP.getFreeHeap(),
+      (unsigned long)ESP.getMinFreeHeap());
+}
+
+static void logPendingEventCheckpoint(
+    const char* step,
+    const EventRecord& pending,
+    const LoRaFrame& ev) {
+  LOGI(
+      "LOOP checkpoint=%s event=%s type=%u d1=%ld d2=%ld payload=%u msg=%u seq=%lu free_heap=%lu min_heap=%lu",
+      step ? step : "-",
+      eventTypeLabel(pending.type),
+      (unsigned)pending.type,
+      (long)pending.d1,
+      (long)pending.d2,
+      (unsigned)ev.payloadLen,
+      (unsigned)ev.msgType,
+      (unsigned long)ev.seq,
+      (unsigned long)ESP.getFreeHeap(),
+      (unsigned long)ESP.getMinFreeHeap());
 }
 
 static void incrementBootCounter() {
@@ -393,6 +588,12 @@ static const char* eventTypeLabel(EventType type) {
       return "polygon_apply_result";
   }
   return "event";
+}
+
+static bool eventUsesOperationId(EventType type) {
+  return type == EventType::HERD_START ||
+         type == EventType::HERD_PHASE_CHANGE ||
+         type == EventType::HERD_DONE;
 }
 
 static const char* polygonKindLabel(PolygonKind kind) {
@@ -630,10 +831,18 @@ static String collarApSsid() {
 static void configureStatusServerRoutes() {
   if (statusServerRoutesConfigured_) return;
   statusServer.on("/status", HTTP_GET, []() {
-    StaticJsonDocument<768> doc;
+    StaticJsonDocument<2048> doc;
+    const buildinfo::BuildInfo build = buildinfo::current();
     doc["ok"] = true;
     doc["service"] = "collar";
     doc["fw"] = cfg::FW_VERSION;
+    doc["firmwareVersion"] = cfg::FW_VERSION;
+    doc["firmwareRole"] = "collar";
+    doc["gitSha"] = build.gitSha;
+    doc["gitShortSha"] = build.gitShortSha;
+    doc["buildUtc"] = build.buildUtc;
+    doc["buildDirty"] = build.dirty;
+    doc["buildSource"] = build.buildSource;
     doc["deviceId"] = (uint32_t)cfg::DEVICE_ID;
     doc["device_id"] = String((uint32_t)cfg::DEVICE_ID);
     const String apSsid = WiFi.softAPSSID();
@@ -642,6 +851,9 @@ static void configureStatusServerRoutes() {
     doc["ota"] = cfg::OTA_ENABLED;
     doc["wifi_ota_enabled"] = wifiOtaEnabled;
     doc["ota_mode_active"] = otaModeActive;
+    doc["protoVersion"] = cfg::LORA_PROTO_VERSION;
+    doc["keyId"] = cfg::LORA_KEY_ID;
+    doc["radioProfileId"] = cfg::LORA_RADIO_PROFILE_ID;
     doc["maintenanceWindowActive"] = maintenanceWindowActive_;
     doc["supportsScopedLora"] = supportsScopedLora_;
     doc["bindingReady"] = bindingReady_;
@@ -652,6 +864,38 @@ static void configureStatusServerRoutes() {
     doc["rebootCounter"] = rebootCounter_;
     doc["freeHeap"] = ESP.getFreeHeap();
     doc["minFreeHeap"] = bootMinFreeHeap_;
+    doc["loraTxCount"] = lora.txCount();
+    doc["loraTxFailCount"] = lora.txFailCount();
+    doc["loraDecryptFailCount"] = lora.decryptFailCount();
+    doc["loraNonceMismatchCount"] = lora.nonceMismatchCount();
+    doc["loraReplayRejectCount"] = lora.replayRejectCount();
+    doc["lastAcceptedSeq"] = lora.lastAcceptedSeq();
+    doc["discoveryWindowOpenCount"] = rtrWindowDiag_.discoveryWindowOpenCount;
+    doc["secondaryWindowOpenCount"] = rtrWindowDiag_.secondaryWindowOpenCount;
+    doc["lastDiscoveryWindowOpenAtMs"] = rtrWindowDiag_.lastDiscoveryWindowOpenAtMs;
+    doc["lastSecondaryWindowOpenAtMs"] = rtrWindowDiag_.lastSecondaryWindowOpenAtMs;
+    doc["lastDiscoveryWindowMs"] = rtrWindowDiag_.lastDiscoveryWindowMs;
+    doc["lastSecondaryWindowMs"] = rtrWindowDiag_.lastSecondaryWindowMs;
+    doc["lastWindowCloseAtMs"] = rtrWindowDiag_.lastWindowCloseAtMs;
+    doc["lastWindowHandled"] = rtrWindowDiag_.lastWindowHandled;
+    doc["lastSleepGraceHoldAtMs"] = rtrWindowDiag_.lastSleepGraceHoldAtMs;
+    doc["lastSleepGraceWindowMs"] = rtrWindowDiag_.lastSleepGraceWindowMs;
+    doc["sleepGraceHoldCount"] = rtrWindowDiag_.sleepGraceHoldCount;
+    doc["lastDownlinkRawSeenAtMs"] = rtrWindowDiag_.lastDownlinkRawSeenAtMs;
+    doc["lastDownlinkRawLen"] = rtrWindowDiag_.lastDownlinkRawLen;
+    doc["lastDownlinkRawRssi"] = rtrWindowDiag_.lastDownlinkRawRssi;
+    doc["lastDownlinkRawSnr"] = rtrWindowDiag_.lastDownlinkRawSnr;
+    doc["lastDownlinkRawMsgType"] = rtrWindowDiag_.lastDownlinkRawMsgType;
+    doc["lastDownlinkDropReason"] = rtrWindowDiag_.lastDownlinkDropReason;
+    doc["lastPageRxAtMs"] = rtrWindowDiag_.lastPageRxAtMs;
+    doc["lastPageAckTxAtMs"] = rtrWindowDiag_.lastPageAckTxAtMs;
+    doc["pageRxCount"] = rtrWindowDiag_.pageRxCount;
+    doc["rawDownlinkSeenCount"] = rtrWindowDiag_.rawDownlinkSeenCount;
+    doc["rawDownlinkAcceptedCount"] = rtrWindowDiag_.rawDownlinkAcceptedCount;
+    doc["rawDownlinkRejectedCount"] = rtrWindowDiag_.rawDownlinkRejectedCount;
+    doc["benchHoldAfterUplinkMs"] = cfg::RTR_BENCH_HOLD_AFTER_UPLINK_MS;
+    doc["benchSecondaryWindowMs"] = cfg::RTR_BENCH_SECONDARY_WINDOW_MS;
+    doc["sleepGraceWindowMs"] = rtrv1::COLLAR_SLEEP_GRACE_MS;
     if (bindingPropertyId_[0]) doc["propertyId"] = bindingPropertyId_;
     if (bindingPropertyScopeId_[0]) doc["propertyScopeId"] = bindingPropertyScopeId_;
     if (bindingMatrixGatewayId_[0]) doc["matrixGatewayId"] = bindingMatrixGatewayId_;
@@ -815,6 +1059,12 @@ static void persistHealthReportDayKey(uint32_t dayKey) {
   prefs_.putULong(cfg::PREF_KEY_HEALTH_DAY, dayKey);
 }
 
+static void flushDeferredHealthReportDayKey() {
+  if (pendingHealthReportDayKey_ == 0) return;
+  persistHealthReportDayKey(pendingHealthReportDayKey_);
+  pendingHealthReportDayKey_ = 0;
+}
+
 static bool loadPersistedFence(Polygon* outFence) {
   if (!beginPrefs() || !outFence) return false;
   if (prefs_.getBytesLength(cfg::PREF_KEY_FENCE) != sizeof(Polygon)) return false;
@@ -948,6 +1198,443 @@ static void resetHerdChunkRx() {
   herdChunkRx_ = HerdChunkRxState{};
 }
 
+static void resetRpv2FenceSession() {
+  if (rpv2FenceSession_.active) {
+    LOGI(
+        "RPV2_SESSION_RESET radioCommandId=%llu sessionNonce=%lu expectedFragment=%u",
+        (unsigned long long)rpv2FenceSession_.radioCommandId,
+        (unsigned long)rpv2FenceSession_.sessionNonce,
+        (unsigned)rpv2FenceSession_.expectedFragment);
+  }
+  rpv2FenceSession_ = Rpv2FenceSessionState{};
+}
+
+static void clearActiveRpv2FenceSession(const char* reason, bool rememberReplay) {
+  if (!rpv2FenceSession_.active) return;
+  LOGW(
+      "RPV2_SESSION_END_FAILED radioCommandId=%llu sessionNonce=%lu reason=%s",
+      (unsigned long long)rpv2FenceSession_.radioCommandId,
+      (unsigned long)rpv2FenceSession_.sessionNonce,
+      reason ? reason : "unknown");
+  if (rememberReplay) {
+    rememberRpv2Replay(
+        rpv2FenceSession_.radioCommandId,
+        rpv2FenceSession_.sessionNonce);
+  }
+  clearRtrSessionMode(reason ? reason : "rpv2_failed");
+  resetRpv2FenceSession();
+}
+
+static bool isRpv2ReplayBlocked(uint64_t radioCommandId, uint32_t sessionNonce) {
+  for (uint8_t i = 0; i < rpv2::REPLAY_WINDOW_SESSIONS; ++i) {
+    if (rpv2ReplayEntries_[i].radioCommandId == radioCommandId &&
+        rpv2ReplayEntries_[i].sessionNonce == sessionNonce) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static void rememberRpv2Replay(uint64_t radioCommandId, uint32_t sessionNonce) {
+  rpv2ReplayEntries_[rpv2ReplayNextIdx_].radioCommandId = radioCommandId;
+  rpv2ReplayEntries_[rpv2ReplayNextIdx_].sessionNonce = sessionNonce;
+  rpv2ReplayNextIdx_ = (uint8_t)((rpv2ReplayNextIdx_ + 1U) % rpv2::REPLAY_WINDOW_SESSIONS);
+}
+
+static bool isRpv2FencePayload(const LoRaFrame& frame) {
+  if (frame.msgType != MsgType::SET_FENCE || frame.payloadLen < sizeof(rpv2::Header)) return false;
+  rpv2::Header header{};
+  return rpv2::decodeHeader(frame.payload, frame.payloadLen, &header);
+}
+
+static bool sendRpv2BinaryReply(
+    const LoRaFrame& cmd,
+    uint8_t outerMsgType,
+    const uint8_t* payload,
+    size_t payloadLen) {
+  if (!payload || payloadLen == 0 || payloadLen > sizeof(LoRaFrame{}.payload)) return false;
+  LoRaFrame reply;
+  reply.deviceId = cfg::DEVICE_ID;
+  reply.scopeId = cmd.scopeId;
+  reply.msgType = static_cast<MsgType>(outerMsgType);
+  reply.seq = nextLoRaSeq();
+  reply.timestamp = millis() / 1000;
+  randomNonce(reply.nonce);
+  reply.payloadLen = static_cast<uint8_t>(payloadLen);
+  memcpy(reply.payload, payload, payloadLen);
+  if (!lora.sendFrame(reply)) {
+    LOGW("Falha ao enviar RPv2 reply type=%u", (unsigned)outerMsgType);
+    return false;
+  }
+  return true;
+}
+
+static bool sendRpv2Ack(
+    const LoRaFrame& cmd,
+    const rpv2::Header& req,
+    uint8_t ackedMsgType,
+    uint16_t ackedFragmentIndex,
+    uint16_t nextExpectedFragment,
+    uint16_t acceptedPoints,
+    uint32_t observedCrc32) {
+  uint8_t payload[64]{};
+  rpv2::Header header{};
+  header.protocolVersion = rpv2::PROTOCOL_VERSION;
+  header.msgType = rpv2::FENCE_ACK;
+  header.flags = rpv2::FLAG_FROM_COLLAR;
+  header.headerLen = sizeof(rpv2::Header);
+  header.radioCommandId = req.radioCommandId;
+  header.sessionNonce = req.sessionNonce;
+  header.fragmentIndex = ackedFragmentIndex;
+  header.fragmentTotal = 0;
+  rpv2::AckBody body{};
+  body.ackedMsgType = ackedMsgType;
+  body.statusCode = 0;
+  body.ackedFragmentIndex = ackedFragmentIndex;
+  body.nextExpectedFragment = nextExpectedFragment;
+  body.acceptedPoints = acceptedPoints;
+  body.observedCrc32 = observedCrc32;
+  const size_t len = rpv2::encodeFrame(header, body, payload, sizeof(payload));
+  LOGI(
+      "RPV2_ACK_SENT radioCommandId=%llu sessionNonce=%lu ackedMsgType=%u fragmentIndex=%u nextExpected=%u acceptedPoints=%u",
+      (unsigned long long)req.radioCommandId,
+      (unsigned long)req.sessionNonce,
+      (unsigned)ackedMsgType,
+      (unsigned)ackedFragmentIndex,
+      (unsigned)nextExpectedFragment,
+      (unsigned)acceptedPoints);
+  return sendRpv2BinaryReply(cmd, static_cast<uint8_t>(MsgType::ACK), payload, len);
+}
+
+static bool sendRpv2Nack(
+    const LoRaFrame& cmd,
+    const rpv2::Header& req,
+    uint8_t nackOfMsgType,
+    uint16_t nackFragmentIndex,
+    uint16_t reasonCode,
+    uint16_t nextExpectedFragment,
+    uint32_t detail) {
+  uint8_t payload[64]{};
+  rpv2::Header header{};
+  header.protocolVersion = rpv2::PROTOCOL_VERSION;
+  header.msgType = rpv2::FENCE_NACK;
+  header.flags = rpv2::FLAG_FROM_COLLAR;
+  header.headerLen = sizeof(rpv2::Header);
+  header.radioCommandId = req.radioCommandId;
+  header.sessionNonce = req.sessionNonce;
+  header.fragmentIndex = nackFragmentIndex;
+  header.fragmentTotal = 0;
+  rpv2::NackBody body{};
+  body.nackOfMsgType = nackOfMsgType;
+  body.statusCode = 1;
+  body.nackFragmentIndex = nackFragmentIndex;
+  body.reasonCode = reasonCode;
+  body.nextExpectedFragment = nextExpectedFragment;
+  body.detail = detail;
+  const size_t len = rpv2::encodeFrame(header, body, payload, sizeof(payload));
+  LOGW(
+      "RPV2_NACK_SENT radioCommandId=%llu sessionNonce=%lu nackOfMsgType=%u fragmentIndex=%u reasonCode=%u nextExpected=%u detail=%lu",
+      (unsigned long long)req.radioCommandId,
+      (unsigned long)req.sessionNonce,
+      (unsigned)nackOfMsgType,
+      (unsigned)nackFragmentIndex,
+      (unsigned)reasonCode,
+      (unsigned)nextExpectedFragment,
+      (unsigned long)detail);
+  return sendRpv2BinaryReply(cmd, static_cast<uint8_t>(MsgType::NACK), payload, len);
+}
+
+static bool sendRpv2ApplyStatus(
+    const LoRaFrame& cmd,
+    const rpv2::Header& req,
+    bool applied,
+    uint16_t reasonCode,
+    uint32_t activeCrc32,
+    uint16_t activePoints) {
+  uint8_t payload[64]{};
+  rpv2::Header header{};
+  header.protocolVersion = rpv2::PROTOCOL_VERSION;
+  header.msgType = rpv2::FENCE_APPLY_STATUS;
+  header.flags = rpv2::FLAG_FROM_COLLAR;
+  header.headerLen = sizeof(rpv2::Header);
+  header.radioCommandId = req.radioCommandId;
+  header.sessionNonce = req.sessionNonce;
+  header.fragmentIndex = 0;
+  header.fragmentTotal = 0;
+  rpv2::ApplyStatusBody body{};
+  body.applyStatus = applied ? 1 : 0;
+  body.reasonCode = reasonCode;
+  body.activeCrc32 = activeCrc32;
+  body.activePoints = activePoints;
+  body.activeBankId = applied ? 1 : 0;
+  const size_t len = rpv2::encodeFrame(header, body, payload, sizeof(payload));
+  LOGI(
+      "RPV2_APPLY_STATUS_SENT radioCommandId=%llu sessionNonce=%lu applied=%d reasonCode=%u activePoints=%u activeCrc32=%lu",
+      (unsigned long long)req.radioCommandId,
+      (unsigned long)req.sessionNonce,
+      applied ? 1 : 0,
+      (unsigned)reasonCode,
+      (unsigned)activePoints,
+      (unsigned long)activeCrc32);
+  return sendRpv2BinaryReply(cmd, static_cast<uint8_t>(MsgType::EVENT), payload, len);
+}
+
+static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
+  rpv2::Header header{};
+  if (!rpv2::decodeHeader(frame.payload, frame.payloadLen, &header)) {
+    return false;
+  }
+
+  if (header.msgType == rpv2::FENCE_BEGIN) {
+    LOGI(
+        "RPV2_BEGIN_RX radioCommandId=%llu sessionNonce=%lu fragmentTotal=%u",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce,
+        (unsigned)header.fragmentTotal);
+    rpv2::FenceBeginBody body{};
+    if (!rpv2::decodeFenceBegin(frame.payload, frame.payloadLen, &header, &body)) {
+      sendRpv2Nack(frame, header, rpv2::FENCE_BEGIN, 0, rpv2::REASON_INVALID_HEADER, 0, 0);
+      return true;
+    }
+    if (body.totalPoints < rpv2::MIN_FENCE_POINTS || body.totalPoints > rpv2::MAX_FENCE_POINTS) {
+      sendRpv2Nack(frame, header, rpv2::FENCE_BEGIN, 0, rpv2::REASON_INVALID_TOTAL_POINTS, 0, body.totalPoints);
+      return true;
+    }
+    if (body.totalChunks == 0 || body.totalChunks > rpv2::MAX_FENCE_POINTS) {
+      sendRpv2Nack(frame, header, rpv2::FENCE_BEGIN, 0, rpv2::REASON_INVALID_TOTAL_CHUNKS, 0, body.totalChunks);
+      return true;
+    }
+    if (isRpv2ReplayBlocked(header.radioCommandId, header.sessionNonce)) {
+      LOGW(
+          "RPV2_REPLAY_BLOCKED radioCommandId=%llu sessionNonce=%lu",
+          (unsigned long long)header.radioCommandId,
+          (unsigned long)header.sessionNonce);
+      sendRpv2Nack(frame, header, rpv2::FENCE_BEGIN, 0, rpv2::REASON_REPLAY_BLOCKED, 0, 0);
+      return true;
+    }
+    if (rpv2FenceSession_.active &&
+        (rpv2FenceSession_.radioCommandId != header.radioCommandId ||
+         rpv2FenceSession_.sessionNonce != header.sessionNonce)) {
+      sendRpv2Nack(frame, header, rpv2::FENCE_BEGIN, 0, rpv2::REASON_SESSION_ALREADY_ACTIVE, 0, 0);
+      return true;
+    }
+
+    resetRpv2FenceSession();
+    rpv2FenceSession_.active = true;
+    rpv2FenceSession_.scopeId = frame.scopeId;
+    rpv2FenceSession_.radioCommandId = header.radioCommandId;
+    rpv2FenceSession_.sessionNonce = header.sessionNonce;
+    rpv2FenceSession_.fenceCrc32 = body.fenceCrc32;
+    rpv2FenceSession_.fenceVersion = body.fenceVersion;
+    rpv2FenceSession_.totalPoints = body.totalPoints;
+    rpv2FenceSession_.totalChunks = body.totalChunks;
+    rpv2FenceSession_.expectedFragment = 1;
+    rpv2FenceSession_.nextPointIndex = 0;
+    holdRpv2Session(header.radioCommandId, header.sessionNonce, "begin_rx");
+    const uint32_t beginAckPrepareAtMs = millis();
+    LOGI(
+        "RPV2_BEGIN_ACK_PREPARE radioCommandId=%llu sessionNonce=%lu fragmentTotal=%u",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce,
+        (unsigned)header.fragmentTotal);
+    const bool beginAckTxOk =
+        sendRpv2Ack(frame, header, rpv2::FENCE_BEGIN, 0, 1, 0, 0);
+    const uint32_t beginAckTxAtMs = millis();
+    LOGI(
+        "RPV2_BEGIN_%s_TX radioCommandId=%llu sessionNonce=%lu nextExpectedFragment=%u",
+        beginAckTxOk ? "ACK" : "ACK_FAIL",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce,
+        1U);
+    LOGI(
+        "RPV2_BEGIN_TO_ACK_LATENCY radioCommandId=%llu sessionNonce=%lu deltaMs=%lu",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce,
+        (unsigned long)(beginAckTxAtMs - beginAckPrepareAtMs));
+    return true;
+  }
+
+  if (!rpv2FenceSession_.active ||
+      rpv2FenceSession_.radioCommandId != header.radioCommandId ||
+      rpv2FenceSession_.sessionNonce != header.sessionNonce) {
+    sendRpv2Nack(frame, header, header.msgType, header.fragmentIndex, rpv2::REASON_SESSION_EXPIRED, 0, 0);
+    return true;
+  }
+
+  if (header.msgType == rpv2::FENCE_POINTS) {
+    LOGI(
+        "RPV2_POINTS_RX radioCommandId=%llu sessionNonce=%lu fragmentIndex=%u",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce,
+        (unsigned)header.fragmentIndex);
+    rpv2::FencePointsPrefix prefix{};
+    const rpv2::PointLatLonE7* points = nullptr;
+    if (!rpv2::decodeFencePoints(frame.payload, frame.payloadLen, &header, &prefix, &points)) {
+      sendRpv2Nack(frame, header, rpv2::FENCE_POINTS, header.fragmentIndex, rpv2::REASON_INVALID_HEADER, rpv2FenceSession_.expectedFragment, 0);
+      return true;
+    }
+    if (header.fragmentIndex != rpv2FenceSession_.expectedFragment) {
+      sendRpv2Nack(frame, header, rpv2::FENCE_POINTS, header.fragmentIndex, rpv2::REASON_POINTS_OUT_OF_ORDER, rpv2FenceSession_.expectedFragment, 0);
+      return true;
+    }
+    if (prefix.startPointIndex != rpv2FenceSession_.nextPointIndex) {
+      sendRpv2Nack(frame, header, rpv2::FENCE_POINTS, header.fragmentIndex, rpv2::REASON_POINTS_GAP, rpv2FenceSession_.expectedFragment, prefix.startPointIndex);
+      return true;
+    }
+    if (prefix.pointCount == 0) {
+      sendRpv2Nack(frame, header, rpv2::FENCE_POINTS, header.fragmentIndex, rpv2::REASON_INVALID_POINT_COUNT, rpv2FenceSession_.expectedFragment, 0);
+      return true;
+    }
+    if (static_cast<uint16_t>(rpv2FenceSession_.fence.count) + prefix.pointCount > rpv2FenceSession_.totalPoints) {
+      sendRpv2Nack(frame, header, rpv2::FENCE_POINTS, header.fragmentIndex, rpv2::REASON_POINTS_OVERFLOW, rpv2FenceSession_.expectedFragment, prefix.pointCount);
+      return true;
+    }
+    for (uint8_t i = 0; i < prefix.pointCount; ++i) {
+      GeoPoint& dst = rpv2FenceSession_.fence.points[rpv2FenceSession_.fence.count++];
+      dst.lat = static_cast<double>(points[i].latE7) / 10000000.0;
+      dst.lon = static_cast<double>(points[i].lonE7) / 10000000.0;
+    }
+    rpv2FenceSession_.nextPointIndex += prefix.pointCount;
+    rpv2FenceSession_.expectedFragment++;
+    holdRpv2Session(header.radioCommandId, header.sessionNonce, "points_rx");
+    LOGI(
+        "RPV2_STAGE_PROGRESS radioCommandId=%llu sessionNonce=%lu nextPointIndex=%u totalPoints=%u expectedFragment=%u",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce,
+        (unsigned)rpv2FenceSession_.nextPointIndex,
+        (unsigned)rpv2FenceSession_.totalPoints,
+        (unsigned)rpv2FenceSession_.expectedFragment);
+    if (rpv2FenceSession_.nextPointIndex == rpv2FenceSession_.totalPoints) {
+      rpv2FenceSession_.stageComplete = true;
+      LOGI(
+          "RPV2_STAGE_COMPLETE radioCommandId=%llu sessionNonce=%lu totalPoints=%u",
+          (unsigned long long)header.radioCommandId,
+          (unsigned long)header.sessionNonce,
+          (unsigned)rpv2FenceSession_.totalPoints);
+    }
+    const uint32_t pointsAckPrepareAtMs = millis();
+    LOGI(
+        "RPV2_POINTS_ACK_PREPARE radioCommandId=%llu sessionNonce=%lu fragmentIndex=%u nextExpected=%u acceptedPoints=%u",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce,
+        (unsigned)header.fragmentIndex,
+        (unsigned)rpv2FenceSession_.expectedFragment,
+        (unsigned)rpv2FenceSession_.fence.count);
+    const bool pointsAckTxOk = sendRpv2Ack(
+        frame,
+        header,
+        rpv2::FENCE_POINTS,
+        header.fragmentIndex,
+        rpv2FenceSession_.expectedFragment,
+        rpv2FenceSession_.fence.count,
+        0);
+    const uint32_t pointsAckTxAtMs = millis();
+    LOGI(
+        "RPV2_POINTS_%s_TX radioCommandId=%llu sessionNonce=%lu fragmentIndex=%u nextExpected=%u acceptedPoints=%u",
+        pointsAckTxOk ? "ACK" : "ACK_FAIL",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce,
+        (unsigned)header.fragmentIndex,
+        (unsigned)rpv2FenceSession_.expectedFragment,
+        (unsigned)rpv2FenceSession_.fence.count);
+    LOGI(
+        "RPV2_POINTS_TO_ACK_LATENCY radioCommandId=%llu sessionNonce=%lu fragmentIndex=%u deltaMs=%lu",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce,
+        (unsigned)header.fragmentIndex,
+        (unsigned long)(pointsAckTxAtMs - pointsAckPrepareAtMs));
+    if (pointsAckTxOk &&
+        rpv2FenceSession_.active &&
+        !rpv2FenceSession_.stageComplete &&
+        rpv2FenceSession_.expectedFragment <= rpv2FenceSession_.totalChunks &&
+        !rpv2FenceSession_.syncPointsWindowActive) {
+      waitForRpv2PointsImmediatelyAfterAck(
+          frame.scopeId,
+          header.radioCommandId,
+          header.sessionNonce,
+          rpv2FenceSession_.expectedFragment,
+          pointsAckTxAtMs);
+    }
+    return true;
+  }
+
+  if (header.msgType == rpv2::FENCE_COMMIT) {
+    LOGI(
+        "RPV2_COMMIT_RX radioCommandId=%llu sessionNonce=%lu",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce);
+    rpv2::FenceCommitBody body{};
+    if (!rpv2::decodeFixedBodyFrame(rpv2::FENCE_COMMIT, frame.payload, frame.payloadLen, &header, &body)) {
+      sendRpv2Nack(frame, header, rpv2::FENCE_COMMIT, 0, rpv2::REASON_INVALID_HEADER, rpv2FenceSession_.expectedFragment, 0);
+      return true;
+    }
+    if (!rpv2FenceSession_.stageComplete ||
+        rpv2FenceSession_.fence.count != rpv2FenceSession_.totalPoints) {
+      sendRpv2Nack(frame, header, rpv2::FENCE_COMMIT, 0, rpv2::REASON_STAGE_NOT_COMPLETE, rpv2FenceSession_.expectedFragment, rpv2FenceSession_.fence.count);
+      return true;
+    }
+    rpv2::EncodedPoint encoded[rpv2::MAX_FENCE_POINTS]{};
+    for (uint8_t i = 0; i < rpv2FenceSession_.fence.count; ++i) {
+      encoded[i].latE7 = static_cast<int32_t>(rpv2FenceSession_.fence.points[i].lat * 10000000.0);
+      encoded[i].lonE7 = static_cast<int32_t>(rpv2FenceSession_.fence.points[i].lon * 10000000.0);
+    }
+    const uint32_t crc = rpv2::crc32Fence(encoded, rpv2FenceSession_.fence.count);
+    if (crc != body.fenceCrc32 || crc != body.stagedCrc32Expected) {
+      LOGW(
+          "RPV2_CRC_FAIL radioCommandId=%llu sessionNonce=%lu crc=%lu expected=%lu stagedExpected=%lu",
+          (unsigned long long)header.radioCommandId,
+          (unsigned long)header.sessionNonce,
+          (unsigned long)crc,
+          (unsigned long)body.fenceCrc32,
+          (unsigned long)body.stagedCrc32Expected);
+      sendRpv2Nack(frame, header, rpv2::FENCE_COMMIT, 0, rpv2::REASON_CRC_MISMATCH, rpv2FenceSession_.expectedFragment, crc);
+      return true;
+    }
+    LOGI(
+        "RPV2_CRC_OK radioCommandId=%llu sessionNonce=%lu crc=%lu pointCount=%u",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce,
+        (unsigned long)crc,
+        (unsigned)rpv2FenceSession_.fence.count);
+    holdRpv2Session(header.radioCommandId, header.sessionNonce, "commit_rx");
+    if (!persistFence(rpv2FenceSession_.fence)) {
+      sendRpv2Nack(frame, header, rpv2::FENCE_COMMIT, 0, rpv2::REASON_STAGE_STORAGE_ERROR, rpv2FenceSession_.expectedFragment, 0);
+      return true;
+    }
+    geofence.setFence(rpv2FenceSession_.fence);
+    sendRpv2Ack(frame, header, rpv2::FENCE_COMMIT, 0, 0, rpv2FenceSession_.fence.count, crc);
+    sendRpv2ApplyStatus(
+        frame,
+        header,
+        true,
+        rpv2::REASON_NONE,
+        crc,
+        rpv2FenceSession_.fence.count);
+    LOGI(
+        "RPV2_SESSION_COMPLETE radioCommandId=%llu sessionNonce=%lu activePoints=%u activeCrc32=%lu",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce,
+        (unsigned)rpv2FenceSession_.fence.count,
+        (unsigned long)crc);
+    clearRtrSessionMode("apply_status_ok");
+    rememberRpv2Replay(header.radioCommandId, header.sessionNonce);
+    resetRpv2FenceSession();
+    return true;
+  }
+
+  if (header.msgType == rpv2::FENCE_ABORT) {
+    LOGW(
+        "RPV2_ABORT_RX radioCommandId=%llu sessionNonce=%lu",
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce);
+    clearActiveRpv2FenceSession("abort_rx", true);
+    return true;
+  }
+
+  sendRpv2Nack(frame, header, header.msgType, header.fragmentIndex, rpv2::REASON_INVALID_FIELD, rpv2FenceSession_.expectedFragment, 0);
+  return true;
+}
+
 static bool applyFenceChunkJson(const JsonObject& doc, const char** err) {
   const int part = doc["part"] | -1;
   const int total = doc["total"] | -1;
@@ -971,6 +1658,7 @@ static bool applyFenceChunkJson(const JsonObject& doc, const char** err) {
         MsgType::SET_FENCE,
         parseScopeIdHex(pickFirstText(doc["scope_id"], doc["property_scope_id"])),
         doc);
+    AS_COLLAR_RX_CHUNK_BEGIN(fenceChunkRx_.audit.commandId, total);
   }
 
   if (!fenceChunkRx_.active) {
@@ -994,8 +1682,11 @@ static bool applyFenceChunkJson(const JsonObject& doc, const char** err) {
     fenceChunkRx_.fence.points[fenceChunkRx_.fence.count++] = parsed[i];
   }
   fenceChunkRx_.expectedPart++;
+  AS_COLLAR_RX_CHUNK_APPEND(
+      fenceChunkRx_.audit.commandId, part, total, (int)fenceChunkRx_.fence.count);
 
   if ((uint8_t)part == (uint8_t)(total - 1)) {
+    AS_COLLAR_RX_CHUNK_FINAL(fenceChunkRx_.audit.commandId, (int)fenceChunkRx_.fence.count);
     if (!isValidPolygon(fenceChunkRx_.fence)) {
       resetFenceChunkRx();
       if (err) *err = "invalid_fence_final";
@@ -1007,6 +1698,10 @@ static bool applyFenceChunkJson(const JsonObject& doc, const char** err) {
       if (err) *err = "persist_fence_failed";
       return false;
     }
+    AS_COLLAR_FENCE_APPLY_OK(
+        fenceChunkRx_.audit.commandId,
+        fenceChunkRx_.audit.originDocId,
+        (int)fenceChunkRx_.fence.count);
     logPolygonApplyResult(
         MsgType::SET_FENCE,
         fenceChunkRx_.audit.scopeId,
@@ -1019,6 +1714,7 @@ static bool applyFenceChunkJson(const JsonObject& doc, const char** err) {
         PolygonErrorStage::NONE,
         fenceChunkRx_.fence.count,
         0);
+    AS_COLLAR_AUDIT_EVENT_QUEUED(fenceChunkRx_.audit.commandId);
     resetFenceChunkRx();
   }
   return true;
@@ -1360,6 +2056,22 @@ static void printBootChecklist(bool bleInitOk, bool storageOk, bool loraOk) {
       "[MODE ] %-24s : %s\n",
       "WIFI_OTA_ENABLED",
       wifiOtaEnabled ? "true" : "false");
+  Serial.printf(
+      "[MODE ] %-24s : %u\n",
+      "PROTO_VERSION",
+      (unsigned)cfg::LORA_PROTO_VERSION);
+  Serial.printf(
+      "[MODE ] %-24s : %u\n",
+      "KEY_ID",
+      (unsigned)cfg::LORA_KEY_ID);
+  Serial.printf(
+      "[MODE ] %-24s : %u\n",
+      "RADIO_PROFILE",
+      (unsigned)cfg::LORA_RADIO_PROFILE_ID);
+  Serial.printf(
+      "[MODE ] %-24s : %s\n",
+      "BINDING_READY",
+      bindingReady_ ? "true" : "false");
   checklistLine(
       "STATUS_HTTP_80",
       true,
@@ -1713,6 +2425,7 @@ static bool sendDailyHealthReport(const Telemetry& t, uint32_t intervalMs) {
   payload["hf"] = buildHealthFlags(t, fallbackScheduleUsed);
   if (dayKey != 0) payload["dk"] = dayKey;
   payload["scope_id"] = bindingPropertyScopeId_;
+  const size_t payloadBytes = measureJson(payload);
 
   LoRaFrame health;
   health.deviceId = cfg::DEVICE_ID;
@@ -1721,9 +2434,16 @@ static bool sendDailyHealthReport(const Telemetry& t, uint32_t intervalMs) {
   health.seq = nextLoRaSeq();
   health.timestamp = t.gps.gpsTime ? t.gps.gpsTime : millis() / 1000;
   randomNonce(health.nonce);
+  if (payloadBytes == 0 || payloadBytes > sizeof(health.payload)) {
+    LOGW("Health report diario invalido bytes=%u", (unsigned)payloadBytes);
+    return false;
+  }
   health.payloadLen = serializeJson(payload, health.payload, sizeof(health.payload));
-  if (health.payloadLen == 0) {
-    LOGW("Health report diario vazio; envio ignorado");
+  if (health.payloadLen == 0 || health.payloadLen > sizeof(health.payload)) {
+    LOGW(
+        "Health report diario invalido payload=%u bytes=%u",
+        (unsigned)health.payloadLen,
+        (unsigned)payloadBytes);
     return false;
   }
   if (!lora.sendFrame(health)) {
@@ -1733,7 +2453,7 @@ static bool sendDailyHealthReport(const Telemetry& t, uint32_t intervalMs) {
 
   if (dayKey != 0) {
     lastHealthReportDayKey_ = dayKey;
-    persistHealthReportDayKey(dayKey);
+    pendingHealthReportDayKey_ = dayKey;
   }
   healthFallbackAccumMs_ = 0;
   LOGI("Health report diario enviado (day=%lu fallback=%d)",
@@ -1759,6 +2479,11 @@ static uint8_t buildTelemetryPayload(const Telemetry& t, uint8_t* out, size_t ma
   if (isfinite(t.gps.speedKmph)) doc["sp"] = t.gps.speedKmph;
   if (isfinite(t.gps.hdop)) doc["hd"] = t.gps.hdop;
   if (t.gps.sats > 0) doc["sa"] = t.gps.sats;
+  const size_t payloadBytes = measureJson(doc);
+  if (payloadBytes == 0 || payloadBytes > max) {
+    LOGW("Telemetria invalida bytes=%u max=%u", (unsigned)payloadBytes, (unsigned)max);
+    return 0;
+  }
   return serializeJson(doc, out, max);
 }
 
@@ -1932,15 +2657,426 @@ static void sendCommandFeedback(
   if (cfg::LORA_COMMAND_FEEDBACK_DELAY_MS > 0) {
     delay(cfg::LORA_COMMAND_FEEDBACK_DELAY_MS);
   }
+
+  if (cmd.msgType == MsgType::SET_FENCE) {
+    const char* fbCmdId = commandId && commandId[0] ? commandId : "";
+    if (ok) {
+      AS_COLLAR_ACK_SENT(fbCmdId, status && status[0] ? status : "ok");
+    } else {
+      AS_COLLAR_NACK_SENT(fbCmdId, "nacked", reason && reason[0] ? reason : "unknown");
+    }
+  }
+
   if (!lora.sendFrame(reply)) {
     LOGW("Falha ao enviar %s para cmd=%u seq=%lu",
          ok ? "ACK" : "NACK", (unsigned)cmd.msgType, cmd.seq);
   }
 }
 
+static bool sendRtrControlReply(
+    const LoRaFrame& cmd,
+    const rtrv1::Header& header,
+    const void* body,
+    size_t bodyLen) {
+  if (!body || bodyLen == 0 || bodyLen > sizeof(LoRaFrame{}.payload)) return false;
+  LoRaFrame reply;
+  reply.deviceId = cfg::DEVICE_ID;
+  reply.scopeId = cmd.scopeId;
+  reply.msgType = MsgType::RTR_CONTROL;
+  reply.seq = nextLoRaSeq();
+  reply.timestamp = millis() / 1000;
+  randomNonce(reply.nonce);
+  reply.payloadLen = static_cast<uint8_t>(bodyLen);
+  memcpy(reply.payload, body, bodyLen);
+  return lora.sendFrame(reply);
+}
+
+static bool handleRtrControlDownlink(const LoRaFrame& frame) {
+  if (frame.msgType != MsgType::RTR_CONTROL) return false;
+
+  rtrv1::Header header{};
+  rtrv1::PageBody page{};
+  if (!rtrv1::decodePage(frame.payload, frame.payloadLen, &header, &page)) {
+    logRtrDropReason(rtrv1::reasonCodeLabel(rtrv1::REASON_INVALID_HEADER), frame);
+    return true;
+  }
+
+  if (header.finalDestId != cfg::DEVICE_ID && header.finalDestId != 0) {
+    logRtrDropReason(rtrv1::reasonCodeLabel(rtrv1::REASON_DROP_TARGET_MISMATCH), frame);
+    return true;
+  }
+  if (!bindingReady_) {
+    logRtrDropReason(rtrv1::reasonCodeLabel(rtrv1::REASON_BINDING_MISSING), frame);
+    return true;
+  }
+  if (frame.scopeId == 0 || frame.scopeId != bindingScopeIdValue()) {
+    logRtrDropReason(rtrv1::reasonCodeLabel(rtrv1::REASON_SCOPE_MISMATCH), frame);
+    return true;
+  }
+
+  LOGI(
+      "RTR_PAGE_RX sessionId=%llu messageId=%lu commandType=%u estimatedFragments=%u wakeLockSec=%lu",
+      (unsigned long long)header.sessionId,
+      (unsigned long)header.messageId,
+      (unsigned)page.commandType,
+      (unsigned)page.estimatedFragments,
+      (unsigned long)page.wakeLockSec);
+  rtrdiag::notePageRx(&rtrWindowDiag_, millis());
+  LOGI(
+      "RTR_PAGE_RX_CONTEXT sessionId=%llu messageId=%lu commandType=%u atMs=%lu pageRxCount=%lu",
+      (unsigned long long)header.sessionId,
+      (unsigned long)header.messageId,
+      (unsigned)page.commandType,
+      (unsigned long)rtrWindowDiag_.lastPageRxAtMs,
+      (unsigned long)rtrWindowDiag_.pageRxCount);
+
+  rtrSessionMode_.active = true;
+  rtrSessionMode_.waitingForBegin = false;
+  rtrSessionMode_.sessionId = header.sessionId;
+  rtrSessionMode_.scopeId = frame.scopeId;
+  rtrSessionMode_.pageMessageId = header.messageId;
+  rtrSessionMode_.commandType = static_cast<MsgType>(page.commandType);
+  rtrSessionMode_.lastActivityAtMs = millis();
+  rtrSessionMode_.estimatedFragments = page.estimatedFragments;
+  rtrSessionMode_.wakeLockUntilMs =
+      rtrSessionMode_.lastActivityAtMs +
+      (page.wakeLockSec > 0 ? page.wakeLockSec * 1000UL : rtrv1::SESSION_WAKE_LOCK_MS);
+  LOGI(
+      "RTR_SESSION_MODE_ENTER sessionId=%llu wakeLockUntilMs=%lu commandType=%u",
+      (unsigned long long)rtrSessionMode_.sessionId,
+      (unsigned long)rtrSessionMode_.wakeLockUntilMs,
+      (unsigned)rtrSessionMode_.commandType);
+  const uint32_t ackPrepareAtMs = millis();
+  LOGI(
+      "RTR_PAGE_ACK_PREPARE targetDeviceId=%lu sessionId=%llu messageId=%lu reason=page_rx_valid",
+      (unsigned long)cfg::DEVICE_ID,
+      (unsigned long long)header.sessionId,
+      (unsigned long)header.messageId);
+
+  rtrv1::Header ackHeader{};
+  ackHeader.version = rtrv1::PROTOCOL_VERSION;
+  ackHeader.trafficClass = rtrv1::TRAFFIC_CLASS_P0;
+  ackHeader.innerMsgType = rtrv1::RTR_PAGE_ACK;
+  ackHeader.flags = rtrv1::FLAG_FINAL | rtrv1::FLAG_WAKE_LOCK;
+  ackHeader.sessionId = header.sessionId;
+  ackHeader.messageId = header.messageId;
+  ackHeader.sourceId = cfg::DEVICE_ID;
+  ackHeader.finalDestId = header.sourceId;
+  ackHeader.nextHopId = header.sourceId;
+  ackHeader.fragmentIndex = 0;
+  ackHeader.fragmentTotal = 1;
+  ackHeader.hopCount = 0;
+  ackHeader.ttl = rtrv1::DEFAULT_TTL;
+
+  rtrv1::PageAckBody ack{};
+  ack.accepted = 1;
+  ack.sessionModeActive = 1;
+  ack.suggestedRxWindowMs = rtrv1::DISCOVERY_RX_WINDOW_MS;
+  ack.wakeLockUntilSec =
+      static_cast<uint32_t>((rtrSessionMode_.wakeLockUntilMs - rtrSessionMode_.lastActivityAtMs) / 1000UL);
+
+  uint8_t payload[sizeof(rtrv1::Header) + sizeof(rtrv1::PageAckBody)]{};
+  const size_t payloadLen =
+      rtrv1::encodeFrame(ackHeader, ack, payload, sizeof(payload));
+  if (payloadLen == 0 || !sendRtrControlReply(frame, ackHeader, payload, payloadLen)) {
+    LOGW(
+        "RTR_PAGE_ACK_TX_FAIL targetDeviceId=%lu sessionId=%llu messageId=%lu reason=%s",
+        (unsigned long)cfg::DEVICE_ID,
+        (unsigned long long)header.sessionId,
+        (unsigned long)header.messageId,
+        payloadLen == 0 ? "encode_failed" : "lora_send_failed");
+    return true;
+  }
+  const uint32_t ackTxAtMs = millis();
+  rtrdiag::notePageAckTx(&rtrWindowDiag_, ackTxAtMs);
+  LOGI(
+      "RTR_PAGE_ACK_TX targetDeviceId=%lu sessionId=%llu messageId=%lu suggestedRxWindowMs=%u",
+      (unsigned long)cfg::DEVICE_ID,
+      (unsigned long long)header.sessionId,
+      (unsigned long)header.messageId,
+      (unsigned)ack.suggestedRxWindowMs);
+  LOGI(
+      "RTR_PAGE_TO_ACK_LATENCY targetDeviceId=%lu sessionId=%llu messageId=%lu deltaMs=%lu",
+      (unsigned long)cfg::DEVICE_ID,
+      (unsigned long long)header.sessionId,
+      (unsigned long)header.messageId,
+      (unsigned long)(ackTxAtMs - ackPrepareAtMs));
+  rtrSessionMode_.waitingForBegin = page.commandType == static_cast<uint8_t>(MsgType::SET_FENCE);
+  if (rtrSessionMode_.waitingForBegin) {
+    waitForRpv2BeginImmediatelyAfterPageAck(
+        header.sessionId,
+        frame.scopeId,
+        ackTxAtMs);
+  }
+  return true;
+}
+
+static bool waitForRpv2BeginImmediatelyAfterPageAck(
+    uint64_t sessionId,
+    uint64_t scopeId,
+    uint32_t ackTxAtMs) {
+  if (!rtrSessionMode_.active ||
+      !rtrSessionMode_.waitingForBegin ||
+      rtrSessionMode_.sessionId != sessionId) {
+    return false;
+  }
+
+  const uint32_t windowStartAtMs = millis();
+  LOGI(
+      "RPV2_BEGIN_RX_WINDOW_BEGIN sessionId=%llu messageId=%lu scopeId=%016llX ackTxAtMs=%lu atMs=%lu deltaMs=%lu windowMs=%lu estimatedFragments=%u",
+      (unsigned long long)sessionId,
+      (unsigned long)rtrSessionMode_.pageMessageId,
+      (unsigned long long)scopeId,
+      (unsigned long)ackTxAtMs,
+      (unsigned long)windowStartAtMs,
+      (unsigned long)(windowStartAtMs - ackTxAtMs),
+      (unsigned long)kRpv2BeginImmediateRxWindowMs,
+      (unsigned)rtrSessionMode_.estimatedFragments);
+
+  const uint32_t deadlineAtMs = windowStartAtMs + kRpv2BeginImmediateRxWindowMs;
+  while ((int32_t)(millis() - deadlineAtMs) <= 0) {
+    feedWatchdogIfEnabled();
+    const uint32_t nowMs = millis();
+    const uint32_t remainingMs = deadlineAtMs - nowMs;
+    LoRaFrame down{};
+    if (!lora.receiveFrame(down, remainingMs)) {
+      break;
+    }
+
+    LOGI(
+        "RPV2_BEGIN_RX_WINDOW_FRAME rawLen=%u msgType=%u seq=%lu rssi=%d snr=%.1f",
+        (unsigned)rtrWindowDiag_.lastDownlinkRawLen,
+        (unsigned)down.msgType,
+        (unsigned long)down.seq,
+        (int)lora.lastRssi(),
+        lora.lastSnr());
+
+    if (!bindingReady_) {
+      LOGW(
+          "RPV2_BEGIN_RX_REJECT reason=binding_missing sessionId=%llu",
+          (unsigned long long)sessionId);
+      continue;
+    }
+    if (scopeId == 0 || down.scopeId == 0 || down.scopeId != scopeId || down.scopeId != bindingScopeIdValue()) {
+      LOGW(
+          "RPV2_BEGIN_RX_REJECT reason=scope_mismatch sessionId=%llu frameScopeId=%016llX expectedScopeId=%016llX",
+          (unsigned long long)sessionId,
+          (unsigned long long)down.scopeId,
+          (unsigned long long)scopeId);
+      continue;
+    }
+    if (down.msgType != MsgType::SET_FENCE) {
+      LOGW(
+          "RPV2_BEGIN_RX_REJECT reason=unexpected_type sessionId=%llu outerMsgType=%u",
+          (unsigned long long)sessionId,
+          (unsigned)down.msgType);
+      continue;
+    }
+
+    rpv2::Header header{};
+    if (!rpv2::decodeHeader(down.payload, down.payloadLen, &header)) {
+      LOGW(
+          "RPV2_BEGIN_RX_REJECT reason=decode_header sessionId=%llu",
+          (unsigned long long)sessionId);
+      continue;
+    }
+    if (header.msgType != rpv2::FENCE_BEGIN) {
+      LOGW(
+          "RPV2_BEGIN_RX_REJECT reason=unexpected_type sessionId=%llu innerMsgType=%u",
+          (unsigned long long)sessionId,
+          (unsigned)header.msgType);
+      continue;
+    }
+
+    applyDownlink(down);
+    if (rpv2FenceSession_.active &&
+        rpv2FenceSession_.radioCommandId == header.radioCommandId &&
+        rpv2FenceSession_.sessionNonce == header.sessionNonce) {
+      rtrSessionMode_.waitingForBegin = false;
+      LOGI(
+          "RPV2_BEGIN_RX_WINDOW_END sessionId=%llu messageId=%lu result=begin_rx atMs=%lu",
+          (unsigned long long)sessionId,
+          (unsigned long)rtrSessionMode_.pageMessageId,
+          (unsigned long)millis());
+      return true;
+    }
+    LOGW(
+        "RPV2_BEGIN_RX_REJECT reason=session_mismatch sessionId=%llu radioCommandId=%llu sessionNonce=%lu",
+        (unsigned long long)sessionId,
+        (unsigned long long)header.radioCommandId,
+        (unsigned long)header.sessionNonce);
+  }
+
+  rtrSessionMode_.waitingForBegin = false;
+  LOGW(
+      "RPV2_BEGIN_RX_WINDOW_END sessionId=%llu messageId=%lu result=timeout atMs=%lu",
+      (unsigned long long)sessionId,
+      (unsigned long)rtrSessionMode_.pageMessageId,
+      (unsigned long)millis());
+  return false;
+}
+
+static bool waitForRpv2PointsImmediatelyAfterAck(
+    uint64_t scopeId,
+    uint64_t radioCommandId,
+    uint32_t sessionNonce,
+    uint16_t expectedFragment,
+    uint32_t ackTxAtMs) {
+  if (!rpv2FenceSession_.active ||
+      !rtrSessionMode_.active ||
+      !rtrSessionMode_.rpv2InProgress ||
+      rpv2FenceSession_.radioCommandId != radioCommandId ||
+      rpv2FenceSession_.sessionNonce != sessionNonce ||
+      rpv2FenceSession_.expectedFragment != expectedFragment) {
+    return false;
+  }
+
+  const uint32_t windowStartAtMs = millis();
+  LOGI(
+      "RPV2_POINTS_RX_WINDOW_BEGIN radioCommandId=%llu sessionNonce=%lu expectedFragment=%u ackTxAtMs=%lu atMs=%lu deltaMs=%lu windowMs=%lu",
+      (unsigned long long)radioCommandId,
+      (unsigned long)sessionNonce,
+      (unsigned)expectedFragment,
+      (unsigned long)ackTxAtMs,
+      (unsigned long)windowStartAtMs,
+      (unsigned long)(windowStartAtMs - ackTxAtMs),
+      (unsigned long)kRpv2PointsImmediateRxWindowMs);
+
+  rpv2FenceSession_.syncPointsWindowActive = true;
+  const uint32_t deadlineAtMs = windowStartAtMs + kRpv2PointsImmediateRxWindowMs;
+  while ((int32_t)(millis() - deadlineAtMs) <= 0) {
+    feedWatchdogIfEnabled();
+    const uint32_t nowMs = millis();
+    const uint32_t remainingMs = deadlineAtMs - nowMs;
+    LoRaFrame down{};
+    if (!lora.receiveFrame(down, remainingMs)) {
+      break;
+    }
+
+    LOGI(
+        "RPV2_POINTS_RX_WINDOW_FRAME rawLen=%u msgType=%u seq=%lu rssi=%d snr=%.1f",
+        (unsigned)rtrWindowDiag_.lastDownlinkRawLen,
+        (unsigned)down.msgType,
+        (unsigned long)down.seq,
+        (int)lora.lastRssi(),
+        lora.lastSnr());
+
+    if (!bindingReady_) {
+      LOGW(
+          "RPV2_POINTS_RX_REJECT reason=binding_missing radioCommandId=%llu expectedFragment=%u",
+          (unsigned long long)radioCommandId,
+          (unsigned)expectedFragment);
+      continue;
+    }
+    if (scopeId == 0 || down.scopeId == 0 || down.scopeId != scopeId || down.scopeId != bindingScopeIdValue()) {
+      LOGW(
+          "RPV2_POINTS_RX_REJECT reason=scope_mismatch radioCommandId=%llu frameScopeId=%016llX expectedScopeId=%016llX",
+          (unsigned long long)radioCommandId,
+          (unsigned long long)down.scopeId,
+          (unsigned long long)scopeId);
+      continue;
+    }
+    if (down.msgType != MsgType::SET_FENCE) {
+      LOGW(
+          "RPV2_POINTS_RX_REJECT reason=unexpected_type radioCommandId=%llu outerMsgType=%u",
+          (unsigned long long)radioCommandId,
+          (unsigned)down.msgType);
+      continue;
+    }
+
+    rpv2::Header header{};
+    if (!rpv2::decodeHeader(down.payload, down.payloadLen, &header)) {
+      LOGW(
+          "RPV2_POINTS_RX_REJECT reason=decode_header radioCommandId=%llu",
+          (unsigned long long)radioCommandId);
+      continue;
+    }
+    if (header.msgType != rpv2::FENCE_POINTS) {
+      LOGW(
+          "RPV2_POINTS_RX_REJECT reason=unexpected_type radioCommandId=%llu innerMsgType=%u",
+          (unsigned long long)radioCommandId,
+          (unsigned)header.msgType);
+      continue;
+    }
+    if (header.radioCommandId != radioCommandId || header.sessionNonce != sessionNonce) {
+      LOGW(
+          "RPV2_POINTS_RX_REJECT reason=session_mismatch radioCommandId=%llu rxRadioCommandId=%llu rxSessionNonce=%lu",
+          (unsigned long long)radioCommandId,
+          (unsigned long long)header.radioCommandId,
+          (unsigned long)header.sessionNonce);
+      continue;
+    }
+    if (header.fragmentIndex != rpv2FenceSession_.expectedFragment) {
+      LOGW(
+          "RPV2_POINTS_RX_REJECT reason=fragment_mismatch radioCommandId=%llu expectedFragment=%u rxFragmentIndex=%u",
+          (unsigned long long)radioCommandId,
+          (unsigned)rpv2FenceSession_.expectedFragment,
+          (unsigned)header.fragmentIndex);
+      continue;
+    }
+
+    applyDownlink(down);
+    if (!rpv2FenceSession_.active) {
+      rpv2FenceSession_.syncPointsWindowActive = false;
+      LOGI(
+          "RPV2_POINTS_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=session_closed atMs=%lu",
+          (unsigned long long)radioCommandId,
+          (unsigned long)sessionNonce,
+          (unsigned long)millis());
+      return true;
+    }
+    if (rpv2FenceSession_.radioCommandId != radioCommandId ||
+        rpv2FenceSession_.sessionNonce != sessionNonce) {
+      LOGW(
+          "RPV2_POINTS_RX_REJECT reason=session_replaced radioCommandId=%llu",
+          (unsigned long long)radioCommandId);
+      break;
+    }
+    if (rpv2FenceSession_.expectedFragment > rpv2FenceSession_.totalChunks) {
+      rpv2FenceSession_.syncPointsWindowActive = false;
+      LOGI(
+          "RPV2_POINTS_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=points_rx atMs=%lu acceptedPoints=%u",
+          (unsigned long long)radioCommandId,
+          (unsigned long)sessionNonce,
+          (unsigned long)millis(),
+          (unsigned)rpv2FenceSession_.fence.count);
+      return true;
+    }
+
+    expectedFragment = rpv2FenceSession_.expectedFragment;
+    LOGI(
+        "RPV2_POINTS_RX_WINDOW_BEGIN radioCommandId=%llu sessionNonce=%lu expectedFragment=%u ackTxAtMs=%lu atMs=%lu deltaMs=%lu windowMs=%lu",
+        (unsigned long long)radioCommandId,
+        (unsigned long)sessionNonce,
+        (unsigned)expectedFragment,
+        (unsigned long)millis(),
+        (unsigned long)millis(),
+        0UL,
+        (unsigned long)kRpv2PointsImmediateRxWindowMs);
+  }
+
+  rpv2FenceSession_.syncPointsWindowActive = false;
+  LOGW(
+      "RPV2_POINTS_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=timeout atMs=%lu expectedFragment=%u timeoutMs=%lu",
+      (unsigned long long)radioCommandId,
+      (unsigned long)sessionNonce,
+      (unsigned long)millis(),
+      (unsigned)expectedFragment,
+      (unsigned long)kRpv2PointsImmediateRxWindowMs);
+  return false;
+}
+
 static void applyDownlink(const LoRaFrame& frame) {
   const bool targetMatch = (frame.deviceId == cfg::DEVICE_ID) || (frame.deviceId == 0);
   if (!targetMatch) return;
+  if (frame.msgType == MsgType::RTR_CONTROL) {
+    handleRtrControlDownlink(frame);
+    return;
+  }
+  if (isRtrSessionModeActive()) {
+    refreshRtrSessionActivity("downlink_frame");
+  }
+  const bool rpv2Fence = isRpv2FencePayload(frame);
 
   char commandId[cfg::EVENT_COMMAND_ID_MAX_LEN]{};
   extractCommandMetadataFromPayload(frame, commandId, sizeof(commandId));
@@ -1973,7 +3109,20 @@ static void applyDownlink(const LoRaFrame& frame) {
     }
   }
 
+  if (frame.msgType == MsgType::SET_FENCE) {
+    AS_COLLAR_RX_FENCE_COMMAND(
+        commandId,
+        auditCtx.originDocId,
+        originDocTypeLabel(auditCtx.originDocType),
+        auditCtx.originDocId,
+        bindingPropertyScopeId_,
+        (unsigned long)cfg::DEVICE_ID);
+  }
+
   if (!bindingReady_) {
+    if (frame.msgType == MsgType::SET_FENCE) {
+      AS_COLLAR_BINDING_MISSING(commandId);
+    }
     if (polygonAuditCommand && frame.scopeId != 0) {
       logPolygonApplyResult(
           frame.msgType,
@@ -1991,6 +3140,9 @@ static void applyDownlink(const LoRaFrame& frame) {
     return;
   }
   if (frame.scopeId == 0 || frame.scopeId != bindingScopeIdValue()) {
+    if (frame.msgType == MsgType::SET_FENCE) {
+      AS_COLLAR_SCOPE_MISMATCH(commandId, bindingPropertyScopeId_, frame.scopeId);
+    }
     if (polygonAuditCommand && frame.scopeId != 0) {
       logPolygonApplyResult(
           frame.msgType,
@@ -2013,6 +3165,11 @@ static void applyDownlink(const LoRaFrame& frame) {
     return;
   }
 
+  if (rpv2Fence) {
+    applyFenceRpv2Frame(frame);
+    return;
+  }
+
   if (frame.msgType != MsgType::SET_FENCE &&
       frame.msgType != MsgType::SET_HERDING_PLAN &&
       frame.msgType != MsgType::SET_PARAMS) {
@@ -2020,6 +3177,9 @@ static void applyDownlink(const LoRaFrame& frame) {
   }
 
   if (!docReady) {
+    if (frame.msgType == MsgType::SET_FENCE) {
+      AS_COLLAR_PARSE_FAIL(commandId, "invalid_json");
+    }
     if (polygonAuditCommand) {
       logPolygonApplyResult(
           frame.msgType,
@@ -2043,6 +3203,9 @@ static void applyDownlink(const LoRaFrame& frame) {
       if (!applyFenceChunkJson(doc.as<JsonObject>(), &err)) {
         const PolygonAuditContext& failureAudit =
             fenceChunkRx_.audit.commandId[0] != '\0' ? fenceChunkRx_.audit : auditCtx;
+        AS_COLLAR_ASSEMBLE_FAIL(
+            failureAudit.commandId[0] ? failureAudit.commandId : commandId,
+            err ? err : "invalid_fence_chunk");
         logPolygonApplyResult(
             MsgType::SET_FENCE,
             failureAudit.scopeId != 0 ? failureAudit.scopeId : frame.scopeId,
@@ -2419,6 +3582,29 @@ void setup() {
   printBootChecklist(bleInitOk, storageReady_, loraReady_);
   recordBootStage("ready");
 
+  LOGI(
+      "Coleira boot fw=%s device_id=%lu proto_version=%u key_id=%u radio_profile=%u bindingReady=%d wifi_ota_enabled=%d",
+      cfg::FW_VERSION,
+      (unsigned long)cfg::DEVICE_ID,
+      (unsigned)cfg::LORA_PROTO_VERSION,
+      (unsigned)cfg::LORA_KEY_ID,
+      (unsigned)cfg::LORA_RADIO_PROFILE_ID,
+      bindingReady_ ? 1 : 0,
+      wifiOtaEnabled ? 1 : 0);
+  {
+    const buildinfo::BuildInfo build = buildinfo::current();
+    LOGI(
+        "FW_PROVENANCE role=collar gitSha=%s gitShort=%s dirty=%s buildUtc=%s buildSource=%s firmwareVersion=%s radioProfile=%u deviceId=%lu bindingReady=%d",
+        build.gitSha,
+        build.gitShortSha,
+        buildinfo::dirtyString(build.dirty),
+        build.buildUtc,
+        build.buildSource,
+        cfg::FW_VERSION,
+        (unsigned)cfg::LORA_RADIO_PROFILE_ID,
+        (unsigned long)cfg::DEVICE_ID,
+        bindingReady_ ? 1 : 0);
+  }
   LOGI("Coleira inicializada: id=%lu fw=%s", cfg::DEVICE_ID, cfg::FW_VERSION);
   // Garante que o primeiro ciclo de telemetria só roda após o intervalo normal,
   // mesmo após SW_CPU_RESET (panic), onde a DRAM não é zerada e lastCycle poderia
@@ -2480,6 +3666,7 @@ void loop() {
   }
   lastCycle = now;
 
+  logLoopCheckpoint("before_sensors_read");
   const Telemetry rawTelemetry = sensors.readTelemetry(stateMachine.mode(), now / 1000, lora.lastRssi(), lora.lastSnr());
   const bool movingByGpsSpeed =
       rawTelemetry.gps.valid &&
@@ -2488,6 +3675,7 @@ void loop() {
       rawTelemetry.gps.speedKmph >= cfg::GPS_SPEED_MOVE_THRESHOLD_KMPH;
   const bool movingForSmartFix = rawTelemetry.moving || movingByGpsSpeed;
   const SmartFixResult smartFix = smartGps.update(rawTelemetry.gps, movingForSmartFix, now);
+  logLoopCheckpoint("after_smart_gps");
 
   Telemetry t = rawTelemetry;
   t.gps = smartFix.officialFix;
@@ -2528,6 +3716,7 @@ void loop() {
 
   const bool inside = geofence.isInside(t.gps);
   const bool nearBoundary = geofence.isNearBoundary(t.gps, cfg::FENCE_WARNING_METERS);
+  logLoopCheckpoint("before_geofence");
 
   if (nearBoundary && inside) {
     safety.beep(1);
@@ -2552,6 +3741,7 @@ void loop() {
   wasInside = inside;
 
   EventRecord herdEvent;
+  logLoopCheckpoint("before_herding");
   if (herding.updateWithGps(t.gps, &herdEvent)) {
     if (herdEvent.type == EventType::HERD_DONE) {
       promoteCompletedHerdingFence();
@@ -2563,7 +3753,10 @@ void loop() {
     }
   }
 
-  if (bindingReady_) {
+  const bool rtrSessionActive = isRtrSessionModeActive();
+
+  if (bindingReady_ && !rtrSessionActive) {
+    logLoopCheckpoint("before_uplink_build");
     LoRaFrame uplink;
     uplink.deviceId = cfg::DEVICE_ID;
     uplink.scopeId = bindingScopeIdValue();
@@ -2573,24 +3766,64 @@ void loop() {
     randomNonce(uplink.nonce);
     uplink.payloadLen = buildTelemetryPayload(t, uplink.payload, sizeof(uplink.payload));
 
+    logLoopCheckpoint("before_lora_send");
     lastLoRaTxOk_ = uplink.payloadLen > 0 && lora.sendFrame(uplink);
+    if (lastLoRaTxOk_) {
+      lastUplinkTxAtMs_ = millis();
+    }
+    logLoopCheckpoint("after_lora_send");
     if (!lastLoRaTxOk_) {
       LOGW("Falha envio telemetria; permanece em fila local.");
     }
   } else {
     lastLoRaTxOk_ = false;
   }
-  sendDailyHealthReport(t, stateMachine.intervalMs());
+  logLoopCheckpoint("before_send_daily_health");
+  if (!rtrSessionActive) {
+    sendDailyHealthReport(t, stateMachine.intervalMs());
+  }
+  logLoopCheckpoint("after_send_daily_health");
 
   LoRaFrame down;
-  const uint32_t rxWindowMs = otaSessionLikelyActive
-                                  ? cfg::OTA_UPLOAD_RX_WINDOW_MS
-                                  : cfg::RX_WINDOW_MS;
+  uint32_t rxWindowMs = otaSessionLikelyActive
+                            ? cfg::OTA_UPLOAD_RX_WINDOW_MS
+                            : rtrv1::discoveryWindowMs(
+                                  cfg::RTR_BENCH_EXTENDED_DISCOVERY,
+                                  cfg::RTR_DISCOVERY_WINDOW_MS_NORMAL,
+                                  cfg::RTR_DISCOVERY_WINDOW_MS_BENCH);
+  if (cfg::RTR_FORCE_DISCOVERY_RX_OPEN && rxWindowMs < rtrv1::DISCOVERY_RX_WINDOW_MS) {
+    rxWindowMs = rtrv1::DISCOVERY_RX_WINDOW_MS;
+  }
   bool handledDownlink = false;
+  logLoopCheckpoint("before_lora_receive");
+  rtrdiag::noteDiscoveryWindowOpen(&rtrWindowDiag_, false, millis(), rxWindowMs);
+  LOGI(
+      "RTR_WINDOW_ARMED window=discovery atMs=%lu windowMs=%lu sessionActive=%d bench=%d",
+      (unsigned long)rtrWindowDiag_.lastDiscoveryWindowOpenAtMs,
+      (unsigned long)rtrWindowDiag_.lastDiscoveryWindowMs,
+      rtrSessionActive ? 1 : 0,
+      cfg::RTR_BENCH_MODE ? 1 : 0);
+  LOGI(
+      "RTR_DISCOVERY_WINDOW_OPEN windowMs=%lu sessionActive=%d bench=%d",
+      (unsigned long)rxWindowMs,
+      rtrSessionActive ? 1 : 0,
+      cfg::RTR_BENCH_MODE ? 1 : 0);
   if (lora.receiveFrame(down, rxWindowMs)) {
     applyDownlink(down);
     handledDownlink = true;
   }
+  rtrdiag::noteWindowClosed(&rtrWindowDiag_, millis(), handledDownlink);
+  LOGI(
+      "RTR_DISCOVERY_WINDOW_CLOSE handled=%d sessionActive=%d",
+      handledDownlink ? 1 : 0,
+      isRtrSessionModeActive() ? 1 : 0);
+  LOGI(
+      "RTR_WINDOW_CLOSED_CONTEXT window=discovery atMs=%lu handled=%d rawSeen=%lu rawRejected=%lu pageRxCount=%lu",
+      (unsigned long)rtrWindowDiag_.lastWindowCloseAtMs,
+      handledDownlink ? 1 : 0,
+      (unsigned long)rtrWindowDiag_.rawDownlinkSeenCount,
+      (unsigned long)rtrWindowDiag_.rawDownlinkRejectedCount,
+      (unsigned long)rtrWindowDiag_.pageRxCount);
 
   if (handledDownlink && cfg::LORA_POST_COMMAND_EVENT_HOLDOFF_MS > 0) {
     delay(cfg::LORA_POST_COMMAND_EVENT_HOLDOFF_MS);
@@ -2598,63 +3831,124 @@ void loop() {
 
   EventRecord pending;
   uint8_t eventBudget = otaSessionLikelyActive ? cfg::OTA_UPLOAD_EVENT_BURST : 0xFF;
-  while (!handledDownlink && bindingReady_ && storage.popEvent(pending)) {
-    LoRaFrame ev;
-    ev.deviceId = cfg::DEVICE_ID;
-    ev.scopeId = pending.scopeId != 0 ? pending.scopeId : bindingScopeIdValue();
-    ev.msgType = MsgType::EVENT;
-    ev.seq = nextLoRaSeq();
-    ev.timestamp = pending.ts;
-    randomNonce(ev.nonce);
-    StaticJsonDocument<384> d;
-    d["type"] = eventTypeLabel(pending.type);
-    d["event_type"] = eventTypeLabel(pending.type);
-    d["event_code"] = (int)pending.type;
-    d["d1"] = pending.d1;
-    d["d2"] = pending.d2;
-    d["scope_id"] = scopeIdToHex(ev.scopeId);
-    if (pending.type != EventType::POLYGON_APPLY_RESULT &&
-        pending.payload.operationId[0] != '\0') {
-      d["operation_id"] = pending.payload.operationId;
+  logLoopCheckpoint("before_pending_events");
+  if (!cfg::DEBUG_DISABLE_PENDING_EVENT_DRAIN && !isRtrSessionModeActive()) {
+    while (!handledDownlink && bindingReady_ && storage.popEvent(pending)) {
+      LoRaFrame ev;
+      ev.deviceId = cfg::DEVICE_ID;
+      ev.scopeId = pending.scopeId != 0 ? pending.scopeId : bindingScopeIdValue();
+      ev.msgType = MsgType::EVENT;
+      ev.seq = nextLoRaSeq();
+      ev.timestamp = pending.ts;
+      randomNonce(ev.nonce);
+      StaticJsonDocument<384> d;
+      d["type"] = eventTypeLabel(pending.type);
+      d["event_type"] = eventTypeLabel(pending.type);
+      d["event_code"] = (int)pending.type;
+      d["d1"] = pending.d1;
+      d["d2"] = pending.d2;
+      d["scope_id"] = scopeIdToHex(ev.scopeId);
+      if (eventUsesOperationId(pending.type) &&
+          pending.payload.operationId[0] != '\0') {
+        d["operation_id"] = pending.payload.operationId;
+      }
+      if (pending.type == EventType::HERD_PHASE_CHANGE) {
+        d["phase_index"] = pending.d1;
+      } else if (pending.type == EventType::POLYGON_APPLY_RESULT) {
+        d["status"] = polygonApplyStatusLabel(pending.auditStatus);
+        d["command"] = commandLabel(
+            pending.polygonKind == PolygonKind::HERDING
+                ? MsgType::SET_HERDING_PLAN
+                : MsgType::SET_FENCE);
+        d["polygon_kind"] = polygonKindLabel(pending.polygonKind);
+        d["origin_doc_type"] = originDocTypeLabel(pending.originDocType);
+        if (pending.payload.audit.originDocId[0] != '\0') {
+          d["origin_doc_id"] = pending.payload.audit.originDocId;
+        }
+        if (pending.payload.audit.commandId[0] != '\0') {
+          d["cmd_id"] = pending.payload.audit.commandId;
+        }
+        if (pending.d1 > 0) d["point_count"] = pending.d1;
+        if (pending.d2 > 0) d["phase_count"] = pending.d2;
+        if (pending.auditStatus == PolygonApplyStatus::FAILURE &&
+            pending.payload.audit.errorCode[0] != '\0') {
+          d["error_code"] = pending.payload.audit.errorCode;
+        }
+        const char* errorStage = polygonErrorStageLabel(pending.errorStage);
+        if (errorStage[0] != '\0') {
+          d["error_stage"] = errorStage;
+        }
+        if (pending.originDocType == OriginDocType::HERDING_OPERATION &&
+            pending.payload.audit.originDocId[0] != '\0') {
+          d["operation_id"] = pending.payload.audit.originDocId;
+        }
+      }
+      const size_t eventPayloadBytes = measureJson(d);
+      if (eventPayloadBytes == 0 || eventPayloadBytes > sizeof(ev.payload)) {
+        LOGW(
+            "Evento LoRa invalido type=%u bytes=%u",
+            (unsigned)pending.type,
+            (unsigned)eventPayloadBytes);
+        continue;
+      }
+      ev.payloadLen = serializeJson(d, ev.payload, sizeof(ev.payload));
+      if (ev.payloadLen == 0 || ev.payloadLen > sizeof(ev.payload)) {
+        LOGW(
+            "Evento LoRa truncado type=%u payload=%u",
+            (unsigned)pending.type,
+            (unsigned)ev.payloadLen);
+        continue;
+      }
+      if (!lora.sendFrame(ev)) break;
+      logPendingEventCheckpoint("after_pending_event_send", pending, ev);
+      if (otaSessionLikelyActive) {
+        if (--eventBudget == 0) break;
+        ArduinoOTA.handle();
+        delay(2);
+      }
     }
-    if (pending.type == EventType::HERD_PHASE_CHANGE) {
-      d["phase_index"] = pending.d1;
-    } else if (pending.type == EventType::POLYGON_APPLY_RESULT) {
-      d["status"] = polygonApplyStatusLabel(pending.auditStatus);
-      d["command"] = commandLabel(
-          pending.polygonKind == PolygonKind::HERDING
-              ? MsgType::SET_HERDING_PLAN
-              : MsgType::SET_FENCE);
-      d["polygon_kind"] = polygonKindLabel(pending.polygonKind);
-      d["origin_doc_type"] = originDocTypeLabel(pending.originDocType);
-      if (pending.payload.audit.originDocId[0] != '\0') {
-        d["origin_doc_id"] = pending.payload.audit.originDocId;
-      }
-      if (pending.payload.audit.commandId[0] != '\0') {
-        d["cmd_id"] = pending.payload.audit.commandId;
-      }
-      if (pending.d1 > 0) d["point_count"] = pending.d1;
-      if (pending.d2 > 0) d["phase_count"] = pending.d2;
-      if (pending.auditStatus == PolygonApplyStatus::FAILURE &&
-          pending.payload.audit.errorCode[0] != '\0') {
-        d["error_code"] = pending.payload.audit.errorCode;
-      }
-      const char* errorStage = polygonErrorStageLabel(pending.errorStage);
-      if (errorStage[0] != '\0') {
-        d["error_stage"] = errorStage;
-      }
-      if (pending.originDocType == OriginDocType::HERDING_OPERATION &&
-          pending.payload.audit.originDocId[0] != '\0') {
-        d["operation_id"] = pending.payload.audit.originDocId;
-      }
+  } else {
+    LOGW("Pending event drain desabilitado para bancada");
+  }
+  logLoopCheckpoint("after_pending_events_loop");
+
+  const bool sessionModeNow = isRtrSessionModeActive();
+  if (rtrv1::shouldOpenSecondaryRxWindow(handledDownlink, sessionModeNow)) {
+    const uint32_t secondaryWindowMs = rtrdiag::secondaryWindowMs(
+        cfg::RTR_SECONDARY_RX_WINDOW_MS,
+        cfg::RTR_BENCH_SECONDARY_WINDOW_MS);
+    if (secondaryWindowMs != cfg::RTR_SECONDARY_RX_WINDOW_MS) {
+      LOGW(
+          "BENCH_SECONDARY_WINDOW_OVERRIDE baseMs=%lu overrideMs=%lu",
+          (unsigned long)cfg::RTR_SECONDARY_RX_WINDOW_MS,
+          (unsigned long)secondaryWindowMs);
     }
-    ev.payloadLen = serializeJson(d, ev.payload, sizeof(ev.payload));
-    if (!lora.sendFrame(ev)) break;
-    if (otaSessionLikelyActive) {
-      if (--eventBudget == 0) break;
-      ArduinoOTA.handle();
-      delay(2);
+    rtrdiag::noteDiscoveryWindowOpen(&rtrWindowDiag_, true, millis(), secondaryWindowMs);
+    LOGI(
+        "RTR_WINDOW_ARMED window=secondary atMs=%lu windowMs=%lu sessionActive=%d",
+        (unsigned long)rtrWindowDiag_.lastSecondaryWindowOpenAtMs,
+        (unsigned long)rtrWindowDiag_.lastSecondaryWindowMs,
+        sessionModeNow ? 1 : 0);
+    LOGI(
+        "RTR_DISCOVERY_WINDOW_SECONDARY_OPEN windowMs=%lu",
+        (unsigned long)secondaryWindowMs);
+    bool secondaryHandled = false;
+    if (lora.receiveFrame(down, secondaryWindowMs)) {
+      applyDownlink(down);
+      secondaryHandled = true;
     }
+    rtrdiag::noteWindowClosed(&rtrWindowDiag_, millis(), secondaryHandled);
+    LOGI(
+        "RTR_DISCOVERY_WINDOW_SECONDARY_CLOSE handled=%d",
+        secondaryHandled ? 1 : 0);
+    LOGI(
+        "RTR_WINDOW_CLOSED_CONTEXT window=secondary atMs=%lu handled=%d rawSeen=%lu rawRejected=%lu pageRxCount=%lu",
+        (unsigned long)rtrWindowDiag_.lastWindowCloseAtMs,
+        secondaryHandled ? 1 : 0,
+        (unsigned long)rtrWindowDiag_.rawDownlinkSeenCount,
+        (unsigned long)rtrWindowDiag_.rawDownlinkRejectedCount,
+        (unsigned long)rtrWindowDiag_.pageRxCount);
+    handledDownlink = handledDownlink || secondaryHandled;
   }
 
   // Com Wi-Fi/OTA ativo, permanece online continuamente para manutenção remota.
@@ -2663,7 +3957,110 @@ void loop() {
     return;
   }
 
+  if (cfg::RTR_BENCH_MODE || cfg::RTR_DISABLE_DEEP_SLEEP_FOR_BENCH) {
+    LOGW("RTR_BENCH_MODE ativo; deep sleep desabilitado");
+    delay(50);
+    return;
+  }
+
+  if (rtrdiag::benchWakeHoldActive(
+          millis(),
+          lastUplinkTxAtMs_,
+          cfg::RTR_BENCH_HOLD_AFTER_UPLINK_MS)) {
+    const uint32_t holdElapsedMs = millis() - lastUplinkTxAtMs_;
+    LOGW(
+        "BENCH_WAKE_HOLD_ACTIVE elapsedMs=%lu remainingMs=%lu",
+        (unsigned long)holdElapsedMs,
+        (unsigned long)(cfg::RTR_BENCH_HOLD_AFTER_UPLINK_MS - holdElapsedMs));
+    delay(50);
+    return;
+  }
+
+  if (rpv2FenceSession_.active) {
+    if (!isRtrSessionModeActive()) {
+      clearActiveRpv2FenceSession("wake_lock_expired", false);
+      delay(50);
+      return;
+    }
+    LOGI(
+        "RPV2_SESSION_WAKE_LOCK_HOLD radioCommandId=%llu sessionNonce=%lu stageComplete=%d remainingMs=%lu",
+        (unsigned long long)rpv2FenceSession_.radioCommandId,
+        (unsigned long)rpv2FenceSession_.sessionNonce,
+        rpv2FenceSession_.stageComplete ? 1 : 0,
+        isRtrSessionModeActive()
+            ? (unsigned long)(rtrSessionMode_.wakeLockUntilMs - millis())
+            : 0UL);
+    delay(50);
+    return;
+  }
+
+  if (isRtrSessionModeActive()) {
+    LOGI(
+        "RTR_PRESTART_HOLD sessionId=%llu remainingMs=%lu",
+        (unsigned long long)rtrSessionMode_.sessionId,
+        (unsigned long)(rtrSessionMode_.wakeLockUntilMs - millis()));
+    LOGI(
+        "RTR_SESSION_WAKE_LOCK_HOLD sessionId=%llu remainingMs=%lu",
+        (unsigned long long)rtrSessionMode_.sessionId,
+        (unsigned long)(rtrSessionMode_.wakeLockUntilMs - millis()));
+    delay(50);
+    return;
+  }
+
+  const uint32_t nowMs = millis();
+  if (rtrv1::shouldHoldSleepForRetryGrace(
+          nowMs,
+          lastUplinkTxAtMs_,
+          handledDownlink,
+          false,
+          rtrv1::COLLAR_SLEEP_GRACE_MS)) {
+    const uint32_t remainingGraceMs =
+        rtrv1::remainingSleepGraceMs(
+            nowMs,
+            lastUplinkTxAtMs_,
+            rtrv1::COLLAR_SLEEP_GRACE_MS);
+    if (remainingGraceMs > 0) {
+      rtrdiag::noteSleepGraceHold(&rtrWindowDiag_, nowMs, remainingGraceMs);
+      LOGI(
+          "RTR_SLEEP_GRACE_HOLD elapsedMs=%lu remainingMs=%lu holdCount=%lu",
+          (unsigned long)(nowMs - lastUplinkTxAtMs_),
+          (unsigned long)remainingGraceMs,
+          (unsigned long)rtrWindowDiag_.sleepGraceHoldCount);
+      bool graceHandled = false;
+      if (lora.receiveFrame(down, remainingGraceMs)) {
+        applyDownlink(down);
+        graceHandled = true;
+        handledDownlink = true;
+      }
+      LOGI(
+          "RTR_SLEEP_GRACE_WINDOW_CLOSE handled=%d remainingMs=%lu",
+          graceHandled ? 1 : 0,
+          (unsigned long)remainingGraceMs);
+      if (graceHandled || isRtrSessionModeActive()) {
+        delay(50);
+        return;
+      }
+    }
+  }
+
   // Em LoRa-only, usa deep sleep para economia de energia.
+  flushDeferredHealthReportDayKey();
+  logLoopCheckpoint("before_deep_sleep_prepare");
+  if (!cfg::DEEP_SLEEP_ENABLED) {
+    LOGW("Deep sleep desabilitado por configuracao de bancada");
+    delay(200);
+    return;
+  }
+  lora.prepareForDeepSleep();
+  logLoopCheckpoint("after_deep_sleep_prepare");
+  if (cfg::DEEP_SLEEP_PREPARE_DELAY_MS > 0) {
+    delay(cfg::DEEP_SLEEP_PREPARE_DELAY_MS);
+  }
+  logLoopCheckpoint("before_deep_sleep_arm");
   esp_sleep_enable_timer_wakeup((uint64_t)stateMachine.intervalMs() * 1000ULL);
+  if (cfg::DEEP_SLEEP_ARM_DELAY_MS > 0) {
+    delay(cfg::DEEP_SLEEP_ARM_DELAY_MS);
+  }
+  logLoopCheckpoint("before_deep_sleep_start");
   esp_deep_sleep_start();
 }

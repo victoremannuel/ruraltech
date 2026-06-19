@@ -1,0 +1,7 @@
+$ python3 tools/audit/generate_build_info.py
+started_at=2026-04-25T20:39:58Z
+Wrote firmware/shared/generated_build_info.h git=8f12088 dirty=1 utc=2026-04-25T20:39:58Z
+
+exit_code=0
+timed_out=0
+finished_at=2026-04-25T20:39:58Z

@@ -53,6 +53,12 @@
 #define RT_CFG_RTDB_QUEUE_KEY "SET_RTDB_QUEUE_KEY"
 #endif
 
+// Relay LoRa entre gateways em bancada/implantacao controlada.
+// 0 = desligado, 1 = ligado.
+#ifndef RT_CFG_GATEWAY_RELAY_ENABLED
+#define RT_CFG_GATEWAY_RELAY_ENABLED 0
+#endif
+
 namespace cfg_manual {
 constexpr char AP_SSID[] = RT_CFG_AP_SSID;
 constexpr char AP_PASS[] = RT_CFG_AP_PASS;
@@ -64,4 +70,5 @@ constexpr char SUPABASE_EDGE_HOST[] = RT_CFG_SUPABASE_EDGE_HOST;
 constexpr char RTDB_MATRIX_ID[] = RT_CFG_RTDB_MATRIX_ID;
 constexpr char RTDB_WRITER_KEY[] = RT_CFG_RTDB_WRITER_KEY;
 constexpr char RTDB_QUEUE_KEY[] = RT_CFG_RTDB_QUEUE_KEY;
+constexpr bool GATEWAY_RELAY_ENABLED = RT_CFG_GATEWAY_RELAY_ENABLED != 0;
 }

@@ -1,0 +1,18 @@
+[e2e] Buscando área existente...
+[e2e] Área: id=kQSjWOVdkqTNDM9WBggT property=T0xeG8WQHwJRI6H3t7vr devices=['3222380545'] points=6
+[e2e] Polígono alterado: vértice 0 [-16.674919067537086, -49.48423817286258] → [-16.674909067537087, -49.48423817286258]
+[e2e] Iniciando listener MATRIX em /dev/tty.usbserial-59470049741
+[e2e] COLLAR_SERIAL_PORT não definido — listener COLLAR desabilitado.
+[e2e] Atualizando área kQSjWOVdkqTNDM9WBggT no Supabase...
+[e2e] Área atualizada com sucesso no Supabase.
+[e2e] Iniciando poller Supabase
+[e2e] Aguardando resultado ponta a ponta (max ~10 min)...
+[e2e] Status terminal negativo: failed
+[e2e] commandId resolvido para o relatório: AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:FE7FD5ECA20D7089:23A00185B336A70A
+
+[e2e] Relatório salvo:
+  tools/audit/output/20260425_220024_physical_matrix_flash_set_fence_audit/area_sync_e2e_report.md
+  tools/audit/output/20260425_220024_physical_matrix_flash_set_fence_audit/area_sync_e2e_report.json
+
+[e2e] Conclusão: FALHA
+  ! Status terminal negativo: failed

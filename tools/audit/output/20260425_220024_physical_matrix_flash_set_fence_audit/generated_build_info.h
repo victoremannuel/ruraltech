@@ -1,0 +1,6 @@
+#pragma once
+#define RT_BUILD_GIT_SHA "23d7f93aec0142efa0051903004f8e6b57d60b11"
+#define RT_BUILD_GIT_SHORT_SHA "23d7f93"
+#define RT_BUILD_UTC "2026-04-26T01:01:09Z"
+#define RT_BUILD_DIRTY 0
+#define RT_BUILD_SOURCE "generated"

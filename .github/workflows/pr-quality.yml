@@ -94,6 +94,11 @@ jobs:
             firmware/tests/queue_stream_support_test.cpp \
             -o /tmp/queue_stream_support_test
           /tmp/queue_stream_support_test
+          g++ -std=c++17 -Wall -Wextra -pedantic \
+            firmware/shared/matrix_uplink_antireplay.cpp \
+            firmware/tests/matrix_uplink_antireplay_test.cpp \
+            -o /tmp/matrix_uplink_antireplay_test
+          /tmp/matrix_uplink_antireplay_test
 
   firmware-build:
     name: Firmware Compile

@@ -1,0 +1,16 @@
+usage: serial_listener.py [-h] --port PORT
+                          --role {MATRIX,COLLAR,COMMON_GATEWAY} [--baud BAUD]
+                          [--filter-cmd FILTER_CMD] [--output-dir OUTPUT_DIR]
+
+Listener de serial para auditoria [AREA_SYNC]
+
+options:
+  -h, --help            show this help message and exit
+  --port PORT           Porta serial (ex: /dev/cu.usbserial-XXX)
+  --role {MATRIX,COLLAR,COMMON_GATEWAY}
+                        Role do dispositivo
+  --baud BAUD
+  --filter-cmd FILTER_CMD
+                        Filtrar por commandId específico
+  --output-dir OUTPUT_DIR
+                        Diretório de saída (padrão: tools/audit/output/<ts>)

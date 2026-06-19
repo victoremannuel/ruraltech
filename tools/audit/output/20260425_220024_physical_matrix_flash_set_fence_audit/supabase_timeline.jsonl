@@ -1,0 +1,5 @@
+{"ts": "2026-04-26T01:19:41.439463+00:00", "event": "status_change", "commandId": "AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388859F00:23A00185B336A70A", "from": null, "to": "queued"}
+{"ts": "2026-04-26T01:19:41.439463+00:00", "event": "status_change", "commandId": "AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:9DB1FEEB62", "from": "queued", "to": "failed"}
+{"ts": "2026-04-26T01:19:41.439463+00:00", "event": "status_change", "commandId": "AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:9DB1FEEB62C7BFC0:23A00185B336A70A", "from": "failed", "to": "queued"}
+{"ts": "2026-04-26T01:19:41.439463+00:00", "event": "status_change", "commandId": "AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:FE7FD5ECA2", "from": "queued", "to": "failed"}
+{"ts": "2026-04-26T01:19:41.439463+00:00", "event": "status_change", "commandId": "AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:FE7FD5ECA20D7089:23A00185B336A70A", "from": "failed", "to": "queued"}

@@ -274,19 +274,50 @@ async function handleMatrixCommandQueues(
   if (!runtimeId || !queueKey) throw new Error("invalid_queue_path");
 
   if (method === "GET" && pathSegments.length === 3) {
+    const nowMs = Date.now();
     const { data, error } = await admin.from("matrix_command_queues")
-      .select("command_id,payload")
+      .select("command_id,created_at_ms,expires_at_ms,payload")
       .eq("runtime_id", runtimeId)
       .eq("queue_key", queueKey)
-      .order("created_at_ms", { ascending: true });
+      .order("created_at_ms", { ascending: true })
+      .limit(1);
     if (error) throw new Error(error.message);
-    const out: Record<string, unknown> = {};
-    for (const row of data ?? []) {
-      const commandId = normalizeId((row as JsonMap).command_id);
-      if (!commandId) continue;
-      out[commandId] = (row as JsonMap).payload ?? null;
-    }
-    return out;
+    const rows = (data ?? []) as JsonMap[];
+    const firstRow = rows[0] ?? null;
+    const firstCommandId = normalizeId(firstRow?.command_id);
+    const firstPayload = firstRow?.payload && typeof firstRow.payload === "object"
+      ? firstRow.payload as JsonMap
+      : {};
+    const firstCreatedAtMs = Number(
+      firstRow?.created_at_ms ?? firstPayload.createdAtMs ?? firstPayload.created_at_ms ?? 0,
+    ) || null;
+    const firstExpiresAtMs = Number(
+      firstRow?.expires_at_ms ?? firstPayload.expiresAtMs ?? firstPayload.expires_at_ms ?? 0,
+    ) || null;
+    const maskedQueueKey = queueKey.length > 12
+      ? `${queueKey.slice(0, 6)}...${queueKey.slice(-6)}`
+      : queueKey;
+    const responseShape = firstRow ? "simple_object" : "null";
+    const responseData = firstRow
+      ? {
+        command_id: firstCommandId,
+        payload: firstPayload,
+      }
+      : null;
+    const responseBytes = JSON.stringify(responseData).length;
+    console.log("matrix_queue_get", {
+      runtimeId,
+      queueKey: maskedQueueKey,
+      itemCount: rows.length,
+      firstCommandId: firstCommandId || null,
+      firstCreatedAtMs,
+      firstExpiresAtMs,
+      responseShape,
+      responseBytes,
+      candidateExpired: !!(firstExpiresAtMs && firstExpiresAtMs <= nowMs),
+      empty: rows.length === 0,
+    });
+    return responseData;
   }
 
   const commandId = normalizeId(pathSegments[3]);

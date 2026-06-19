@@ -35,10 +35,25 @@
 #include "Logger.h"
 #include "BlePresence.h"
 #include "LoRaGateway.h"
+#include "MatrixLoRaTxAudit.h"
+#include "RtrWakeOrchestrator.h"
+#include "FenceRpv2Planner.h"
 #include "SdLogger.h"
+#include "../firmware/shared/build_info.h"
 #include "ApiServer.h"
 #include "QueueStreamSupport.h"
 #include "../firmware/shared/command_contract.h"
+#include "../firmware/shared/AreaSyncLogger.h"
+#include "../firmware/shared/radio_transport_v1_codec.h"
+#include "../firmware/shared/radio_transport_v1_constants.h"
+#include "../firmware/shared/radio_transport_v1_reason_codes.h"
+#include "../firmware/shared/radio_transport_v1_session_id.h"
+#include "../firmware/shared/rtr_diag_support.h"
+#include "../firmware/shared/radio_proto_v2_codec.h"
+#include "../firmware/shared/radio_proto_v2_crc.h"
+#include "../firmware/shared/radio_proto_v2_id.h"
+#include "../firmware/shared/radio_proto_v2_planner_support.h"
+#include "../firmware/shared/radio_proto_v2_reason_codes.h"
 
 LoRaGateway lora;
 BlePresence blePresence;
@@ -215,6 +230,7 @@ struct ActiveSimpleCommandState {
   uint32_t lastAttemptAtMs = 0;
   uint32_t targetedRetryAtMs = 0;
   uint32_t targetedRetryDeviceId = 0;
+  uint32_t lastProgressAtMs = 0;
   uint32_t feedbackDeviceId = 0;
   uint32_t feedbackWindowOpenedAtMs = 0;
   uint32_t feedbackDeadlineAtMs = 0;
@@ -223,8 +239,10 @@ struct ActiveSimpleCommandState {
   uint64_t expiresAtMs = 0;
   uint8_t targetCount = 0;
   uint16_t retryCount = 0;
+  uint16_t lastReasonCode = rpv2::REASON_NONE;
   char commandId[48]{};
   char command[24]{};
+  char transportState[32]{};
   char feedbackCommandId[48]{};
   char lastFeedbackOutcome[24]{};
   char propertyId[48]{};
@@ -238,6 +256,44 @@ struct ActiveSimpleCommandState {
   char payloadJson[4096]{};
   ActiveSimpleCommandTargetState targets[cfg::MAX_HERD_OPERATION_DEVICES]{};
 } activeSimpleCommand;
+
+struct Rpv2AwaitedResponse {
+  bool received = false;
+  bool ack = false;
+  bool nack = false;
+  bool applyStatus = false;
+  uint8_t responseMsgType = 0;
+  uint16_t reasonCode = rpv2::REASON_NONE;
+  uint16_t fragmentIndex = 0;
+  uint16_t nextExpectedFragment = 0;
+  uint16_t acceptedPoints = 0;
+  uint32_t observedCrc32 = 0;
+  uint16_t activePoints = 0;
+};
+
+struct PendingWakeSession {
+  rtrwake::SessionCore core{};
+  char commandId[48]{};
+  uint64_t scopeId = 0;
+  MsgType commandType = MsgType::SET_FENCE;
+  uint64_t radioCommandId = 0;
+  uint32_t sessionNonce = 0;
+  uint16_t estimatedFragments = 0;
+  uint16_t lastReasonCode = rtrv1::REASON_NONE;
+  char lastReasonLabel[48]{};
+  bool rpv2PlanReady = false;
+  Rpv2FenceChunkPlan plan{};
+};
+
+constexpr uint8_t kMaxPendingWakeSessions = cfg::MAX_HERD_OPERATION_DEVICES;
+constexpr uint8_t kMaxDevicePresenceEntries = cfg::MAX_HERD_OPERATION_DEVICES;
+constexpr uint32_t kRecentWakeHintMs = 4000;
+constexpr uint32_t kSetFenceLocalStallTimeoutMs = 30000UL;
+constexpr uint32_t kPendingWakeWaitingUplinkTimeoutMs = 180000UL;
+PendingWakeSession pendingWakeSessions[kMaxPendingWakeSessions]{};
+rtrwake::Presence devicePresence[kMaxDevicePresenceEntries]{};
+rtrdiag::PageSnapshot lastPageDiag{};
+rtrdiag::WakeLoopSnapshot wakeLoopDiag{};
 
 struct CloudPublishContext {
   uint32_t nowSec = 0;
@@ -265,6 +321,8 @@ struct TelemetryPublishTrace {
   CloudWriteTrace history{};
 };
 
+struct FencePointsResolution;
+
 static void setWatchdogEnabled(bool enabled);
 static void feedWatchdogIfEnabled();
 static void printBootChecklist(
@@ -274,7 +332,8 @@ static void printBootChecklist(
     bool rtcOk,
     bool sdOk,
     bool loraOk,
-    bool cloudConfigured);
+    bool cloudConfigured,
+    bool queueConfigured);
 static void copyStringToBuffer(char* dst, size_t dstSize, const char* src);
 static void loadBindingConfig();
 static bool persistBindingConfig(
@@ -289,11 +348,18 @@ static bool sendLoRaJsonFrame(
     uint32_t deviceId,
     MsgType msgType,
     const JsonVariantConst payload,
-    const char** reason = nullptr);
+    const char** reason = nullptr,
+    MatrixLoRaTxReason txReason = MatrixLoRaTxReason::CommandDispatch,
+    const char* callerTag = "sendLoRaJsonFrame",
+    const LoRaFrame* sourceUplinkOrNull = nullptr,
+    const char* commandId = nullptr);
 static bool sendFenceCommandChunked(
     uint32_t deviceId,
     const JsonVariantConst payload,
     const char** reason = nullptr);
+static void noteSetFenceCommandProgress(const char* stage);
+static bool hasPendingWakeSessionForCommand(const char* commandId);
+static void checkSetFencePlannerDispatchStall(uint32_t nowTick, uint64_t nowMs);
 static bool resendActiveSimpleCommand(
     const LoRaFrame* triggerRx = nullptr,
     const char** reason = nullptr);
@@ -320,6 +386,8 @@ static bool isAwaitedSimpleCommandFeedback(const LoRaFrame& rx);
 static void handleUplinkDuringAckWait(const LoRaFrame& rx);
 static void pollActiveSimpleCommandFeedbackSlice();
 static bool processPrioritySimpleCommandFeedbackWindow();
+static int findActiveSimpleCommandTarget(const char* targetId);
+static bool publishSimpleCommandResult(const char* status, const char* reason = nullptr);
 static String payloadBytesToString(const uint8_t* data, size_t len);
 static void fillCloudWriteTrace(
     CloudWriteTrace* trace,
@@ -337,6 +405,87 @@ static bool backhaulWindowOpen();
 static void requestImmediateQueueDispatch(const char* source);
 static void closeQueueCommandStream(const char* reason);
 static void drawStatus(const char* line1, const char* line2);
+static bool splitFencePointArrayForPayload(
+    const JsonVariantConst payload,
+    const JsonArrayConst& points,
+    uint8_t starts[cfg::MAX_POLYGON_POINTS],
+    uint8_t ends[cfg::MAX_POLYGON_POINTS],
+    uint8_t& chunkCount,
+    const char** reason = nullptr);
+static bool hasPendingWakeSessions();
+static int findPendingWakeSessionByDeviceId(uint32_t deviceId);
+static int findPendingWakeSessionByCommandId(const char* commandId);
+static int findPendingWakeSessionByPageCorrelation(uint32_t deviceId, uint64_t sessionId, uint32_t messageId);
+static PendingWakeSession* allocatePendingWakeSession();
+static void clearPendingWakeSession(int idx, const char* reason);
+static const char* pendingWakeStateLabel(rtrwake::State state);
+static void transitionPendingWakeState(PendingWakeSession& session, rtrwake::State nextState, const char* reason);
+static void setPendingWakeReason(PendingWakeSession& session, uint16_t reasonCode, const char* reasonLabel);
+static void syncLastPageDiagFromSession(const PendingWakeSession& session);
+static void noteWakeLoopStage(const char* stage, const PendingWakeSession& session);
+static bool processPendingWakeSessionStep(uint8_t idx, PendingWakeSession& session, uint32_t nowMs);
+static void updateDevicePresenceFromAcceptedUplink(const LoRaFrame& rx, uint32_t atMs);
+static rtrwake::Presence* findDevicePresence(uint32_t deviceId);
+static bool notePendingWakeHintFromUplinkFast(
+    const LoRaFrame& rx,
+    uint32_t rxAcceptedAtMs,
+    PendingWakeSession** outSession,
+    const char** outReason);
+static void publishWakeHintProgressAfterPageAttempt(
+    const PendingWakeSession& session,
+    const char* immediateResult);
+static bool tryHandleWakePageImmediatelyAfterAcceptedUplink(
+    const LoRaFrame& rx,
+    uint32_t rxAcceptedAtMs,
+    const char* source);
+static bool handlePendingWakePageAck(const LoRaFrame& rx, uint32_t rxAtMs = 0);
+static bool tryHandlePendingWakePageAckFastPath(
+    const LoRaFrame& rx,
+    uint32_t rxAtMs = 0,
+    const char* source = nullptr);
+static void publishRtrPageAckProgressAfterBeginStarted(PendingWakeSession& session);
+static bool startRpv2BeginImmediatelyAfterPageAck(
+    PendingWakeSession& session,
+    uint32_t ackRxAtMs,
+    const char* source);
+static bool waitForRtrPageAckImmediatelyAfterPageTx(
+    PendingWakeSession& session,
+    uint32_t txOkAtMs,
+    uint32_t ackDeadlineAtMs);
+static bool trySendRtrPage(PendingWakeSession& session, const char** reason = nullptr);
+static bool executeFenceCommandRpv2Plan(
+    uint32_t deviceId,
+    uint64_t scopeId,
+    uint64_t radioCommandId,
+    uint32_t sessionNonce,
+    const char* commandId,
+    const Rpv2FenceChunkPlan& plan,
+    const char** reason);
+static bool prepareFenceWakeSession(
+    uint32_t deviceId,
+    const JsonVariantConst payload,
+    const char* commandId,
+    const FencePointsResolution& pointsResolution,
+    const char** reason);
+static void finalizeFenceCommandIfAllTargetsTerminal();
+static void failPendingWakeSession(PendingWakeSession& session, uint16_t reasonCode, const char* reasonLabel);
+static void processPendingWakeSessions();
+static void logRpv2StageTransition(
+    uint32_t deviceId,
+    const char* commandId,
+    const char* fromStage,
+    const char* toStage);
+
+enum class QueueLoadResult : uint8_t {
+  kLoaded = 0,
+  kEmpty = 1,
+  kContentError = 2,
+};
+
+struct FencePointsResolution {
+  JsonArrayConst points;
+  const char* source = "none";
+};
 static const char* backhaulStateLabel(BackhaulDiagState state);
 static const char* backhaulOledLabel(BackhaulDiagState state);
 static void refreshBackhaulNetworkSnapshot();
@@ -1803,6 +1952,20 @@ static void publishEventToCloud(const LoRaFrame& rx) {
   const char* originDocId = pickFirstText(
       eventPayload["origin_doc_id"], eventPayload["originDocId"]);
   if (originDocId[0] != '\0') payload["originDocId"] = originDocId;
+
+  if (strcmp(eventType, "polygon_apply_result") == 0) {
+    const char* cmdId = eventPayload["cmd_id"] | eventPayload["commandId"] | "";
+    const bool applyOk = strcmp(polygonStatus, "success") == 0;
+    if (applyOk) {
+      const int pts = eventPayload["point_count"] | 0;
+      AS_MATRIX_COLLAR_APPLY_SUCCESS(
+          cmdId, rx.deviceId, originDocId, originDocType, originDocId, pts);
+    } else {
+      const char* errCode = eventPayload["error_code"] | "";
+      const char* errStage = eventPayload["error_stage"] | "";
+      AS_MATRIX_COLLAR_APPLY_FAILURE(cmdId, rx.deviceId, errCode, errStage);
+    }
+  }
   if (eventPayload["operation_id"].is<const char*>()) {
     payload["operationId"] = eventPayload["operation_id"].as<const char*>();
   }
@@ -1837,14 +2000,38 @@ static void publishEventToCloud(const LoRaFrame& rx) {
 }
 
 static void clearActiveSimpleCommand() {
+  if (activeSimpleCommand.active) {
+    AS_MATRIX_SIMPLE_COMMAND_CLEARED(
+        activeSimpleCommand.commandId[0] ? activeSimpleCommand.commandId : "-",
+        activeSimpleCommand.command[0] ? activeSimpleCommand.command : "-",
+        activeSimpleCommand.lastReasonCode != rpv2::REASON_NONE
+            ? rpv2::reasonCodeLabel(activeSimpleCommand.lastReasonCode)
+            : "cleared");
+  }
   if (deferredUplinkQueueCount > 0 && deferredUplinkFlushAtMs == 0) {
     deferredUplinkFlushAtMs = millis() + cfg::SIMPLE_COMMAND_ACK_POST_FLUSH_DELAY_MS;
+  }
+  for (uint8_t i = 0; i < kMaxPendingWakeSessions; ++i) {
+    pendingWakeSessions[i] = PendingWakeSession{};
   }
   activeSimpleCommand = ActiveSimpleCommandState{};
   simpleAckWaitActive = false;
   simpleAckWaitDeviceId = 0;
   simpleAckWaitDeadlineAtMs = 0;
   simpleAckWaitCommandId[0] = '\0';
+}
+
+static void noteSetFenceCommandProgress(const char* stage) {
+  if (!activeSimpleCommand.active) return;
+  if (strcmp(activeSimpleCommand.command, "SET_FENCE") != 0) return;
+  activeSimpleCommand.lastProgressAtMs = millis();
+  if (stage && stage[0]) {
+    LOGI(
+        "SET_FENCE_PROGRESS commandId=%s stage=%s atMs=%lu",
+        activeSimpleCommand.commandId[0] ? activeSimpleCommand.commandId : "-",
+        stage,
+        (unsigned long)activeSimpleCommand.lastProgressAtMs);
+  }
 }
 
 static bool targetStateMatchesDeviceId(
@@ -1868,6 +2055,9 @@ static bool isHealthDailyEvent(const LoRaFrame& rx) {
 
 static void scheduleActiveSimpleCommandRetryForRx(const LoRaFrame& rx) {
   if (!activeSimpleCommand.active || activeSimpleCommand.targetCount == 0) return;
+  if (strcmp(activeSimpleCommand.command, "SET_FENCE") == 0 && hasPendingWakeSessions()) {
+    return;
+  }
   bool matchesTarget = false;
   for (uint8_t i = 0; i < activeSimpleCommand.targetCount; ++i) {
     if (targetStateMatchesDeviceId(activeSimpleCommand.targets[i], rx.deviceId)) {
@@ -1916,7 +2106,16 @@ static bool anyActiveSimpleTargetFailed() {
   return false;
 }
 
-static bool publishSimpleCommandResult(const char* status, const char* reason = nullptr) {
+static const char* firstActiveSimpleTargetFailureReason() {
+  for (uint8_t i = 0; i < activeSimpleCommand.targetCount; ++i) {
+    const ActiveSimpleCommandTargetState& target = activeSimpleCommand.targets[i];
+    if (!target.terminal || target.ok) continue;
+    if (target.reason[0]) return target.reason;
+  }
+  return nullptr;
+}
+
+static bool publishSimpleCommandResult(const char* status, const char* reason) {
   if (!cfg::FEATURE_CLOUD) return false;
   if (!activeSimpleCommand.active || !activeSimpleCommand.commandId[0]) return false;
 
@@ -1924,6 +2123,9 @@ static bool publishSimpleCommandResult(const char* status, const char* reason = 
   doc["commandId"] = activeSimpleCommand.commandId;
   doc["command"] = activeSimpleCommand.command;
   doc["status"] = status;
+  doc["transport"] =
+      strcmp(activeSimpleCommand.command, "SET_FENCE") == 0 ? "radio_fence_v2" : "lora";
+  doc["transportState"] = status;
   doc["createdAtMs"] = activeSimpleCommand.createdAtMs;
   doc["updatedAtMs"] = unixNowMs(unixNowSec());
   doc["expiresAtMs"] = activeSimpleCommand.expiresAtMs;
@@ -1947,6 +2149,9 @@ static bool publishSimpleCommandResult(const char* status, const char* reason = 
   }
   copyTargetDeviceIdsFromActiveCommand(doc.as<JsonObject>());
   if (reason && reason[0]) doc["reason"] = reason;
+  if (activeSimpleCommand.lastReasonCode != rpv2::REASON_NONE) {
+    doc["reasonCode"] = activeSimpleCommand.lastReasonCode;
+  }
 
   JsonObject deviceResults = doc["deviceResults"].to<JsonObject>();
   for (uint8_t i = 0; i < activeSimpleCommand.targetCount; ++i) {
@@ -1955,6 +2160,9 @@ static bool publishSimpleCommandResult(const char* status, const char* reason = 
     item["ok"] = target.ok;
     item["status"] = target.status[0] ? target.status : (target.terminal ? "completed" : "dispatching");
     if (target.reason[0]) item["reason"] = target.reason;
+    if (activeSimpleCommand.lastReasonCode != rpv2::REASON_NONE) {
+      item["reasonCode"] = activeSimpleCommand.lastReasonCode;
+    }
   }
 
   String body;
@@ -1974,6 +2182,10 @@ static bool publishSimpleCommandResult(const char* status, const char* reason = 
       status,
       reason,
       &doc);
+  copyStringToBuffer(
+      activeSimpleCommand.transportState,
+      sizeof(activeSimpleCommand.transportState),
+      status);
   if (!(matrixOk && propertyOk && eventOk)) {
     setLastCloudWriteError("command_status", activeSimpleCommand.commandId);
   }
@@ -2017,6 +2229,10 @@ static bool resendActiveSimpleCommand(
     const LoRaFrame* triggerRx,
     const char** reason) {
   if (!activeSimpleCommand.active || !activeSimpleCommand.commandId[0]) return false;
+  if (strcmp(activeSimpleCommand.command, "SET_FENCE") == 0 && hasPendingWakeSessions()) {
+    if (reason) *reason = "wake_session_pending";
+    return false;
+  }
   if (!activeSimpleCommand.payloadJson[0]) {
     if (reason) *reason = "missing_cached_payload";
     return false;
@@ -2053,7 +2269,15 @@ static bool resendActiveSimpleCommand(
           strcmp(activeSimpleCommand.command, "SET_PARAMS") == 0
               ? MsgType::SET_PARAMS
               : MsgType::PING;
-      ok = sendLoRaJsonFrame(deviceId, msgType, payloadDoc.as<JsonVariantConst>(), &sendReason);
+      ok = sendLoRaJsonFrame(
+          deviceId,
+          msgType,
+          payloadDoc.as<JsonVariantConst>(),
+          &sendReason,
+          MatrixLoRaTxReason::CommandDispatch,
+          "resendActiveSimpleCommand",
+          triggerRx,
+          activeSimpleCommand.commandId);
     }
     if (ok) {
       copyStringToBuffer(target.status, sizeof(target.status), "dispatching");
@@ -2080,6 +2304,7 @@ static bool resendActiveSimpleCommand(
 
 static void processScheduledActiveSimpleCommandRetry() {
   if (!activeSimpleCommand.active || !activeSimpleCommand.targetedRetryPending) return;
+  if (strcmp(activeSimpleCommand.command, "SET_FENCE") == 0 && hasPendingWakeSessions()) return;
   const uint32_t nowTick = millis();
   if ((int32_t)(nowTick - activeSimpleCommand.targetedRetryAtMs) < 0) return;
   if (lora.lastRawRxAtMs() != 0 &&
@@ -2438,10 +2663,49 @@ static bool isRelayCandidate(const LoRaFrame& frame) {
          frame.msgType == MsgType::EVENT ||
          frame.msgType == MsgType::ACK ||
          frame.msgType == MsgType::NACK ||
+         frame.msgType == MsgType::RTR_CONTROL ||
          frame.msgType == MsgType::SET_FENCE ||
          frame.msgType == MsgType::SET_HERDING_PLAN ||
          frame.msgType == MsgType::SET_PARAMS ||
          frame.msgType == MsgType::PING;
+}
+
+static bool sendMatrixLoRaFrame(
+    LoRaFrame& frame,
+    MatrixLoRaTxReason txReason,
+    const LoRaFrame* sourceUplinkOrNull,
+    const char* callerTag,
+    const char* commandId = nullptr) {
+  const bool allowed = shouldAllowMatrixLoRaTx(txReason, sourceUplinkOrNull);
+  LOGI(
+      "LORA_TX_INTENT reason=%s caller=%s deviceId=%lu msgType=%u seq=%lu sourceMsgType=%u sourceSeq=%lu allowed=%d",
+      matrixLoRaTxReasonLabel(txReason),
+      callerTag ? callerTag : "-",
+      (unsigned long)frame.deviceId,
+      (unsigned)frame.msgType,
+      (unsigned long)frame.seq,
+      sourceUplinkOrNull ? (unsigned)sourceUplinkOrNull->msgType : 0U,
+      sourceUplinkOrNull ? (unsigned long)sourceUplinkOrNull->seq : 0UL,
+      allowed ? 1 : 0);
+  if (!allowed) {
+    LOGW(
+        "LORA_TX_BLOCKED_UPLINK_ECHO deviceId=%lu msgType=%u seq=%lu sourceMsgType=%u sourceSeq=%lu reason=uplink_echo_blocked",
+        (unsigned long)frame.deviceId,
+        (unsigned)frame.msgType,
+        (unsigned long)frame.seq,
+        sourceUplinkOrNull ? (unsigned)sourceUplinkOrNull->msgType : 0U,
+        sourceUplinkOrNull ? (unsigned long)sourceUplinkOrNull->seq : 0UL);
+    return false;
+  }
+  if (isCommandLikeMatrixLoRaTxReason(txReason)) {
+    LOGI(
+        "LORA_TX_COMMAND_DISPATCH commandId=%s reason=%s msgType=%u deviceId=%lu",
+        commandId && commandId[0] ? commandId : "-",
+        matrixLoRaTxReasonLabel(txReason),
+        (unsigned)frame.msgType,
+        (unsigned long)frame.deviceId);
+  }
+  return lora.send(frame);
 }
 
 static const char* uplinkTypeLabel(MsgType t) {
@@ -2449,6 +2713,7 @@ static const char* uplinkTypeLabel(MsgType t) {
   if (t == MsgType::EVENT) return "event";
   if (t == MsgType::ACK) return "ack";
   if (t == MsgType::NACK) return "nack";
+  if (t == MsgType::RTR_CONTROL) return "rtr_control";
   return "lora";
 }
 
@@ -2635,6 +2900,9 @@ static void handleUplinkDuringAckWait(const LoRaFrame& rx) {
         bindingReady ? 1 : 0);
     return;
   }
+  if (tryHandlePendingWakePageAckFastPath(rx)) {
+    return;
+  }
   if (isAwaitedSimpleCommandFeedback(rx)) {
     lastSimpleCommandAckMatchedAtMs = millis();
     LOGI(
@@ -2646,6 +2914,13 @@ static void handleUplinkDuringAckWait(const LoRaFrame& rx) {
     handleSimpleCommandFeedback(rx);
     return;
   }
+
+  // Even while ACK_WAIT is active, target uplinks for pending wake/page sessions
+  // must go through the radio-critical fast-path before any deferred queueing.
+  tryHandleWakePageImmediatelyAfterAcceptedUplink(
+      rx,
+      lora.lastAcceptedRxAtMs(),
+      "ack_wait");
 
   if (activeSimpleCommand.active &&
       rx.deviceId == activeSimpleCommand.feedbackDeviceId) {
@@ -2683,6 +2958,12 @@ static bool processPrioritySimpleCommandFeedbackWindow() {
 }
 
 static void processAcceptedUplink(const LoRaFrame& rx) {
+  const int wakeIdx = findPendingWakeSessionByDeviceId(rx.deviceId);
+  PendingWakeSession* wakeSession = wakeIdx >= 0 ? &pendingWakeSessions[wakeIdx] : nullptr;
+  const bool deferCloudTx =
+      wakeSession &&
+      rtrwake::shouldDeferCloudTx(wakeSession->core, rx.deviceId);
+
   handleSimpleCommandFeedback(rx);
   handleHerdingOperationFeedback(rx);
   handleHerdingOperationEvent(rx);
@@ -2719,9 +3000,33 @@ static void processAcceptedUplink(const LoRaFrame& rx) {
   drawStatus("RX LoRa", out.substring(0, 16).c_str());
 
   if (cfg::FEATURE_CLOUD) {
+    if (deferCloudTx &&
+        wakeSession &&
+        wakeSession->core.active &&
+        (lastPageDiag.lastImmediateDeviceId != rx.deviceId ||
+         lastPageDiag.lastImmediateUplinkSeq != rx.seq ||
+         lastPageDiag.lastImmediateResultAtMs < lastPageDiag.lastImmediateEnterAtMs)) {
+      rtrdiag::noteOrderViolation(&lastPageDiag, "cloud_tx_before_page");
+      rtrdiag::notePrePageBlockedBy(&lastPageDiag, "cloud_tx");
+      LOGW(
+          "RTR_FAST_PATH_ORDER_VIOLATION reason=cloud_tx_before_page deviceId=%lu commandId=%s uplinkSeq=%lu state=%s",
+          (unsigned long)rx.deviceId,
+          wakeSession->commandId[0] ? wakeSession->commandId : "-",
+          (unsigned long)rx.seq,
+          pendingWakeStateLabel(wakeSession->core.state));
+      return;
+    }
     publishTelemetryToCloud(rx);
     publishDailyHealthToCloud(rx);
     publishEventToCloud(rx);
+    if (deferCloudTx && wakeSession && wakeSession->core.active) {
+      wakeSession->core.cloudTxDeferred = false;
+      LOGI(
+          "RTR_WAKE_CLOUD_TX_RESUMED_AFTER_PAGE deviceId=%lu commandId=%s uplinkSeq=%lu reason=post_page_attempt",
+          (unsigned long)rx.deviceId,
+          wakeSession->commandId[0] ? wakeSession->commandId : "-",
+          (unsigned long)wakeSession->core.uplinkSeq);
+    }
   }
 }
 
@@ -2747,7 +3052,2822 @@ static bool readPointPair(const JsonArrayConst& pair, double& lat, double& lon) 
   return rtcmd::isValidCoordinate(lat, lon);
 }
 
-static bool sendLoRaJsonFrame(uint32_t deviceId, MsgType msgType, const JsonVariantConst payload, const char** reason) {
+static bool payloadUsesFenceRpv2(const JsonVariantConst payload) {
+  if (payload["force_rpv2"].is<bool>()) return payload["force_rpv2"].as<bool>();
+  return true;
+}
+
+static uint16_t rpv2ReasonCodeFromLabel(const char* reason) {
+  if (!reason || !reason[0]) return rpv2::REASON_NONE;
+  if (strcmp(reason, "planner_or_dispatch_stall") == 0) return rpv2::REASON_RETRY_EXHAUSTED;
+  if (strcmp(reason, "no_point_fits_in_frame") == 0) return rpv2::REASON_NO_POINT_FITS_IN_FRAME;
+  if (strcmp(reason, "point_chunk_too_large") == 0) return rpv2::REASON_NO_POINT_FITS_IN_FRAME;
+  if (strcmp(reason, "codec_or_buffer_error") == 0) return rpv2::REASON_NO_POINT_FITS_IN_FRAME;
+  if (strcmp(reason, "fence_single_point_chunk_too_large") == 0) return rpv2::REASON_SECURE_ENVELOPE_TOO_LARGE;
+  if (strcmp(reason, "secure_envelope_too_large") == 0) return rpv2::REASON_SECURE_ENVELOPE_TOO_LARGE;
+  if (strcmp(reason, "begin_timeout") == 0) return rpv2::REASON_BEGIN_TIMEOUT;
+  if (strcmp(reason, "points_timeout") == 0) return rpv2::REASON_POINTS_TIMEOUT;
+  if (strcmp(reason, "commit_timeout") == 0) return rpv2::REASON_COMMIT_TIMEOUT;
+  if (strcmp(reason, "apply_timeout") == 0) return rpv2::REASON_APPLY_FAILED;
+  if (strcmp(reason, "begin_rejected") == 0) return rpv2::REASON_BEGIN_REJECTED;
+  if (strcmp(reason, "points_rejected") == 0) return rpv2::REASON_POINTS_OUT_OF_ORDER;
+  if (strcmp(reason, "commit_rejected") == 0) return rpv2::REASON_COMMIT_REJECTED;
+  if (strcmp(reason, "apply_failed") == 0) return rpv2::REASON_APPLY_FAILED;
+  return rpv2::REASON_NONE;
+}
+
+static void setFenceTargetTransportState(
+    uint32_t deviceId,
+    const char* status,
+    bool terminal,
+    bool ok,
+    const char* reason,
+    uint16_t reasonCode) {
+  char targetId[32]{};
+  snprintf(targetId, sizeof(targetId), "%lu", (unsigned long)deviceId);
+  const int idx = findActiveSimpleCommandTarget(targetId);
+  if (idx < 0) return;
+  ActiveSimpleCommandTargetState& target = activeSimpleCommand.targets[idx];
+  target.terminal = terminal;
+  target.ok = ok;
+  copyStringToBuffer(target.status, sizeof(target.status), status ? status : "");
+  copyStringToBuffer(target.reason, sizeof(target.reason), reason ? reason : "");
+  activeSimpleCommand.lastReasonCode = reasonCode;
+}
+
+static void publishFenceTransportState(
+    uint32_t deviceId,
+    const char* transportState,
+    const char* reason = nullptr,
+    uint16_t reasonCode = rpv2::REASON_NONE,
+    bool terminal = false,
+    bool ok = false) {
+  noteSetFenceCommandProgress(transportState);
+  setFenceTargetTransportState(deviceId, transportState, terminal, ok, reason, reasonCode);
+  publishSimpleCommandResult(transportState, reason);
+}
+
+static void markFenceCommandDispatchingBegin() {
+  if (!activeSimpleCommand.active) return;
+  if (strcmp(activeSimpleCommand.command, "SET_FENCE") != 0) return;
+  AS_MATRIX_COMMAND_MARK_DISPATCHING_BEGIN(
+      activeSimpleCommand.commandId,
+      activeSimpleCommand.command);
+}
+
+static void logRpv2StageTransition(
+    uint32_t deviceId,
+    const char* commandId,
+    const char* fromStage,
+    const char* toStage) {
+  LOGI(
+      "RPV2_STAGE_TRANSITION deviceId=%lu commandId=%s from=%s to=%s",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      fromStage ? fromStage : "-",
+      toStage ? toStage : "-");
+}
+
+static const char* pendingWakeStateLabel(rtrwake::State state) {
+  return rtrwake::stateLabel(state);
+}
+
+static bool hasPendingWakeSessions() {
+  for (uint8_t i = 0; i < kMaxPendingWakeSessions; ++i) {
+    if (pendingWakeSessions[i].core.active) return true;
+  }
+  return false;
+}
+
+static int findPendingWakeSessionByDeviceId(uint32_t deviceId) {
+  if (deviceId == 0) return -1;
+  for (uint8_t i = 0; i < kMaxPendingWakeSessions; ++i) {
+    if (pendingWakeSessions[i].core.active &&
+        pendingWakeSessions[i].core.deviceId == deviceId) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+static int findPendingWakeSessionByCommandId(const char* commandId) {
+  if (!commandId || !commandId[0]) return -1;
+  for (uint8_t i = 0; i < kMaxPendingWakeSessions; ++i) {
+    if (!pendingWakeSessions[i].core.active) continue;
+    if (strcmp(pendingWakeSessions[i].commandId, commandId) == 0) return i;
+  }
+  return -1;
+}
+
+static bool hasPendingWakeSessionForCommand(const char* commandId) {
+  return findPendingWakeSessionByCommandId(commandId) >= 0;
+}
+
+static int findPendingWakeSessionByPageCorrelation(
+    uint32_t deviceId,
+    uint64_t sessionId,
+    uint32_t messageId) {
+  for (uint8_t i = 0; i < kMaxPendingWakeSessions; ++i) {
+    if (rtrwake::pageAckMatches(
+            pendingWakeSessions[i].core, deviceId, sessionId, messageId)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+static PendingWakeSession* allocatePendingWakeSession() {
+  for (uint8_t i = 0; i < kMaxPendingWakeSessions; ++i) {
+    if (!pendingWakeSessions[i].core.active) return &pendingWakeSessions[i];
+  }
+  return nullptr;
+}
+
+static void setPendingWakeReason(
+    PendingWakeSession& session,
+    uint16_t reasonCode,
+    const char* reasonLabel) {
+  session.lastReasonCode = reasonCode;
+  copyStringToBuffer(
+      session.lastReasonLabel,
+      sizeof(session.lastReasonLabel),
+      reasonLabel ? reasonLabel : "");
+}
+
+static void transitionPendingWakeState(
+    PendingWakeSession& session,
+    rtrwake::State nextState,
+    const char* reason) {
+  const rtrwake::State previous = session.core.state;
+  if (previous == nextState) return;
+  session.core.state = nextState;
+  LOGI(
+      "RTR_STATE_TRANSITION commandId=%s deviceId=%lu fromState=%s toState=%s campaignCount=%u reason=%s",
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long)session.core.deviceId,
+      pendingWakeStateLabel(previous),
+      pendingWakeStateLabel(nextState),
+      (unsigned)session.core.campaignCount,
+      reason ? reason : "-");
+}
+
+static void syncLastPageDiagFromSession(const PendingWakeSession& session) {
+  rtrdiag::noteInFlightPageContext(
+      &lastPageDiag,
+      session.core.inFlightPage.valid,
+      session.core.inFlightPage.sessionId,
+      session.core.inFlightPage.messageId,
+      session.core.inFlightPage.campaignCount,
+      session.core.inFlightPage.sentAtMs,
+      session.core.inFlightPage.softDeadlineAtMs,
+      session.core.inFlightPage.hardDeadlineAtMs,
+      session.core.inFlightPage.ackAccepted);
+  lastPageDiag.retryPending = session.core.scheduledRetry.pending;
+  lastPageDiag.retryAtMs = session.core.scheduledRetry.retryAtMs;
+  lastPageDiag.retryCampaignCount = session.core.scheduledRetry.nextCampaignCount;
+}
+
+static void noteWakeLoopStage(const char* stage, const PendingWakeSession& session) {
+  const uint32_t nowMs = millis();
+  rtrdiag::noteWakeLoopStage(
+      &wakeLoopDiag,
+      stage,
+      nowMs,
+      session.core.inFlightPage.valid ? session.core.inFlightPage.sessionId : session.core.pageSessionId,
+      session.core.deviceId);
+  LOGI(
+      "RTR_WAKE_LOOP_STAGE stage=%s deviceId=%lu sessionId=%llu",
+      stage ? stage : "-",
+      (unsigned long)wakeLoopDiag.lastWakeLoopStageDeviceId,
+      (unsigned long long)wakeLoopDiag.lastWakeLoopStageSessionId);
+}
+
+static rtrwake::Presence* findDevicePresence(uint32_t deviceId) {
+  if (deviceId == 0) return nullptr;
+  for (uint8_t i = 0; i < kMaxDevicePresenceEntries; ++i) {
+    if (devicePresence[i].valid && devicePresence[i].deviceId == deviceId) {
+      return &devicePresence[i];
+    }
+  }
+  for (uint8_t i = 0; i < kMaxDevicePresenceEntries; ++i) {
+    if (!devicePresence[i].valid) return &devicePresence[i];
+  }
+  return &devicePresence[0];
+}
+
+static void updateDevicePresenceFromAcceptedUplink(const LoRaFrame& rx, uint32_t atMs) {
+  if (rx.deviceId == 0) return;
+  rtrwake::Presence* presence = findDevicePresence(rx.deviceId);
+  if (!presence) return;
+  const uint32_t previousSeenAtMs = presence->lastSeenAtMs;
+  rtrwake::updatePresence(presence, rx.deviceId, atMs);
+  LOGI(
+      "RTR_DEVICE_PRESENCE_UPDATE deviceId=%lu lastSeenAtMs=%lu estimatedCycleMs=%lu previousSeenAtMs=%lu",
+      (unsigned long)presence->deviceId,
+      (unsigned long)presence->lastSeenAtMs,
+      (unsigned long)presence->estimatedCycleMs,
+      (unsigned long)previousSeenAtMs);
+}
+
+static void finalizeFenceCommandIfAllTargetsTerminal() {
+  if (!activeSimpleCommand.active) return;
+  if (strcmp(activeSimpleCommand.command, "SET_FENCE") != 0) return;
+  if (!allActiveSimpleTargetsTerminal()) return;
+  const bool anyFailed = anyActiveSimpleTargetFailed();
+  const char* finalStatus = anyFailed ? "failed" : "applied";
+  const char* finalReason = anyFailed ? firstActiveSimpleTargetFailureReason() : nullptr;
+  publishSimpleCommandResult(finalStatus, finalReason);
+  clearActiveSimpleCommand();
+}
+
+static void clearPendingWakeSession(int idx, const char* reason) {
+  if (idx < 0 || idx >= kMaxPendingWakeSessions) return;
+  PendingWakeSession& session = pendingWakeSessions[idx];
+  if (!session.core.active) return;
+  if (session.core.inFlightPage.valid) {
+    LOGI(
+        "RTR_PAGE_ATTEMPT_REPLACED deviceId=%lu commandId=%s sessionId=%llu messageId=%lu reason=%s",
+        (unsigned long)session.core.deviceId,
+        session.commandId[0] ? session.commandId : "-",
+        (unsigned long long)session.core.inFlightPage.sessionId,
+        (unsigned long)session.core.inFlightPage.messageId,
+        reason ? reason : "-");
+  }
+  LOGI(
+      "RTR_WAKE_SESSION_CLEARED commandId=%s deviceId=%lu state=%s campaignCount=%u reason=%s",
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long)session.core.deviceId,
+      pendingWakeStateLabel(session.core.state),
+      (unsigned)session.core.campaignCount,
+      reason ? reason : "-");
+  session = PendingWakeSession{};
+  finalizeFenceCommandIfAllTargetsTerminal();
+}
+
+static void failPendingWakeSession(
+    PendingWakeSession& session,
+    uint16_t reasonCode,
+    const char* reasonLabel) {
+  setPendingWakeReason(session, reasonCode, reasonLabel);
+  transitionPendingWakeState(session, rtrwake::State::FAILED, reasonLabel);
+  publishFenceTransportState(
+      session.core.deviceId,
+      "failed",
+      reasonLabel,
+      reasonCode,
+      true,
+      false);
+}
+
+static void checkSetFencePlannerDispatchStall(uint32_t nowTick, uint64_t nowMs) {
+  if (!activeSimpleCommand.active) return;
+  if (strcmp(activeSimpleCommand.command, "SET_FENCE") != 0) return;
+  if (hasPendingWakeSessionForCommand(activeSimpleCommand.commandId)) return;
+  if (activeSimpleCommand.awaitingFeedback) return;
+  const uint32_t progressAt =
+      activeSimpleCommand.lastProgressAtMs != 0
+          ? activeSimpleCommand.lastProgressAtMs
+          : activeSimpleCommand.dispatchAtMs;
+  if (progressAt == 0) return;
+  if ((uint32_t)(nowTick - progressAt) < kSetFenceLocalStallTimeoutMs) return;
+  activeSimpleCommand.lastReasonCode =
+      rpv2fenceplanner::reasonCodeFromLabel("planner_or_dispatch_stall");
+  publishSimpleCommandResult("failed", "planner_or_dispatch_stall");
+  clearActiveSimpleCommand();
+}
+
+static bool notePendingWakeHintFromUplinkFast(
+    const LoRaFrame& rx,
+    uint32_t rxAcceptedAtMs,
+    PendingWakeSession** outSession,
+    const char** outReason) {
+  if (outSession) *outSession = nullptr;
+  if (outReason) *outReason = "no_pending_session";
+  const int idx = findPendingWakeSessionByDeviceId(rx.deviceId);
+  if (idx < 0) return false;
+  PendingWakeSession& session = pendingWakeSessions[idx];
+  if (outSession) *outSession = &session;
+  const char* fromState = pendingWakeStateLabel(session.core.state);
+  const bool wasRequiringFreshUplink = session.core.requiresFreshUplink;
+  session.core.uplinkSeq = rx.seq;
+  bool accepted = false;
+  if (session.core.active && session.core.deviceId == rx.deviceId) {
+    session.core.lastUplinkAtMs = rxAcceptedAtMs;
+    session.core.nextPageAttemptAtMs = rxAcceptedAtMs;
+    session.core.predictedWakeAtMs = 0;
+    session.core.requiresFreshUplink = false;
+    session.core.cloudTxDeferred = true;
+    if (session.core.state == rtrwake::State::PAGING_WAITING_UPLINK ||
+        session.core.state == rtrwake::State::PAGING_READY_TO_SEND) {
+      accepted = true;
+      if (session.core.state != rtrwake::State::PAGING_READY_TO_SEND) {
+        transitionPendingWakeState(
+            session,
+            rtrwake::State::PAGING_READY_TO_SEND,
+            "uplink_hint_fast");
+      }
+    }
+  }
+  if (outReason) *outReason = accepted ? "accepted" : "state_not_pageable";
+  rtrdiag::noteWakeHint(&lastPageDiag, rxAcceptedAtMs, rx.seq, accepted);
+  LOGI(
+      "RTR_WAKE_HINT_CAPTURED deviceId=%lu commandId=%s uplinkSeq=%lu accepted=%d stateBefore=%s atMs=%lu",
+      (unsigned long)rx.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long)rx.seq,
+      accepted ? 1 : 0,
+      fromState,
+      (unsigned long)rxAcceptedAtMs);
+  if (!accepted) return false;
+  if (wasRequiringFreshUplink) {
+    LOGI(
+        "RTR_FRESH_UPLINK_RECEIVED deviceId=%lu commandId=%s uplinkSeq=%lu",
+        (unsigned long)rx.deviceId,
+        session.commandId[0] ? session.commandId : "-",
+        (unsigned long)rx.seq);
+  }
+  LOGI(
+      "RTR_WAKE_HINT_FROM_UPLINK deviceId=%lu commandId=%s stateBefore=%s lastSeenAtMs=%lu campaignCount=%u",
+      (unsigned long)rx.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      fromState,
+      (unsigned long)session.core.lastUplinkAtMs,
+      (unsigned)session.core.campaignCount);
+  LOGI(
+      "RTR_PAGE_READY_TO_SEND deviceId=%lu commandId=%s campaignCount=%u",
+      (unsigned long)rx.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned)session.core.campaignCount);
+  return true;
+}
+
+static void publishWakeHintProgressAfterPageAttempt(
+    const PendingWakeSession& session,
+    const char* immediateResult) {
+  if (!session.core.active) return;
+  noteSetFenceCommandProgress("paging_ready");
+  LOGI(
+      "RTR_WAKE_HINT_POST_PAGE_PROGRESS deviceId=%lu commandId=%s result=%s stateNow=%s",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      immediateResult && immediateResult[0] ? immediateResult : "unknown",
+      pendingWakeStateLabel(session.core.state));
+}
+
+static bool reschedulePendingWakeForFreshUplink(
+    PendingWakeSession& session,
+    uint32_t nowMs,
+    const char* stage,
+    const char* reasonLabel) {
+  const uint32_t hintAgeMs = rtrwake::wakeHintAgeMs(session.core, nowMs);
+  if (rtrwake::hasFreshWakeHint(session.core, nowMs, rtrv1::FAST_PAGE_DEADLINE_MS)) {
+    return false;
+  }
+  noteWakeLoopStage(stage, session);
+  LOGW(
+      "RTR_WAKE_HINT_STALE deviceId=%lu commandId=%s ageMs=%lu maxAgeMs=%lu state=%s action=wait_next_uplink",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long)hintAgeMs,
+      (unsigned long)rtrv1::FAST_PAGE_DEADLINE_MS,
+      pendingWakeStateLabel(session.core.state));
+  transitionPendingWakeState(
+      session,
+      rtrwake::State::PAGING_WAITING_UPLINK,
+      reasonLabel);
+  rtrwake::requireFreshUplink(&session.core, nowMs);
+  LOGI(
+      "RTR_WAITING_FRESH_UPLINK deviceId=%lu commandId=%s reason=%s",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      reasonLabel ? reasonLabel : "-");
+  publishFenceTransportState(session.core.deviceId, "paging_waiting_fresh_uplink");
+  return true;
+}
+
+static bool tryHandleWakePageImmediatelyAfterAcceptedUplink(
+    const LoRaFrame& rx,
+    uint32_t rxAcceptedAtMs,
+    const char* source) {
+  const char* fastPathSource = source && source[0] ? source : "unknown";
+  const uint32_t fastBeginMs = millis();
+  LOGI(
+      "LORA_UPLINK_ACCEPTED deviceId=%lu msgType=%u seq=%lu scopeId=%016llX source=%s",
+      (unsigned long)rx.deviceId,
+      (unsigned)rx.msgType,
+      (unsigned long)rx.seq,
+      (unsigned long long)rx.scopeId,
+      fastPathSource);
+  LOGI(
+      "RTR_WAKE_HINT_FAST_BEGIN deviceId=%lu uplinkSeq=%lu rxAcceptedAtMs=%lu beginMs=%lu source=%s",
+      (unsigned long)rx.deviceId,
+      (unsigned long)rx.seq,
+      (unsigned long)rxAcceptedAtMs,
+      (unsigned long)fastBeginMs,
+      fastPathSource);
+  updateDevicePresenceFromAcceptedUplink(rx, rxAcceptedAtMs);
+  const int existingWakeIdx = findPendingWakeSessionByDeviceId(rx.deviceId);
+  const char* stateBefore =
+      existingWakeIdx >= 0 ? pendingWakeStateLabel(pendingWakeSessions[existingWakeIdx].core.state) : "-";
+
+  PendingWakeSession* hintedSession = nullptr;
+  const char* hintReason = "no_pending_session";
+  const bool hintAccepted = notePendingWakeHintFromUplinkFast(
+      rx,
+      rxAcceptedAtMs,
+      &hintedSession,
+      &hintReason);
+  const uint32_t fastDoneMs = millis();
+  const uint32_t fastDurationMs = fastDoneMs - fastBeginMs;
+  rtrdiag::noteWakeHintFastPath(&lastPageDiag, fastDurationMs, 0, "none");
+  LOGI(
+      "RTR_WAKE_HINT_FAST_DONE deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu beginMs=%lu doneMs=%lu durationMs=%lu source=%s",
+      (unsigned long)rx.deviceId,
+      hintedSession && hintedSession->commandId[0] ? hintedSession->commandId : "-",
+      (unsigned long)rx.seq,
+      (unsigned long)rxAcceptedAtMs,
+      (unsigned long)fastBeginMs,
+      (unsigned long)fastDoneMs,
+      (unsigned long)fastDurationMs,
+      fastPathSource);
+
+  if (!hintedSession) {
+    const uint32_t resultNowMs = millis();
+    const uint32_t gapMs = resultNowMs - rxAcceptedAtMs;
+    rtrdiag::noteWakeHintFastPath(&lastPageDiag, fastDurationMs, gapMs, "none");
+    rtrdiag::noteImmediateEnter(
+        &lastPageDiag,
+        rxAcceptedAtMs,
+        rx.deviceId,
+        rx.seq,
+        fastPathSource);
+    rtrdiag::noteImmediateResult(
+        &lastPageDiag,
+        resultNowMs,
+        rx.deviceId,
+        rx.seq,
+        0xFFFFFFFFUL,
+        "no_pending_session",
+        false,
+        fastPathSource);
+    LOGI(
+        "RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu nowMs=%lu ageMs=%lu gapMs=%lu result=%s stateAfter=%s source=%s",
+        (unsigned long)rx.deviceId,
+        "-",
+        (unsigned long)rx.seq,
+        (unsigned long)rxAcceptedAtMs,
+        (unsigned long)resultNowMs,
+        (unsigned long)0xFFFFFFFFUL,
+        (unsigned long)gapMs,
+        "no_pending_session",
+        "-",
+        fastPathSource);
+    return false;
+  }
+
+  PendingWakeSession& session = *hintedSession;
+  const char* commandId = session.commandId[0] ? session.commandId : "-";
+  const uint32_t pageAttemptNowMs = millis();
+  const uint32_t gapMs = pageAttemptNowMs - rxAcceptedAtMs;
+  rtrdiag::noteWakeHintFastPath(&lastPageDiag, fastDurationMs, gapMs, "none");
+  LOGI(
+      "RTR_WAKE_PRE_PAGE_GAP_MS deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu nowMs=%lu gapMs=%lu source=%s",
+      (unsigned long)rx.deviceId,
+      commandId,
+      (unsigned long)rx.seq,
+      (unsigned long)rxAcceptedAtMs,
+      (unsigned long)pageAttemptNowMs,
+      (unsigned long)gapMs,
+      fastPathSource);
+  const uint32_t nowMs = pageAttemptNowMs;
+  const uint32_t ageMs = rtrwake::wakeHintAgeMs(session.core, nowMs);
+  if (strcmp(fastPathSource, "main_lora_rx") == 0) {
+    LOGI(
+        "RTR_WAKE_FAST_PATH_MAIN_RX_CALLSITE deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu nowMs=%lu ageMs=%lu stateBefore=%s source=%s",
+        (unsigned long)rx.deviceId,
+        commandId,
+        (unsigned long)rx.seq,
+        (unsigned long)rxAcceptedAtMs,
+        (unsigned long)nowMs,
+        (unsigned long)ageMs,
+        stateBefore,
+        fastPathSource);
+  }
+  rtrdiag::noteImmediateEnter(
+      &lastPageDiag,
+      rxAcceptedAtMs,
+      rx.deviceId,
+      rx.seq,
+      fastPathSource);
+  LOGI(
+      "RTR_WAKE_FAST_PATH_IMMEDIATE_ENTER deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu nowMs=%lu ageMs=%lu stateBefore=%s stateAfter=%s source=%s",
+      (unsigned long)rx.deviceId,
+      commandId,
+      (unsigned long)rx.seq,
+      (unsigned long)rxAcceptedAtMs,
+      (unsigned long)nowMs,
+      (unsigned long)ageMs,
+      stateBefore,
+      pendingWakeStateLabel(session.core.state),
+      fastPathSource);
+
+  if (session.core.cloudTxDeferred) {
+    LOGI(
+        "RTR_WAKE_CLOUD_TX_DEFERRED_UNTIL_PAGE deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu nowMs=%lu reason=%s",
+        (unsigned long)rx.deviceId,
+        commandId,
+        (unsigned long)session.core.uplinkSeq,
+        (unsigned long)rxAcceptedAtMs,
+        (unsigned long)nowMs,
+        pendingWakeStateLabel(session.core.state));
+  }
+
+  if (!hintAccepted || session.core.state != rtrwake::State::PAGING_READY_TO_SEND) {
+    rtrdiag::noteImmediateResult(
+        &lastPageDiag,
+        nowMs,
+        rx.deviceId,
+        rx.seq,
+        ageMs,
+        "state_not_pageable",
+        session.core.cloudTxDeferred,
+        fastPathSource);
+    publishWakeHintProgressAfterPageAttempt(session, hintReason);
+    LOGI(
+        "RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu nowMs=%lu ageMs=%lu gapMs=%lu result=%s stateAfter=%s source=%s",
+        (unsigned long)rx.deviceId,
+        commandId,
+        (unsigned long)rx.seq,
+        (unsigned long)rxAcceptedAtMs,
+        (unsigned long)nowMs,
+        (unsigned long)ageMs,
+        (unsigned long)gapMs,
+        "state_not_pageable",
+        pendingWakeStateLabel(session.core.state),
+        fastPathSource);
+    return false;
+  }
+
+  if (reschedulePendingWakeForFreshUplink(
+          session,
+          nowMs,
+          "fast_path_immediate_wake_hint_stale",
+          "wake_hint_stale_wait_next_uplink")) {
+    rtrdiag::noteImmediateResult(
+        &lastPageDiag,
+        nowMs,
+        rx.deviceId,
+        rx.seq,
+        ageMs,
+        "stale",
+        session.core.cloudTxDeferred,
+        fastPathSource);
+    publishWakeHintProgressAfterPageAttempt(session, "stale");
+    LOGI(
+        "RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu nowMs=%lu ageMs=%lu gapMs=%lu result=%s stateAfter=%s source=%s",
+        (unsigned long)rx.deviceId,
+        commandId,
+        (unsigned long)rx.seq,
+        (unsigned long)rxAcceptedAtMs,
+        (unsigned long)nowMs,
+        (unsigned long)ageMs,
+        (unsigned long)gapMs,
+        "stale",
+        pendingWakeStateLabel(session.core.state),
+        fastPathSource);
+    return false;
+  }
+
+  const char* fastPathReason = nullptr;
+  if (!trySendRtrPage(session, &fastPathReason)) {
+    const char* result =
+        fastPathReason && strstr(fastPathReason, "busy") ? "radio_busy" : "send_failed";
+    const uint32_t resultNowMs = millis();
+    const uint32_t resultAgeMs = rtrwake::wakeHintAgeMs(session.core, resultNowMs);
+    rtrdiag::noteImmediateResult(
+        &lastPageDiag,
+        resultNowMs,
+        rx.deviceId,
+        rx.seq,
+        resultAgeMs,
+        result,
+        session.core.cloudTxDeferred,
+        fastPathSource);
+    publishWakeHintProgressAfterPageAttempt(session, result);
+    LOGW(
+        "RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu nowMs=%lu ageMs=%lu gapMs=%lu result=%s reason=%s stateAfter=%s source=%s",
+        (unsigned long)rx.deviceId,
+        commandId,
+        (unsigned long)rx.seq,
+        (unsigned long)rxAcceptedAtMs,
+        (unsigned long)resultNowMs,
+        (unsigned long)resultAgeMs,
+        (unsigned long)gapMs,
+        result,
+        fastPathReason && fastPathReason[0] ? fastPathReason : "page_send_failed",
+        pendingWakeStateLabel(session.core.state),
+        fastPathSource);
+    return false;
+  }
+
+  const uint32_t resultNowMs = millis();
+  const uint32_t resultAgeMs = rtrwake::wakeHintAgeMs(session.core, resultNowMs);
+  rtrdiag::noteImmediateResult(
+      &lastPageDiag,
+      resultNowMs,
+      rx.deviceId,
+      rx.seq,
+      resultAgeMs,
+      "page_tx_ok",
+      session.core.cloudTxDeferred,
+      fastPathSource);
+  publishWakeHintProgressAfterPageAttempt(session, "page_tx_ok");
+  LOGI(
+      "RTR_WAKE_FAST_PATH_IMMEDIATE_RESULT deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu nowMs=%lu ageMs=%lu gapMs=%lu result=%s stateAfter=%s source=%s",
+      (unsigned long)rx.deviceId,
+      commandId,
+      (unsigned long)rx.seq,
+      (unsigned long)rxAcceptedAtMs,
+      (unsigned long)resultNowMs,
+      (unsigned long)resultAgeMs,
+      (unsigned long)gapMs,
+      "page_tx_ok",
+      pendingWakeStateLabel(session.core.state),
+      fastPathSource);
+  return true;
+}
+
+static int32_t coordinateToE7(double value) {
+  const double scaled = value * 10000000.0;
+  return static_cast<int32_t>(scaled >= 0.0 ? scaled + 0.5 : scaled - 0.5);
+}
+
+static bool buildExactSecureWireMetrics(
+    const LoRaFrame& tx,
+    SecureWireMetrics* outMetrics,
+    uint8_t* outWireBuffer,
+    size_t outWireBufferCap) {
+  return lora.buildSecureWireMetrics(tx, outMetrics, outWireBuffer, outWireBufferCap);
+}
+
+static bool sendLoRaBinaryFrame(
+    uint32_t deviceId,
+    MsgType msgType,
+    uint64_t scopeId,
+    const uint8_t* payload,
+    size_t payloadLen,
+    const char** reason,
+    MatrixLoRaTxReason txReason = MatrixLoRaTxReason::Unknown,
+    const char* callerTag = "sendLoRaBinaryFrame",
+    const LoRaFrame* sourceUplinkOrNull = nullptr,
+    const char* commandId = nullptr) {
+  if (!payload || payloadLen == 0 || payloadLen > cfg::LORA_MAX_PAYLOAD_BYTES) {
+    if (reason) *reason = "payload_too_large";
+    return false;
+  }
+
+  LoRaFrame tx;
+  tx.deviceId = deviceId;
+  tx.scopeId = scopeId == 0 ? bindingScopeIdValue() : scopeId;
+  tx.msgType = msgType;
+  tx.seq = nextDownlinkSeq();
+  tx.timestamp = millis() / 1000;
+  for (int i = 0; i < 12; ++i) tx.nonce[i] = (uint8_t)esp_random();
+  tx.payloadLen = static_cast<uint8_t>(payloadLen);
+  memcpy(tx.payload, payload, payloadLen);
+  SecureWireMetrics metrics;
+  if (!buildExactSecureWireMetrics(tx, &metrics, nullptr, 0)) {
+    if (reason) *reason = metrics.reason ? metrics.reason : "secure_envelope_build_failed";
+    return false;
+  }
+  if (metrics.wireLenFinal > rpv2::MAX_LORA_FRAME_BYTES) {
+    if (reason) *reason = "secure_envelope_too_large";
+    return false;
+  }
+  const bool ok = sendMatrixLoRaFrame(
+      tx,
+      txReason,
+      sourceUplinkOrNull,
+      callerTag,
+      commandId);
+  if (!ok && reason && !*reason) *reason = "lora_send_failed";
+  return ok;
+}
+
+static bool trySendRtrPage(
+    PendingWakeSession& session,
+    const char** reason) {
+  rtrv1::Header header{};
+  header.version = rtrv1::PROTOCOL_VERSION;
+  header.trafficClass = rtrv1::TRAFFIC_CLASS_P0;
+  header.innerMsgType = rtrv1::RTR_PAGE;
+  header.flags = rtrv1::FLAG_ACK_REQUIRED | rtrv1::FLAG_PAGE | rtrv1::FLAG_WAKE_LOCK;
+  header.sessionId = session.core.pageSessionId;
+  header.messageId = session.core.pageMessageId;
+  header.sourceId = 0;
+  header.finalDestId = session.core.deviceId;
+  header.nextHopId = session.core.deviceId;
+  header.fragmentIndex = 0;
+  header.fragmentTotal = 1;
+  header.hopCount = 0;
+  header.ttl = rtrv1::DEFAULT_TTL;
+
+  rtrv1::PageBody body{};
+  body.commandType = static_cast<uint8_t>(session.commandType);
+  body.priority = rtrv1::TRAFFIC_CLASS_P1;
+  body.estimatedFragments = session.estimatedFragments;
+  body.sessionTimeoutSec = rtrv1::SESSION_CACHE_TTL_SEC;
+  body.wakeLockSec = rtrv1::SESSION_WAKE_LOCK_MS / 1000UL;
+  body.routeId = 0;
+
+  uint8_t payload[sizeof(rtrv1::Header) + sizeof(rtrv1::PageBody)]{};
+  const size_t payloadLen = rtrv1::encodeFrame(header, body, payload, sizeof(payload));
+  if (payloadLen == 0) {
+    if (reason) *reason = "page_encode_failed";
+    return false;
+  }
+
+  LOGI(
+      "RTR_PAGE_PLAN deviceId=%lu commandId=%s sessionId=%llu messageId=%lu commandType=%u estimatedFragments=%u",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.core.pageSessionId,
+      (unsigned long)session.core.pageMessageId,
+      (unsigned)session.commandType,
+      (unsigned)session.estimatedFragments);
+  if (!sendLoRaBinaryFrame(
+          session.core.deviceId,
+          MsgType::RTR_CONTROL,
+          session.scopeId,
+          payload,
+          payloadLen,
+          reason,
+          MatrixLoRaTxReason::RtrPage,
+          "trySendRtrPage",
+          nullptr,
+          session.commandId)) {
+    rtrdiag::notePageOutcome(&lastPageDiag, "not_sent");
+    setPendingWakeReason(
+        session,
+        rtrv1::REASON_PAGE_SEND_FAILED,
+        reason && *reason ? *reason : rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_SEND_FAILED));
+    LOGW(
+        "RTR_PAGE_TX_FAIL deviceId=%lu commandId=%s campaignCount=%u reason=%s",
+        (unsigned long)session.core.deviceId,
+        session.commandId[0] ? session.commandId : "-",
+        (unsigned)session.core.campaignCount,
+        session.lastReasonLabel[0] ? session.lastReasonLabel : "page_send_failed");
+    return false;
+  }
+  const uint32_t txOkAtMs = millis();
+  const uint32_t postTxBeginMs = txOkAtMs;
+  LOGI(
+      "RTR_PAGE_POST_TX_FAST_BEGIN deviceId=%lu commandId=%s sessionId=%llu messageId=%lu campaignCount=%u txOkAtMs=%lu beginMs=%lu",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.core.pageSessionId,
+      (unsigned long)session.core.pageMessageId,
+      (unsigned)session.core.campaignCount,
+      (unsigned long)txOkAtMs,
+      (unsigned long)postTxBeginMs);
+  rtrwake::markPageAttempt(&session.core, txOkAtMs, rtrv1::PAGE_ACK_TIMEOUT_MS);
+  transitionPendingWakeState(session, rtrwake::State::PAGING_AWAITING_ACK, "page_tx_ok");
+  rtrdiag::notePageTx(
+      &lastPageDiag,
+      session.core.deviceId,
+      session.core.pageSessionId,
+      session.core.pageMessageId,
+      session.core.campaignCount,
+      session.core.lastPageSentAtMs,
+      session.core.pageAckDeadlineAtMs);
+  syncLastPageDiagFromSession(session);
+  const rtrwake::FastPathMetric fastPathMetric =
+      rtrwake::computeFastPathMetric(session.core, rtrv1::FAST_PAGE_DEADLINE_MS);
+  if (fastPathMetric.valid) {
+    rtrdiag::notePageLatency(
+        &lastPageDiag,
+        fastPathMetric.deltaMs,
+        rtrv1::FAST_PAGE_DEADLINE_MS,
+        fastPathMetric.deadlineMet);
+    LOGI(
+        "RTR_WAKE_TO_PAGE_LATENCY deviceId=%lu commandId=%s uplinkSeq=%lu rxAcceptedAtMs=%lu pageTxAtMs=%lu deltaMs=%lu deadlineMs=%lu deadlineMet=%d reason=page_tx_ok",
+        (unsigned long)session.core.deviceId,
+        session.commandId[0] ? session.commandId : "-",
+        (unsigned long)session.core.uplinkSeq,
+        (unsigned long)fastPathMetric.rxAcceptedAtMs,
+        (unsigned long)fastPathMetric.pageTxAtMs,
+        (unsigned long)fastPathMetric.deltaMs,
+        (unsigned long)rtrv1::FAST_PAGE_DEADLINE_MS,
+        fastPathMetric.deadlineMet ? 1 : 0);
+    if (!fastPathMetric.deadlineMet) {
+      LOGW(
+          "RTR_PAGE_SOFT_DEADLINE_MISSED deviceId=%lu commandId=%s uplinkSeq=%lu deltaMs=%lu softDeadlineMs=%lu",
+          (unsigned long)session.core.deviceId,
+          session.commandId[0] ? session.commandId : "-",
+          (unsigned long)session.core.uplinkSeq,
+          (unsigned long)fastPathMetric.deltaMs,
+          (unsigned long)rtrv1::FAST_PAGE_DEADLINE_MS);
+    }
+  }
+  LOGI(
+      "RTR_PAGE_TX_CONTEXT deviceId=%lu commandId=%s sessionId=%llu messageId=%lu campaignCount=%u sentAtMs=%lu ackDeadlineAtMs=%lu outcome=%s",
+      (unsigned long)lastPageDiag.lastPageTargetDeviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)lastPageDiag.lastPageSessionId,
+      (unsigned long)lastPageDiag.lastPageMessageId,
+      (unsigned)lastPageDiag.lastPageCampaignCount,
+      (unsigned long)lastPageDiag.lastPageSentAtMs,
+      (unsigned long)lastPageDiag.lastPageAckDeadlineAtMs,
+      lastPageDiag.lastPageOutcome);
+  LOGI(
+      "RTR_PAGE_TX_OK deviceId=%lu commandId=%s sessionId=%llu messageId=%lu campaignCount=%u",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.core.pageSessionId,
+      (unsigned long)session.core.pageMessageId,
+      (unsigned)session.core.campaignCount);
+  const bool ackReceived = waitForRtrPageAckImmediatelyAfterPageTx(
+      session,
+      txOkAtMs,
+      session.core.pageAckDeadlineAtMs);
+  const uint32_t postTxDoneMs = millis();
+  const uint32_t postTxDurationMs = postTxDoneMs - postTxBeginMs;
+  rtrdiag::notePagePostTxFast(&lastPageDiag, postTxDurationMs);
+  LOGI(
+      "RTR_PAGE_POST_TX_FAST_DONE deviceId=%lu commandId=%s sessionId=%llu messageId=%lu campaignCount=%u txOkAtMs=%lu beginMs=%lu doneMs=%lu durationMs=%lu result=%s",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.core.pageSessionId,
+      (unsigned long)session.core.pageMessageId,
+      (unsigned)session.core.campaignCount,
+      (unsigned long)txOkAtMs,
+      (unsigned long)postTxBeginMs,
+      (unsigned long)postTxDoneMs,
+      (unsigned long)postTxDurationMs,
+      ackReceived ? "ack_rx" : "timeout");
+  appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      "rtr_page_sent",
+      nullptr,
+      nullptr);
+  if (session.core.state == rtrwake::State::PAGING_AWAITING_ACK) {
+    markFenceCommandDispatchingBegin();
+    publishFenceTransportState(session.core.deviceId, "paging_sent");
+    publishFenceTransportState(session.core.deviceId, "awaiting_page_ack");
+  }
+  return true;
+}
+
+static bool decodeRtrPageAckFrame(
+    const LoRaFrame& rx,
+    uint64_t sessionId,
+    uint32_t messageId,
+    rtrv1::PageAckBody* outBody) {
+  if (!outBody || rx.msgType != MsgType::RTR_CONTROL) return false;
+  rtrv1::Header header{};
+  rtrv1::PageAckBody body{};
+  if (!rtrv1::decodePageAck(rx.payload, rx.payloadLen, &header, &body)) return false;
+  if (header.sessionId != sessionId || header.messageId != messageId) return false;
+  *outBody = body;
+  return true;
+}
+
+static bool tryHandlePendingWakePageAckFastPath(
+    const LoRaFrame& rx,
+    uint32_t rxAtMs,
+    const char* source) {
+  if (rx.msgType != MsgType::RTR_CONTROL) return false;
+  rtrv1::Header header{};
+  rtrv1::PageAckBody ack{};
+  if (!rtrv1::decodePageAck(rx.payload, rx.payloadLen, &header, &ack)) return false;
+  const uint32_t observedAtMs = rxAtMs != 0 ? rxAtMs : millis();
+  const char* ackSource = source && source[0] ? source : "unspecified";
+  const int idx = findPendingWakeSessionByPageCorrelation(
+      rx.deviceId, header.sessionId, header.messageId);
+  if (idx < 0) return false;
+  PendingWakeSession& session = pendingWakeSessions[idx];
+  if (!rtrwake::canConsumePageAckFastPath(session.core)) {
+    const bool lateAck = rtrwake::isLatePageAck(session.core, observedAtMs);
+    rtrdiag::noteAckRejected(&lastPageDiag, lateAck ? "ack_after_hard_timeout" : "ack_not_consumable");
+    if (lateAck) {
+      LOGW(
+          "RTR_PAGE_ACK_FAST_PATH_LATE deviceId=%lu commandId=%s sessionId=%llu messageId=%lu state=%s hardDeadlineAtMs=%lu nowMs=%lu accepted=%u sessionModeActive=%u source=%s",
+          (unsigned long)rx.deviceId,
+          session.commandId[0] ? session.commandId : "-",
+          (unsigned long long)header.sessionId,
+          (unsigned long)header.messageId,
+          pendingWakeStateLabel(session.core.state),
+          (unsigned long)session.core.inFlightPage.hardDeadlineAtMs,
+          (unsigned long)observedAtMs,
+          (unsigned)ack.accepted,
+          (unsigned)ack.sessionModeActive,
+          ackSource);
+    } else {
+      LOGW(
+          "RTR_PAGE_ACK_FAST_PATH_SKIP deviceId=%lu commandId=%s sessionId=%llu messageId=%lu state=%s inFlightValid=%d pageSent=%d hardDeadlineAtMs=%lu accepted=%u sessionModeActive=%u source=%s",
+          (unsigned long)rx.deviceId,
+          session.commandId[0] ? session.commandId : "-",
+          (unsigned long long)header.sessionId,
+          (unsigned long)header.messageId,
+          pendingWakeStateLabel(session.core.state),
+          session.core.inFlightPage.valid ? 1 : 0,
+          session.core.inFlightPage.pageSent ? 1 : 0,
+          (unsigned long)session.core.inFlightPage.hardDeadlineAtMs,
+          (unsigned)ack.accepted,
+          (unsigned)ack.sessionModeActive,
+          ackSource);
+    }
+    return false;
+  }
+  LOGI(
+      "RTR_PAGE_ACK_FAST_PATH_MATCH deviceId=%lu commandId=%s sessionId=%llu messageId=%lu state=%s accepted=%u sessionModeActive=%u source=%s",
+      (unsigned long)rx.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)header.sessionId,
+      (unsigned long)header.messageId,
+      pendingWakeStateLabel(session.core.state),
+      (unsigned)ack.accepted,
+      (unsigned)ack.sessionModeActive,
+      ackSource);
+  const bool consumed = handlePendingWakePageAck(rx, observedAtMs);
+  if (consumed &&
+      session.core.state == rtrwake::State::PAGE_ACKED &&
+      strcmp(ackSource, "page_ack_window") != 0) {
+    startRpv2BeginImmediatelyAfterPageAck(session, observedAtMs, ackSource);
+  }
+  return consumed;
+}
+
+static bool handlePendingWakePageAck(const LoRaFrame& rx, uint32_t rxAtMs) {
+  if (rx.msgType != MsgType::RTR_CONTROL) return false;
+  rtrv1::Header header{};
+  rtrv1::PageAckBody ack{};
+  if (!rtrv1::decodePageAck(rx.payload, rx.payloadLen, &header, &ack)) return false;
+  const uint32_t observedAtMs = rxAtMs != 0 ? rxAtMs : millis();
+  const int idx = findPendingWakeSessionByPageCorrelation(
+      rx.deviceId, header.sessionId, header.messageId);
+  if (idx < 0) {
+    LOGW(
+        "RTR_PAGE_ACK_INVALID deviceId=%lu sessionId=%llu messageId=%lu accepted=%u sessionModeActive=%u",
+        (unsigned long)rx.deviceId,
+        (unsigned long long)header.sessionId,
+        (unsigned long)header.messageId,
+        (unsigned)ack.accepted,
+        (unsigned)ack.sessionModeActive);
+    return false;
+  }
+  PendingWakeSession& session = pendingWakeSessions[idx];
+  const bool ackWithinGrace =
+      session.core.state == rtrwake::State::PAGING_RETRY_GRACE &&
+      session.core.inFlightPage.valid &&
+      session.core.inFlightPage.hardDeadlineAtMs != 0 &&
+      (int32_t)(observedAtMs - session.core.inFlightPage.hardDeadlineAtMs) < 0;
+  if (session.core.state != rtrwake::State::PAGING_AWAITING_ACK &&
+      !ackWithinGrace) {
+    const bool lateAck = rtrwake::isLatePageAck(session.core, observedAtMs);
+    rtrdiag::noteAckRejected(
+        &lastPageDiag,
+        lateAck ? "ack_after_hard_timeout" : "state_not_awaiting_ack");
+    if (lateAck) {
+      LOGW(
+          "RTR_PAGE_ACK_LATE deviceId=%lu commandId=%s state=%s sessionId=%llu messageId=%lu hardDeadlineAtMs=%lu nowMs=%lu",
+          (unsigned long)rx.deviceId,
+          session.commandId[0] ? session.commandId : "-",
+          pendingWakeStateLabel(session.core.state),
+          (unsigned long long)header.sessionId,
+          (unsigned long)header.messageId,
+          (unsigned long)session.core.inFlightPage.hardDeadlineAtMs,
+          (unsigned long)observedAtMs);
+    } else {
+      LOGW(
+          "RTR_PAGE_ACK_INVALID deviceId=%lu commandId=%s state=%s sessionId=%llu messageId=%lu",
+          (unsigned long)rx.deviceId,
+          session.commandId[0] ? session.commandId : "-",
+          pendingWakeStateLabel(session.core.state),
+          (unsigned long long)header.sessionId,
+          (unsigned long)header.messageId);
+    }
+    return false;
+  }
+  if (!ack.accepted || !ack.sessionModeActive) {
+    setPendingWakeReason(
+        session,
+        rtrv1::REASON_PAGE_ACK_INVALID,
+        rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_ACK_INVALID));
+    failPendingWakeSession(
+        session,
+        rtrv1::REASON_PAGE_ACK_INVALID,
+        rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_ACK_INVALID));
+    return true;
+  }
+  rtrwake::markPageAcked(&session.core);
+  if (session.core.inFlightPage.sentAtMs != 0 &&
+      (int32_t)(observedAtMs - session.core.inFlightPage.sentAtMs) >= 0) {
+    rtrdiag::noteAckLatency(
+        &lastPageDiag,
+        observedAtMs - session.core.inFlightPage.sentAtMs);
+  }
+  if (ackWithinGrace) {
+    LOGI(
+        "RTR_PAGE_ACK_ACCEPTED_WITHIN_GRACE deviceId=%lu commandId=%s sessionId=%llu messageId=%lu retryAtMs=%lu",
+        (unsigned long)rx.deviceId,
+        session.commandId[0] ? session.commandId : "-",
+        (unsigned long long)header.sessionId,
+        (unsigned long)header.messageId,
+        (unsigned long)session.core.scheduledRetry.retryAtMs);
+    if (session.core.scheduledRetry.pending) {
+      LOGI(
+          "RTR_PAGE_RETRY_CANCELLED_BY_ACK deviceId=%lu commandId=%s sessionId=%llu messageId=%lu",
+          (unsigned long)rx.deviceId,
+          session.commandId[0] ? session.commandId : "-",
+          (unsigned long long)header.sessionId,
+          (unsigned long)header.messageId);
+    }
+  }
+  rtrdiag::noteAckMatched(&lastPageDiag, ackWithinGrace);
+  syncLastPageDiagFromSession(session);
+  rtrdiag::notePageOutcome(&lastPageDiag, "ack_rx");
+  LOGI(
+      "RTR_PAGE_ACK_RX deviceId=%lu commandId=%s sessionId=%llu messageId=%lu suggestedRxWindowMs=%u wakeLockSec=%lu",
+      (unsigned long)rx.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)header.sessionId,
+      (unsigned long)header.messageId,
+      (unsigned)ack.suggestedRxWindowMs,
+      (unsigned long)ack.wakeLockUntilSec);
+  transitionPendingWakeState(session, rtrwake::State::PAGE_ACKED, "page_ack_ok");
+  return true;
+}
+
+static void publishRtrPageAckProgressAfterBeginStarted(PendingWakeSession& session) {
+  publishFenceTransportState(session.core.deviceId, "page_acked");
+  appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      "rtr_page_ack",
+      nullptr,
+      nullptr);
+  markFenceCommandDispatchingBegin();
+}
+
+static bool startRpv2BeginImmediatelyAfterPageAck(
+    PendingWakeSession& session,
+    uint32_t ackRxAtMs,
+    const char* source) {
+  const uint32_t beginDispatchAtMs = millis();
+  const char* handoffSource = source && source[0] ? source : "unspecified";
+  rtrdiag::noteAckToRpv2HandoffBegin(
+      &lastPageDiag,
+      ackRxAtMs,
+      beginDispatchAtMs,
+      handoffSource);
+  wakeLoopDiag.lastBeginDispatchAtMs = beginDispatchAtMs;
+  LOGI(
+      "RTR_ACK_TO_RPV2_FAST_HANDOFF_BEGIN deviceId=%lu commandId=%s sessionId=%llu messageId=%lu ackRxAtMs=%lu beginDispatchAtMs=%lu source=%s",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.core.pageSessionId,
+      (unsigned long)session.core.pageMessageId,
+      (unsigned long)ackRxAtMs,
+      (unsigned long)beginDispatchAtMs,
+      handoffSource);
+  transitionPendingWakeState(
+      session,
+      rtrwake::State::SESSION_START_READY,
+      "ack_to_rpv2_fast_handoff");
+  transitionPendingWakeState(
+      session,
+      rtrwake::State::SESSION_IN_PROGRESS,
+      "ack_to_rpv2_begin_dispatch");
+  session.core.beginDispatchPending = false;
+  session.core.sessionStarted = true;
+  LOGI(
+      "RPV2_SESSION_BEGIN_DISPATCH deviceId=%lu commandId=%s radioCommandId=%llu",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.radioCommandId);
+  LOGI(
+      "RTR_TO_RPV2_START deviceId=%lu commandId=%s campaignCount=%u",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned)session.core.campaignCount);
+  const char* sessionReason = nullptr;
+  const bool ok = executeFenceCommandRpv2Plan(
+      session.core.deviceId,
+      session.scopeId,
+      session.radioCommandId,
+      session.sessionNonce,
+      session.commandId,
+      session.plan,
+      &sessionReason);
+  const uint32_t handoffDoneAtMs = millis();
+  LOGI(
+      "RTR_ACK_TO_RPV2_FAST_HANDOFF_DONE deviceId=%lu commandId=%s sessionId=%llu messageId=%lu ackRxAtMs=%lu beginDispatchAtMs=%lu beginTxAtMs=%lu deltaMs=%lu source=%s result=%s",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.core.pageSessionId,
+      (unsigned long)session.core.pageMessageId,
+      (unsigned long)ackRxAtMs,
+      (unsigned long)beginDispatchAtMs,
+      (unsigned long)lastPageDiag.lastAckToRpv2BeginTxAtMs,
+      (unsigned long)lastPageDiag.lastAckToRpv2BeginLatencyMs,
+      handoffSource,
+      ok ? "ok" : "failed");
+  LOGI(
+      "RTR_ACK_TO_RPV2_BEGIN_LATENCY deviceId=%lu commandId=%s sessionId=%llu messageId=%lu ackRxAtMs=%lu beginDispatchAtMs=%lu beginTxAtMs=%lu deltaMs=%lu source=%s handoffDoneAtMs=%lu",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.core.pageSessionId,
+      (unsigned long)session.core.pageMessageId,
+      (unsigned long)ackRxAtMs,
+      (unsigned long)beginDispatchAtMs,
+      (unsigned long)lastPageDiag.lastAckToRpv2BeginTxAtMs,
+      (unsigned long)lastPageDiag.lastAckToRpv2BeginLatencyMs,
+      handoffSource,
+      (unsigned long)handoffDoneAtMs);
+  if (ok) {
+    LOGI(
+        "RPV2_SESSION_END_APPLIED deviceId=%lu commandId=%s radioCommandId=%llu",
+        (unsigned long)session.core.deviceId,
+        session.commandId[0] ? session.commandId : "-",
+        (unsigned long long)session.radioCommandId);
+    transitionPendingWakeState(
+        session, rtrwake::State::COMPLETED, "rpv2_applied");
+    return true;
+  }
+  LOGW(
+      "RPV2_SESSION_END_FAILED deviceId=%lu commandId=%s radioCommandId=%llu reason=%s",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.radioCommandId,
+      sessionReason ? sessionReason : "rpv2_failed");
+  LOGW(
+      "RTR_TO_RPV2_ABORT deviceId=%lu commandId=%s reason=%s",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      sessionReason ? sessionReason : "session_start_failed");
+  failPendingWakeSession(
+      session,
+      activeSimpleCommand.lastReasonCode != rpv2::REASON_NONE
+          ? activeSimpleCommand.lastReasonCode
+          : rtrv1::REASON_SESSION_NOT_STARTED_AFTER_PAGE_ACK,
+      sessionReason && sessionReason[0]
+          ? sessionReason
+          : rtrv1::reasonCodeLabel(
+                rtrv1::REASON_SESSION_NOT_STARTED_AFTER_PAGE_ACK));
+  return false;
+}
+
+static bool waitForRtrPageAckImmediatelyAfterPageTx(
+    PendingWakeSession& session,
+    uint32_t txOkAtMs,
+    uint32_t ackDeadlineAtMs) {
+  rtrdiag::noteAckRxWindowBegin(&lastPageDiag, txOkAtMs);
+  LOGI(
+      "RTR_PAGE_ACK_RX_WINDOW_BEGIN deviceId=%lu commandId=%s sessionId=%llu messageId=%lu txOkAtMs=%lu ackDeadlineAtMs=%lu",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.core.pageSessionId,
+      (unsigned long)session.core.pageMessageId,
+      (unsigned long)txOkAtMs,
+      (unsigned long)ackDeadlineAtMs);
+  while ((int32_t)(millis() - ackDeadlineAtMs) <= 0) {
+    feedWatchdogIfEnabled();
+    LoRaFrame rx{};
+    if (!lora.receive(rx)) {
+      delay(1);
+      continue;
+    }
+    const uint32_t rxAcceptedAtMs = lora.lastAcceptedRxAtMs();
+    LOGI(
+        "RTR_PAGE_ACK_RX_WINDOW_FRAME deviceId=%lu msgType=%u seq=%lu rxAcceptedAtMs=%lu",
+        (unsigned long)rx.deviceId,
+        (unsigned)rx.msgType,
+        (unsigned long)rx.seq,
+        (unsigned long)rxAcceptedAtMs);
+    if (tryHandlePendingWakePageAckFastPath(rx, rxAcceptedAtMs, "page_ack_window")) {
+      const bool pageAcked = session.core.state == rtrwake::State::PAGE_ACKED;
+      const char* windowResult = pageAcked ? "ack_rx" : "ack_invalid";
+      rtrdiag::noteAckRxWindowEnd(&lastPageDiag, rxAcceptedAtMs, windowResult);
+      LOGI(
+          "RTR_PAGE_ACK_RX_WINDOW_END deviceId=%lu commandId=%s sessionId=%llu messageId=%lu result=%s atMs=%lu",
+          (unsigned long)session.core.deviceId,
+          session.commandId[0] ? session.commandId : "-",
+          (unsigned long long)session.core.pageSessionId,
+          (unsigned long)session.core.pageMessageId,
+          windowResult,
+          (unsigned long)rxAcceptedAtMs);
+      if (pageAcked) {
+        startRpv2BeginImmediatelyAfterPageAck(session, rxAcceptedAtMs, "page_ack_window");
+      }
+      return pageAcked;
+    }
+    enqueueDeferredUplink(rx);
+    delay(1);
+  }
+  const uint32_t timeoutAtMs = millis();
+  rtrdiag::noteAckRxWindowEnd(&lastPageDiag, timeoutAtMs, "timeout");
+  rtrdiag::notePageOutcome(&lastPageDiag, "ack_timeout_window");
+  LOGW(
+      "RTR_PAGE_ACK_RX_WINDOW_END deviceId=%lu commandId=%s sessionId=%llu messageId=%lu result=%s atMs=%lu ackDeadlineAtMs=%lu",
+      (unsigned long)session.core.deviceId,
+      session.commandId[0] ? session.commandId : "-",
+      (unsigned long long)session.core.pageSessionId,
+      (unsigned long)session.core.pageMessageId,
+      "timeout",
+      (unsigned long)timeoutAtMs,
+      (unsigned long)ackDeadlineAtMs);
+  return false;
+}
+
+static bool waitForRtrPageAck(
+    uint32_t deviceId,
+    uint64_t sessionId,
+    uint32_t messageId,
+    uint32_t timeoutMs,
+    rtrv1::PageAckBody* outBody) {
+  const uint32_t startedAt = millis();
+  while ((uint32_t)(millis() - startedAt) < timeoutMs) {
+    LoRaFrame rx;
+    if (!lora.receive(rx)) {
+      delay(10);
+      continue;
+    }
+    if (rx.deviceId != deviceId) {
+      tryHandleWakePageImmediatelyAfterAcceptedUplink(
+          rx,
+          lora.lastAcceptedRxAtMs(),
+          "page_ack_wait");
+      enqueueAcceptedUplink(rx);
+      continue;
+    }
+    if (decodeRtrPageAckFrame(rx, sessionId, messageId, outBody)) return true;
+    tryHandleWakePageImmediatelyAfterAcceptedUplink(
+        rx,
+        lora.lastAcceptedRxAtMs(),
+        "page_ack_wait");
+    enqueueAcceptedUplink(rx);
+  }
+  return false;
+}
+
+static bool sendRtrPageForCommand(
+    uint32_t deviceId,
+    uint64_t scopeId,
+    MsgType commandType,
+    uint16_t estimatedFragments,
+    uint64_t logicalMessageId,
+    uint32_t entropy,
+    const char* commandId,
+    const char** reason) {
+  const uint64_t sessionId =
+      rtrv1::makeSessionId(logicalMessageId, deviceId, entropy);
+  const uint32_t messageId = static_cast<uint32_t>(entropy ^ deviceId ^ (uint32_t)commandType);
+
+  rtrv1::Header header{};
+  header.version = rtrv1::PROTOCOL_VERSION;
+  header.trafficClass = rtrv1::TRAFFIC_CLASS_P0;
+  header.innerMsgType = rtrv1::RTR_PAGE;
+  header.flags = rtrv1::FLAG_ACK_REQUIRED | rtrv1::FLAG_PAGE | rtrv1::FLAG_WAKE_LOCK;
+  header.sessionId = sessionId;
+  header.messageId = messageId;
+  header.sourceId = 0;
+  header.finalDestId = deviceId;
+  header.nextHopId = deviceId;
+  header.fragmentIndex = 0;
+  header.fragmentTotal = 1;
+  header.hopCount = 0;
+  header.ttl = rtrv1::DEFAULT_TTL;
+
+  rtrv1::PageBody body{};
+  body.commandType = static_cast<uint8_t>(commandType);
+  body.priority = rtrv1::TRAFFIC_CLASS_P1;
+  body.estimatedFragments = estimatedFragments;
+  body.sessionTimeoutSec = rtrv1::SESSION_CACHE_TTL_SEC;
+  body.wakeLockSec = rtrv1::SESSION_WAKE_LOCK_MS / 1000UL;
+  body.routeId = 0;
+
+  uint8_t payload[sizeof(rtrv1::Header) + sizeof(rtrv1::PageBody)]{};
+  const size_t payloadLen = rtrv1::encodeFrame(header, body, payload, sizeof(payload));
+  if (payloadLen == 0) {
+    if (reason) *reason = "page_encode_failed";
+    return false;
+  }
+
+  publishFenceTransportState(deviceId, "paging");
+  LOGI(
+      "RTR_PAGE_PLAN deviceId=%lu commandId=%s sessionId=%llu messageId=%lu commandType=%u estimatedFragments=%u",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)sessionId,
+      (unsigned long)messageId,
+      (unsigned)commandType,
+      (unsigned)estimatedFragments);
+  if (!sendLoRaBinaryFrame(
+          deviceId,
+          MsgType::RTR_CONTROL,
+          scopeId,
+          payload,
+          payloadLen,
+          reason,
+          MatrixLoRaTxReason::RtrPage,
+          "sendPagedFenceCommand",
+          nullptr,
+          commandId)) {
+    activeSimpleCommand.lastReasonCode = rtrv1::REASON_PAGE_REJECTED;
+    return false;
+  }
+  appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      "rtr_page_sent",
+      nullptr,
+      nullptr);
+  markFenceCommandDispatchingBegin();
+  publishFenceTransportState(deviceId, "awaiting_page_ack");
+  LOGI(
+      "RTR_PAGE_TX_OK deviceId=%lu commandId=%s sessionId=%llu messageId=%lu",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)sessionId,
+      (unsigned long)messageId);
+
+  rtrv1::PageAckBody ack{};
+  if (!waitForRtrPageAck(deviceId, sessionId, messageId, rtrv1::PAGE_ACK_TIMEOUT_MS, &ack)) {
+    if (reason) *reason = rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_TIMEOUT);
+    activeSimpleCommand.lastReasonCode = rtrv1::REASON_PAGE_TIMEOUT;
+    publishFenceTransportState(
+        deviceId,
+        "failed",
+        rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_TIMEOUT),
+        rtrv1::REASON_PAGE_TIMEOUT,
+        true,
+        false);
+    return false;
+  }
+  if (!ack.accepted || !ack.sessionModeActive) {
+    if (reason) *reason = rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_REJECTED);
+    activeSimpleCommand.lastReasonCode = rtrv1::REASON_PAGE_REJECTED;
+    publishFenceTransportState(
+        deviceId,
+        "failed",
+        rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_REJECTED),
+        rtrv1::REASON_PAGE_REJECTED,
+        true,
+        false);
+    return false;
+  }
+  appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      "rtr_page_ack",
+      nullptr,
+      nullptr);
+  LOGI(
+      "RTR_PAGE_ACK_RX deviceId=%lu commandId=%s sessionId=%llu messageId=%lu suggestedRxWindowMs=%u wakeLockSec=%lu",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)sessionId,
+      (unsigned long)messageId,
+      (unsigned)ack.suggestedRxWindowMs,
+      (unsigned long)ack.wakeLockUntilSec);
+  publishFenceTransportState(deviceId, "page_acked");
+  return true;
+}
+
+static bool decodeRpv2ResponseFrame(
+    const LoRaFrame& rx,
+    uint64_t radioCommandId,
+    uint32_t sessionNonce,
+    Rpv2AwaitedResponse* out) {
+  if (!out || rx.payloadLen < sizeof(rpv2::Header)) return false;
+  rpv2::Header header{};
+  if (!rpv2::decodeHeader(rx.payload, rx.payloadLen, &header)) return false;
+  if (header.radioCommandId != radioCommandId || header.sessionNonce != sessionNonce) return false;
+
+  *out = Rpv2AwaitedResponse{};
+  out->received = true;
+  out->responseMsgType = header.msgType;
+  switch (header.msgType) {
+    case rpv2::FENCE_ACK: {
+      rpv2::AckBody body{};
+      if (!rpv2::decodeFixedBodyFrame(rpv2::FENCE_ACK, rx.payload, rx.payloadLen, &header, &body)) return false;
+      out->ack = true;
+      out->fragmentIndex = body.ackedFragmentIndex;
+      out->nextExpectedFragment = body.nextExpectedFragment;
+      out->acceptedPoints = body.acceptedPoints;
+      out->observedCrc32 = body.observedCrc32;
+      return true;
+    }
+    case rpv2::FENCE_NACK: {
+      rpv2::NackBody body{};
+      if (!rpv2::decodeFixedBodyFrame(rpv2::FENCE_NACK, rx.payload, rx.payloadLen, &header, &body)) return false;
+      out->nack = true;
+      out->fragmentIndex = body.nackFragmentIndex;
+      out->nextExpectedFragment = body.nextExpectedFragment;
+      out->reasonCode = body.reasonCode;
+      return true;
+    }
+    case rpv2::FENCE_APPLY_STATUS: {
+      rpv2::ApplyStatusBody body{};
+      if (!rpv2::decodeFixedBodyFrame(rpv2::FENCE_APPLY_STATUS, rx.payload, rx.payloadLen, &header, &body)) return false;
+      out->applyStatus = true;
+      out->reasonCode = body.reasonCode;
+      out->observedCrc32 = body.activeCrc32;
+      out->activePoints = body.activePoints;
+      out->ack = body.applyStatus == 1;
+      out->nack = body.applyStatus == 0;
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+static bool waitForRpv2Response(
+    uint32_t deviceId,
+    uint64_t radioCommandId,
+    uint32_t sessionNonce,
+    uint32_t timeoutMs,
+    Rpv2AwaitedResponse* out,
+    const char* stage = nullptr,
+    const char* commandId = nullptr,
+    uint16_t expectedFragmentIndex = 0) {
+  const uint32_t startedAt = millis();
+  uint32_t lastHeartbeatAt = startedAt;
+  const bool beginAckStage = stage && strcmp(stage, "begin_ack") == 0;
+  const bool pointsAckStage = stage && strcmp(stage, "points_ack") == 0;
+  while ((uint32_t)(millis() - startedAt) < timeoutMs) {
+    feedWatchdogIfEnabled();
+    const uint32_t nowMs = millis();
+    if ((uint32_t)(nowMs - lastHeartbeatAt) >= 250UL) {
+      LOGI(
+          "RPV2_WAIT_HEARTBEAT deviceId=%lu commandId=%s stage=%s elapsedMs=%lu timeoutMs=%lu",
+          (unsigned long)deviceId,
+          commandId && commandId[0] ? commandId : "-",
+          stage ? stage : "-",
+          (unsigned long)(nowMs - startedAt),
+          (unsigned long)timeoutMs);
+      lastHeartbeatAt = nowMs;
+    }
+    LoRaFrame rx;
+    if (!lora.receive(rx)) {
+      delay(1);
+      continue;
+    }
+    if (rx.deviceId != deviceId) {
+      tryHandleWakePageImmediatelyAfterAcceptedUplink(
+          rx,
+          lora.lastAcceptedRxAtMs(),
+          "rpv2_wait");
+      enqueueAcceptedUplink(rx);
+      delay(1);
+      continue;
+    }
+    const uint32_t rxAcceptedAtMs = lora.lastAcceptedRxAtMs();
+    if (beginAckStage || pointsAckStage) {
+      LOGI(
+          "%s deviceId=%lu commandId=%s fragmentIndex=%u msgType=%u seq=%lu rxAcceptedAtMs=%lu",
+          beginAckStage ? "RPV2_BEGIN_ACK_RX_WINDOW_FRAME" : "RPV2_POINTS_ACK_RX_WINDOW_FRAME",
+          (unsigned long)deviceId,
+          commandId && commandId[0] ? commandId : "-",
+          (unsigned)expectedFragmentIndex,
+          (unsigned)rx.msgType,
+          (unsigned long)rx.seq,
+          (unsigned long)rxAcceptedAtMs);
+    }
+    if (decodeRpv2ResponseFrame(rx, radioCommandId, sessionNonce, out)) {
+      if (beginAckStage) {
+        const char* windowResult =
+            out->ack ? "ack_rx" : (out->nack ? "nack_rx" : "apply_status_rx");
+        LOGI(
+            "RPV2_BEGIN_ACK_RX deviceId=%lu commandId=%s radioCommandId=%llu msgType=%u fragmentIndex=%u acceptedPoints=%u reasonCode=%u",
+            (unsigned long)deviceId,
+            commandId && commandId[0] ? commandId : "-",
+            (unsigned long long)radioCommandId,
+            (unsigned)out->responseMsgType,
+            (unsigned)out->fragmentIndex,
+            (unsigned)out->acceptedPoints,
+            (unsigned)out->reasonCode);
+        LOGI(
+            "RPV2_BEGIN_ACK_RX_WINDOW_END deviceId=%lu commandId=%s radioCommandId=%llu result=%s atMs=%lu",
+            (unsigned long)deviceId,
+            commandId && commandId[0] ? commandId : "-",
+            (unsigned long long)radioCommandId,
+            windowResult,
+            (unsigned long)rxAcceptedAtMs);
+      }
+      if (pointsAckStage) {
+        const char* windowResult =
+            out->ack ? "ack_rx" : (out->nack ? "nack_rx" : "apply_status_rx");
+        LOGI(
+            "RPV2_POINTS_ACK_RX deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u acceptedPoints=%u reasonCode=%u",
+            (unsigned long)deviceId,
+            commandId && commandId[0] ? commandId : "-",
+            (unsigned long long)radioCommandId,
+            (unsigned)out->fragmentIndex,
+            (unsigned)out->acceptedPoints,
+            (unsigned)out->reasonCode);
+        LOGI(
+            "RPV2_POINTS_ACK_RX_WINDOW_END deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u result=%s atMs=%lu",
+            (unsigned long)deviceId,
+            commandId && commandId[0] ? commandId : "-",
+            (unsigned long long)radioCommandId,
+            (unsigned)expectedFragmentIndex,
+            windowResult,
+            (unsigned long)rxAcceptedAtMs);
+      }
+      return true;
+    }
+    tryHandleWakePageImmediatelyAfterAcceptedUplink(
+        rx,
+        rxAcceptedAtMs,
+        "rpv2_wait");
+    enqueueAcceptedUplink(rx);
+    delay(1);
+  }
+  if (beginAckStage) {
+    LOGW(
+        "RPV2_BEGIN_ACK_RX_WINDOW_END deviceId=%lu commandId=%s radioCommandId=%llu result=timeout atMs=%lu timeoutMs=%lu",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned long)millis(),
+        (unsigned long)timeoutMs);
+  }
+  if (pointsAckStage) {
+    LOGW(
+        "RPV2_POINTS_ACK_RX_WINDOW_END deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u result=timeout atMs=%lu timeoutMs=%lu",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned)expectedFragmentIndex,
+        (unsigned long)millis(),
+        (unsigned long)timeoutMs);
+  }
+  return false;
+}
+
+struct FencePlannerMeasureUserData {
+  uint64_t scopeId = 0;
+};
+
+static bool measureFencePlannerCandidate(
+    const rpv2::EncodedPoint* points,
+    uint16_t startPointIndex,
+    uint16_t pointCount,
+    const rpv2fenceplanner::PlannerContext& ctx,
+    rpv2fenceplanner::MeasuredCandidate* measured,
+    void* userData) {
+  if (!points || !measured || pointCount == 0) return false;
+  FencePlannerMeasureUserData* measureData =
+      static_cast<FencePlannerMeasureUserData*>(userData);
+  uint8_t payload[128]{};
+  rpv2::Header header{};
+  header.protocolVersion = rpv2::PROTOCOL_VERSION;
+  header.msgType = rpv2::FENCE_POINTS;
+  header.flags = rpv2::FLAG_ACK_REQUIRED | rpv2::FLAG_FROM_MATRIX;
+  header.headerLen = sizeof(rpv2::Header);
+  header.radioCommandId = ctx.radioCommandId;
+  header.sessionNonce = ctx.sessionNonce;
+  header.fragmentIndex = static_cast<uint16_t>(0);
+  header.fragmentTotal = 1;
+  rpv2::FencePointsPrefix prefix{};
+  prefix.startPointIndex = startPointIndex;
+  prefix.pointCount = static_cast<uint8_t>(pointCount);
+  const size_t plainSize = rpv2::encodePointsFrame(
+      header,
+      prefix,
+      reinterpret_cast<const rpv2::PointLatLonE7*>(points + startPointIndex),
+      prefix.pointCount,
+      payload,
+      sizeof(payload));
+  measured->encodeOk = plainSize > 0 && plainSize <= cfg::LORA_MAX_PAYLOAD_BYTES;
+  measured->plainFrameSize = static_cast<uint16_t>(plainSize);
+  if (!measured->encodeOk) {
+    measured->reason = "points_encode_failed";
+    return false;
+  }
+  LoRaFrame tx{};
+  tx.deviceId = ctx.deviceId;
+  tx.scopeId = (measureData && measureData->scopeId != 0) ? measureData->scopeId : bindingScopeIdValue();
+  tx.msgType = MsgType::SET_FENCE;
+  tx.seq = 1;
+  tx.timestamp = 0;
+  memset(tx.nonce, 0xA5, sizeof(tx.nonce));
+  tx.payloadLen = static_cast<uint8_t>(plainSize);
+  memcpy(tx.payload, payload, plainSize);
+  SecureWireMetrics metrics;
+  measured->measurementOk = buildExactSecureWireMetrics(tx, &metrics, nullptr, 0);
+  measured->secureWireSize = metrics.wireLenFinal;
+  measured->wireLenFinal = metrics.wireLenFinal;
+  measured->reason = metrics.reason;
+  return measured->measurementOk;
+}
+
+static void logFencePlannerEvent(const rpv2fenceplanner::LogEvent& event, void*) {
+  if (!event.eventType) return;
+  if (strcmp(event.eventType, "RPV2_PLAN_ENTER") == 0) {
+    LOGI(
+        "RPV2_PLAN_ENTER deviceId=%lu commandId=%s totalPoints=%u maxFrame=%u source=%s",
+        (unsigned long)event.deviceId,
+        event.commandId && event.commandId[0] ? event.commandId : "-",
+        (unsigned)event.totalPoints,
+        (unsigned)event.limit,
+        event.source && event.source[0] ? event.source : "unknown");
+    noteSetFenceCommandProgress("planner_enter");
+    return;
+  }
+  if (strcmp(event.eventType, "RPV2_PLANNER_REV") == 0) {
+    LOGI(
+        "RPV2_PLANNER_REV rev=%s gitShort=%s",
+        event.plannerRevision && event.plannerRevision[0] ? event.plannerRevision : "canonical_fence_planner_v1",
+        event.gitShortSha && event.gitShortSha[0] ? event.gitShortSha : "unknown");
+    return;
+  }
+  if (strcmp(event.eventType, "RPV2_PLAN_CANDIDATE_EVAL") == 0) {
+    LOGI(
+        "RPV2_PLAN_CANDIDATE_EVAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u endPointIndex=%u pointCount=%u plainFrameSize=%u secureWireSize=%u wireLenFinal=%u limit=%u measurementOk=%u fitsLimit=%u classification=%s",
+        (unsigned long)event.deviceId,
+        event.commandId && event.commandId[0] ? event.commandId : "-",
+        (unsigned long long)event.radioCommandId,
+        (unsigned)event.fragmentIndex,
+        (unsigned)event.startPointIndex,
+        (unsigned)event.endPointIndex,
+        (unsigned)event.pointCount,
+        (unsigned)event.plainFrameSize,
+        (unsigned)event.secureWireSize,
+        (unsigned)event.wireLenFinal,
+        (unsigned)event.limit,
+        event.measurementOk ? 1U : 0U,
+        event.fitsLimit ? 1U : 0U,
+        event.classification && event.classification[0] ? event.classification : "-");
+    return;
+  }
+  if (strcmp(event.eventType, "RPV2_PLAN_CHUNK_REJECT") == 0) {
+    LOGW(
+        "RPV2_PLAN_CHUNK_REJECT deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u reason=%s wireLenFinal=%u limit=%u classification=%s",
+        (unsigned long)event.deviceId,
+        event.commandId && event.commandId[0] ? event.commandId : "-",
+        (unsigned long long)event.radioCommandId,
+        (unsigned)event.fragmentIndex,
+        (unsigned)event.startPointIndex,
+        (unsigned)event.pointCount,
+        event.reason && event.reason[0] ? event.reason : "-",
+        (unsigned)event.wireLenFinal,
+        (unsigned)event.limit,
+        event.classification && event.classification[0] ? event.classification : "-");
+    return;
+  }
+  if (strcmp(event.eventType, "RPV2_PLAN_CHUNK_FIT") == 0) {
+    LOGI(
+        "RPV2_PLAN_CHUNK_FIT deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u plainFrameSize=%u wireLenFinal=%u limit=%u",
+        (unsigned long)event.deviceId,
+        event.commandId && event.commandId[0] ? event.commandId : "-",
+        (unsigned long long)event.radioCommandId,
+        (unsigned)event.fragmentIndex,
+        (unsigned)event.startPointIndex,
+        (unsigned)event.pointCount,
+        (unsigned)event.plainFrameSize,
+        (unsigned)event.wireLenFinal,
+        (unsigned)event.limit);
+    return;
+  }
+  if (strcmp(event.eventType, "RPV2_PLAN_FAILED_TERMINAL") == 0) {
+    LOGW(
+        "RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u reason=%s wireLenFinal=%u limit=%u classification=%s",
+        (unsigned long)event.deviceId,
+        event.commandId && event.commandId[0] ? event.commandId : "-",
+        (unsigned long long)event.radioCommandId,
+        (unsigned)event.fragmentIndex,
+        (unsigned)event.startPointIndex,
+        (unsigned)event.pointCount,
+        event.reason && event.reason[0] ? event.reason : "-",
+        (unsigned)event.wireLenFinal,
+        (unsigned)event.limit,
+        event.classification && event.classification[0] ? event.classification : "-");
+    return;
+  }
+  if (strcmp(event.eventType, "RPV2_PLAN_FINAL") == 0) {
+    LOGI(
+        "RPV2_PLAN_FINAL deviceId=%lu commandId=%s planReady=%u chunkCount=%u totalPoints=%u minWireLen=%u maxWireLen=%u reason=%s",
+        (unsigned long)event.deviceId,
+        event.commandId && event.commandId[0] ? event.commandId : "-",
+        event.planReady ? 1U : 0U,
+        (unsigned)event.chunkCount,
+        (unsigned)event.totalPoints,
+        (unsigned)event.plainFrameSize,
+        (unsigned)event.wireLenFinal,
+        event.reason && event.reason[0] ? event.reason : "-");
+    noteSetFenceCommandProgress(event.planReady ? "planner_final_ready" : "planner_final_failed");
+  }
+}
+
+static bool buildFenceRpv2Plan(
+    const JsonArrayConst& points,
+    uint64_t scopeId,
+    uint32_t deviceId,
+    uint64_t radioCommandId,
+    uint32_t sessionNonce,
+    const char* commandId,
+    const char* source,
+    Rpv2FenceChunkPlan* plan,
+    const char** reason) {
+  if (!plan) {
+    if (reason) *reason = "plan_null";
+    return false;
+  }
+  const uint16_t totalPoints = static_cast<uint16_t>(points.size());
+  rpv2::EncodedPoint encodedPoints[rpv2::MAX_FENCE_POINTS]{};
+  for (uint16_t i = 0; i < totalPoints; ++i) {
+    double lat = 0.0;
+    double lon = 0.0;
+    if (!readPointPair(points[i].as<JsonArrayConst>(), lat, lon)) {
+      if (reason) *reason = "invalid_point_value";
+      return false;
+    }
+    encodedPoints[i].latE7 = coordinateToE7(lat);
+    encodedPoints[i].lonE7 = coordinateToE7(lon);
+  }
+  const buildinfo::BuildInfo build = buildinfo::current();
+  rpv2fenceplanner::PlannerContext ctx{};
+  ctx.deviceId = deviceId;
+  ctx.scopeId = scopeId == 0 ? bindingScopeIdValue() : scopeId;
+  ctx.radioCommandId = radioCommandId;
+  ctx.sessionNonce = sessionNonce;
+  ctx.commandId = commandId;
+  ctx.source = source;
+  ctx.plannerRevision = "canonical_fence_planner_v1";
+  ctx.gitShortSha = build.gitShortSha;
+  ctx.maxWireBytes = rpv2::MAX_LORA_FRAME_BYTES;
+  FencePlannerMeasureUserData measureUserData{};
+  measureUserData.scopeId = ctx.scopeId;
+  const bool ok = rpv2fenceplanner::buildFenceRpv2PlanStrict(
+      encodedPoints,
+      totalPoints,
+      ctx,
+      plan,
+      rpv2::MAX_FENCE_POINTS,
+      measureFencePlannerCandidate,
+      &measureUserData,
+      logFencePlannerEvent,
+      nullptr);
+  if (!ok && reason) {
+    *reason = plan->reasonLabel[0] ? plan->reasonLabel : "plan_failed";
+  }
+  return ok;
+}
+
+static bool executeFenceCommandRpv2Plan(
+    uint32_t deviceId,
+    uint64_t scopeId,
+    uint64_t radioCommandId,
+    uint32_t sessionNonce,
+    const char* commandId,
+    const Rpv2FenceChunkPlan& plan,
+    const char** reason) {
+  uint8_t framePayload[128]{};
+  rpv2::Header header{};
+  header.protocolVersion = rpv2::PROTOCOL_VERSION;
+  header.flags = rpv2::FLAG_ACK_REQUIRED | rpv2::FLAG_FROM_MATRIX;
+  header.headerLen = sizeof(rpv2::Header);
+  header.radioCommandId = radioCommandId;
+  header.sessionNonce = sessionNonce;
+
+  rpv2::FenceBeginBody begin{};
+  begin.totalPoints = plan.totalPoints;
+  begin.totalChunks = plan.totalChunks;
+  begin.fenceCrc32 = plan.fenceCrc32;
+  begin.fenceVersion = static_cast<uint32_t>(millis() / 1000U);
+  begin.coordEncoding = rpv2::COORD_ENCODING_LATE7_LONE7;
+  begin.pointStrideBytes = rpv2::POINT_STRIDE_BYTES;
+  header.msgType = rpv2::FENCE_BEGIN;
+  header.fragmentIndex = 0;
+  header.fragmentTotal = plan.totalChunks;
+  const size_t beginLen = rpv2::encodeFrame(header, begin, framePayload, sizeof(framePayload));
+  LoRaFrame beginTx;
+  beginTx.deviceId = deviceId;
+  beginTx.scopeId = scopeId == 0 ? bindingScopeIdValue() : scopeId;
+  beginTx.msgType = MsgType::SET_FENCE;
+  beginTx.seq = 1;
+  beginTx.timestamp = 0;
+  memset(beginTx.nonce, 0xA5, sizeof(beginTx.nonce));
+  beginTx.payloadLen = static_cast<uint8_t>(beginLen);
+  memcpy(beginTx.payload, framePayload, beginLen);
+  SecureWireMetrics beginMetrics;
+  buildExactSecureWireMetrics(beginTx, &beginMetrics, nullptr, 0);
+  LOGI(
+      "RPV2_BEGIN_SIZE_EVAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=0 pointCount=%u plainPayloadLen=%u packedLen=%u cipherPayloadLen=%u wireLenFinal=%u limit=128",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)plan.totalPoints,
+      (unsigned)beginMetrics.plainPayloadLen,
+      (unsigned)beginMetrics.packedLen,
+      (unsigned)beginMetrics.cipherPayloadLen,
+      (unsigned)beginMetrics.wireLenFinal);
+  logRpv2StageTransition(deviceId, commandId, "page_acked", "begin_tx");
+  const int pendingIdx = findPendingWakeSessionByDeviceId(deviceId);
+  const uint32_t ackRxAtMs =
+      pendingIdx >= 0 ? lastPageDiag.lastAckRxWindowEndAtMs : 0;
+  const uint32_t beginTxStartAtMs = millis();
+  LOGI(
+      "RPV2_BEGIN_TX_START deviceId=%lu commandId=%s radioCommandId=%llu retryCount=%u ackRxAtMs=%lu beginTxStartAtMs=%lu source=%s",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)activeSimpleCommand.retryCount,
+      (unsigned long)ackRxAtMs,
+      (unsigned long)beginTxStartAtMs,
+      pendingIdx >= 0 ? "page_ack_window" : "direct");
+  if (ackRxAtMs != 0 && beginTxStartAtMs >= ackRxAtMs) {
+    LOGI(
+        "RTR_ACK_TO_RPV2_BEGIN_TX_START_LATENCY deviceId=%lu commandId=%s radioCommandId=%llu ackRxAtMs=%lu beginTxStartAtMs=%lu deltaMs=%lu source=%s",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned long)ackRxAtMs,
+        (unsigned long)beginTxStartAtMs,
+        (unsigned long)(beginTxStartAtMs - ackRxAtMs),
+        pendingIdx >= 0 ? "page_ack_window" : "direct");
+  }
+  LOGI(
+      "RPV2_WAIT_ACK_BEGIN deviceId=%lu commandId=%s radioCommandId=%llu retryCount=%u",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)activeSimpleCommand.retryCount);
+  if (beginLen == 0 || !sendLoRaBinaryFrame(
+          deviceId,
+          MsgType::SET_FENCE,
+          scopeId,
+          framePayload,
+          beginLen,
+          reason,
+          MatrixLoRaTxReason::Rpv2Begin,
+          "sendFenceCommandRpv2Session.begin",
+          nullptr,
+          commandId)) {
+    activeSimpleCommand.lastReasonCode =
+        reason ? rpv2ReasonCodeFromLabel(*reason) : rpv2::REASON_NONE;
+    return false;
+  }
+  appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      "rpv2_begin_sent",
+      nullptr,
+      nullptr);
+  const uint32_t beginTxAtMs = millis();
+  if (pendingIdx >= 0) {
+    rtrdiag::noteAckToRpv2BeginTx(&lastPageDiag, beginTxAtMs);
+  }
+  LOGI(
+      "RPV2_BEGIN_TX_OK deviceId=%lu commandId=%s radioCommandId=%llu retryCount=%u",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)activeSimpleCommand.retryCount);
+  if (ackRxAtMs != 0 && beginTxAtMs >= ackRxAtMs) {
+    LOGI(
+        "RTR_ACK_TO_RPV2_BEGIN_TX_OK_LATENCY deviceId=%lu commandId=%s radioCommandId=%llu ackRxAtMs=%lu beginTxOkAtMs=%lu deltaMs=%lu source=%s",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned long)ackRxAtMs,
+        (unsigned long)beginTxAtMs,
+        (unsigned long)(beginTxAtMs - ackRxAtMs),
+        pendingIdx >= 0 ? "page_ack_window" : "direct");
+  }
+  const uint32_t beginAckWindowStartAtMs = millis();
+  LOGI(
+      "RPV2_BEGIN_ACK_RX_WINDOW_BEGIN deviceId=%lu commandId=%s radioCommandId=%llu beginTxOkAtMs=%lu atMs=%lu timeoutMs=%lu",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned long)beginTxAtMs,
+      (unsigned long)beginAckWindowStartAtMs,
+      (unsigned long)rpv2::BEGIN_ACK_TIMEOUT_MS);
+  publishFenceTransportState(deviceId, "awaiting_begin_ack");
+  if (pendingIdx >= 0) {
+    publishRtrPageAckProgressAfterBeginStarted(pendingWakeSessions[pendingIdx]);
+  }
+  feedWatchdogIfEnabled();
+
+  Rpv2AwaitedResponse response;
+  if (!waitForRpv2Response(
+          deviceId,
+          radioCommandId,
+          sessionNonce,
+          rpv2::BEGIN_ACK_TIMEOUT_MS,
+          &response,
+          "begin_ack",
+          commandId)) {
+    if (reason) *reason = "begin_timeout";
+    activeSimpleCommand.lastReasonCode = rpv2::REASON_BEGIN_TIMEOUT;
+    publishFenceTransportState(deviceId, "failed", "begin_timeout", rpv2::REASON_BEGIN_TIMEOUT, true, false);
+    return false;
+  }
+  if (!response.ack || response.applyStatus || response.nack) {
+    const uint16_t code = response.reasonCode ? response.reasonCode : rpv2::REASON_BEGIN_REJECTED;
+    if (reason) *reason = rpv2::reasonCodeLabel(code);
+    activeSimpleCommand.lastReasonCode = code;
+    LOGW(
+        "RPV2_RX_NACK deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u reasonCode=%u",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned)response.fragmentIndex,
+        (unsigned)code);
+    publishFenceTransportState(deviceId, "failed", *reason, code, true, false);
+    return false;
+  }
+  appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      "rpv2_begin_ack",
+      nullptr,
+      nullptr);
+  feedWatchdogIfEnabled();
+  LOGI(
+      "RPV2_RX_ACK deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u acceptedPoints=%u",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)response.fragmentIndex,
+      (unsigned)response.acceptedPoints);
+
+  for (uint16_t i = 0; i < plan.totalChunks; ++i) {
+    const Rpv2FenceChunkPlanItem& item = plan.items[i];
+    header.msgType = rpv2::FENCE_POINTS;
+    header.fragmentIndex = item.fragmentIndex;
+    header.fragmentTotal = plan.totalChunks;
+    logRpv2StageTransition(deviceId, commandId, "begin_acked", "points_tx");
+    rpv2::FencePointsPrefix prefix{};
+    prefix.startPointIndex = item.startPointIndex;
+    prefix.pointCount = item.pointCount;
+    const size_t pointsLen = rpv2::encodePointsFrame(
+        header,
+        prefix,
+        reinterpret_cast<const rpv2::PointLatLonE7*>(plan.points + item.startPointIndex),
+        item.pointCount,
+        framePayload,
+        sizeof(framePayload));
+    LOGI(
+        "RPV2_POINTS_TX_START deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u pointCount=%u retryCount=%u",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned)item.fragmentIndex,
+        (unsigned)item.pointCount,
+        (unsigned)activeSimpleCommand.retryCount);
+    if (pointsLen == 0 || !sendLoRaBinaryFrame(
+            deviceId,
+            MsgType::SET_FENCE,
+            scopeId,
+            framePayload,
+            pointsLen,
+            reason,
+            MatrixLoRaTxReason::Rpv2Points,
+            "sendFenceCommandRpv2Session.points",
+            nullptr,
+            commandId)) {
+      activeSimpleCommand.lastReasonCode =
+          reason ? rpv2ReasonCodeFromLabel(*reason) : rpv2::REASON_NONE;
+      return false;
+    }
+    const uint32_t pointsTxOkAtMs = millis();
+    LOGI(
+        "RPV2_POINTS_TX_OK deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u pointCount=%u",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned)item.fragmentIndex,
+        (unsigned)item.pointCount);
+    LOGI(
+        "RPV2_POINTS_ACK_RX_WINDOW_BEGIN deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u pointCount=%u txOkAtMs=%lu timeoutMs=%lu",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned)item.fragmentIndex,
+        (unsigned)item.pointCount,
+        (unsigned long)pointsTxOkAtMs,
+        (unsigned long)rpv2::POINTS_ACK_TIMEOUT_MS);
+    publishFenceTransportState(deviceId, "awaiting_points_ack");
+    feedWatchdogIfEnabled();
+    if (!waitForRpv2Response(
+            deviceId,
+            radioCommandId,
+            sessionNonce,
+            rpv2::POINTS_ACK_TIMEOUT_MS,
+            &response,
+            "points_ack",
+            commandId,
+            item.fragmentIndex)) {
+      if (reason) *reason = "points_timeout";
+      activeSimpleCommand.lastReasonCode = rpv2::REASON_POINTS_TIMEOUT;
+      publishFenceTransportState(deviceId, "failed", "points_timeout", rpv2::REASON_POINTS_TIMEOUT, true, false);
+      return false;
+    }
+    if (!response.ack || response.nack || response.applyStatus) {
+      const uint16_t code = response.reasonCode ? response.reasonCode : rpv2::REASON_POINTS_OUT_OF_ORDER;
+      if (reason) *reason = rpv2::reasonCodeLabel(code);
+      activeSimpleCommand.lastReasonCode = code;
+      LOGW(
+          "RPV2_RX_NACK deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u reasonCode=%u",
+          (unsigned long)deviceId,
+          commandId && commandId[0] ? commandId : "-",
+          (unsigned long long)radioCommandId,
+          (unsigned)response.fragmentIndex,
+          (unsigned)code);
+      publishFenceTransportState(deviceId, "failed", *reason, code, true, false);
+      return false;
+    }
+    const uint16_t expectedNextFragment =
+        static_cast<uint16_t>(item.fragmentIndex + 1U);
+    const uint16_t expectedAcceptedPoints =
+        static_cast<uint16_t>(item.startPointIndex + item.pointCount);
+    if (response.fragmentIndex != item.fragmentIndex ||
+        response.acceptedPoints != expectedAcceptedPoints ||
+        response.nextExpectedFragment != expectedNextFragment) {
+      if (reason) *reason = "points_ack_mismatch";
+      activeSimpleCommand.lastReasonCode = rpv2::REASON_POINTS_OUT_OF_ORDER;
+      LOGW(
+          "RPV2_POINTS_ACK_MISMATCH deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u ackFragmentIndex=%u acceptedPoints=%u expectedAcceptedPoints=%u nextExpected=%u expectedNext=%u",
+          (unsigned long)deviceId,
+          commandId && commandId[0] ? commandId : "-",
+          (unsigned long long)radioCommandId,
+          (unsigned)item.fragmentIndex,
+          (unsigned)response.fragmentIndex,
+          (unsigned)response.acceptedPoints,
+          (unsigned)expectedAcceptedPoints,
+          (unsigned)response.nextExpectedFragment,
+          (unsigned)expectedNextFragment);
+      publishFenceTransportState(deviceId, "failed", *reason, rpv2::REASON_POINTS_OUT_OF_ORDER, true, false);
+      return false;
+    }
+    appendPropertyCommandEvent(
+        activeSimpleCommand.propertyId,
+        activeSimpleCommand.commandId,
+        "rpv2_points_sent",
+        nullptr,
+        nullptr);
+    appendPropertyCommandEvent(
+        activeSimpleCommand.propertyId,
+        activeSimpleCommand.commandId,
+        "rpv2_points_ack",
+        nullptr,
+        nullptr);
+    feedWatchdogIfEnabled();
+    LOGI(
+        "RPV2_RX_ACK deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u acceptedPoints=%u",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned)response.fragmentIndex,
+        (unsigned)response.acceptedPoints);
+  }
+
+  rpv2::FenceCommitBody commit{};
+  commit.totalPoints = plan.totalPoints;
+  commit.totalChunks = plan.totalChunks;
+  commit.fenceCrc32 = plan.fenceCrc32;
+  commit.stagedCrc32Expected = plan.fenceCrc32;
+  commit.activateMode = 1;
+  commit.requireApplyStatus = 1;
+  commit.commitToken = sessionNonce ^ plan.fenceCrc32;
+  header.msgType = rpv2::FENCE_COMMIT;
+  header.fragmentIndex = 0;
+  header.fragmentTotal = plan.totalChunks;
+  const size_t commitLen = rpv2::encodeFrame(header, commit, framePayload, sizeof(framePayload));
+  LoRaFrame commitTx;
+  commitTx.deviceId = deviceId;
+  commitTx.scopeId = scopeId == 0 ? bindingScopeIdValue() : scopeId;
+  commitTx.msgType = MsgType::SET_FENCE;
+  commitTx.seq = 1;
+  commitTx.timestamp = 0;
+  memset(commitTx.nonce, 0xA5, sizeof(commitTx.nonce));
+  commitTx.payloadLen = static_cast<uint8_t>(commitLen);
+  memcpy(commitTx.payload, framePayload, commitLen);
+  SecureWireMetrics commitMetrics;
+  buildExactSecureWireMetrics(commitTx, &commitMetrics, nullptr, 0);
+  LOGI(
+      "RPV2_COMMIT_SIZE_EVAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=0 pointCount=%u plainPayloadLen=%u packedLen=%u cipherPayloadLen=%u wireLenFinal=%u limit=128",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)plan.totalPoints,
+      (unsigned)commitMetrics.plainPayloadLen,
+      (unsigned)commitMetrics.packedLen,
+      (unsigned)commitMetrics.cipherPayloadLen,
+      (unsigned)commitMetrics.wireLenFinal);
+  publishFenceTransportState(deviceId, "awaiting_commit_ack");
+  logRpv2StageTransition(deviceId, commandId, "points_acked", "commit_tx");
+  LOGI(
+      "RPV2_WAIT_ACK_COMMIT deviceId=%lu commandId=%s radioCommandId=%llu retryCount=%u",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)activeSimpleCommand.retryCount);
+  if (commitLen == 0 || !sendLoRaBinaryFrame(
+          deviceId,
+          MsgType::SET_FENCE,
+          scopeId,
+          framePayload,
+          commitLen,
+          reason,
+          MatrixLoRaTxReason::Rpv2Commit,
+          "sendFenceCommandRpv2Session.commit",
+          nullptr,
+          commandId)) {
+    activeSimpleCommand.lastReasonCode =
+        reason ? rpv2ReasonCodeFromLabel(*reason) : rpv2::REASON_NONE;
+    return false;
+  }
+  appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      "rpv2_commit_sent",
+      nullptr,
+      nullptr);
+  LOGI(
+      "RPV2_COMMIT_TX_OK deviceId=%lu commandId=%s radioCommandId=%llu",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId);
+  feedWatchdogIfEnabled();
+  if (!waitForRpv2Response(
+          deviceId,
+          radioCommandId,
+          sessionNonce,
+          rpv2::COMMIT_ACK_TIMEOUT_MS,
+          &response,
+          "commit_ack",
+          commandId)) {
+    if (reason) *reason = "commit_timeout";
+    activeSimpleCommand.lastReasonCode = rpv2::REASON_COMMIT_TIMEOUT;
+    publishFenceTransportState(deviceId, "failed", "commit_timeout", rpv2::REASON_COMMIT_TIMEOUT, true, false);
+    return false;
+  }
+  if (!response.ack || response.nack || response.applyStatus) {
+    const uint16_t code = response.reasonCode ? response.reasonCode : rpv2::REASON_COMMIT_REJECTED;
+    if (reason) *reason = rpv2::reasonCodeLabel(code);
+    activeSimpleCommand.lastReasonCode = code;
+    LOGW(
+        "RPV2_RX_NACK deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u reasonCode=%u",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned)response.fragmentIndex,
+        (unsigned)code);
+    publishFenceTransportState(deviceId, "failed", *reason, code, true, false);
+    return false;
+  }
+  appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      "rpv2_commit_ack",
+      nullptr,
+      nullptr);
+  feedWatchdogIfEnabled();
+  publishFenceTransportState(deviceId, "awaiting_apply_status");
+  logRpv2StageTransition(deviceId, commandId, "commit_acked", "apply_status_wait");
+  LOGI(
+      "RPV2_WAIT_APPLY_STATUS deviceId=%lu commandId=%s radioCommandId=%llu retryCount=%u",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)activeSimpleCommand.retryCount);
+  if (!waitForRpv2Response(
+          deviceId,
+          radioCommandId,
+          sessionNonce,
+          rpv2::APPLY_STATUS_TIMEOUT_MS,
+          &response,
+          "apply_status",
+          commandId)) {
+    if (reason) *reason = "apply_timeout";
+    activeSimpleCommand.lastReasonCode = rpv2::REASON_APPLY_FAILED;
+    publishFenceTransportState(deviceId, "failed", "apply_timeout", rpv2::REASON_APPLY_FAILED, true, false);
+    return false;
+  }
+  if (!response.applyStatus || !response.ack) {
+    const uint16_t code = response.reasonCode ? response.reasonCode : rpv2::REASON_APPLY_FAILED;
+    if (reason) *reason = rpv2::reasonCodeLabel(code);
+    activeSimpleCommand.lastReasonCode = code;
+    LOGW(
+        "RPV2_RX_APPLY_STATUS deviceId=%lu commandId=%s radioCommandId=%llu apply=0 reasonCode=%u activePoints=%u",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        (unsigned)code,
+        (unsigned)response.activePoints);
+    publishFenceTransportState(deviceId, "failed", *reason, code, true, false);
+    return false;
+  }
+  activeSimpleCommand.lastReasonCode = rpv2::REASON_NONE;
+  LOGI(
+      "RPV2_RX_APPLY_STATUS deviceId=%lu commandId=%s radioCommandId=%llu apply=1 reasonCode=0 activePoints=%u",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)response.activePoints);
+  appendPropertyCommandEvent(
+      activeSimpleCommand.propertyId,
+      activeSimpleCommand.commandId,
+      "rpv2_apply_status_ok",
+      nullptr,
+      nullptr);
+  feedWatchdogIfEnabled();
+  LOGI(
+      "RPV2_SESSION_END_OK deviceId=%lu commandId=%s radioCommandId=%llu activePoints=%u",
+      (unsigned long)deviceId,
+      commandId && commandId[0] ? commandId : "-",
+      (unsigned long long)radioCommandId,
+      (unsigned)response.activePoints);
+  logRpv2StageTransition(deviceId, commandId, "apply_status_ok", "session_applied");
+  publishFenceTransportState(deviceId, "applied", nullptr, rpv2::REASON_NONE, true, true);
+  return true;
+}
+
+static bool sendFenceCommandRpv2Session(
+    uint32_t deviceId,
+    const JsonVariantConst payload,
+    const char* commandId,
+    const FencePointsResolution& pointsResolution,
+    const char** reason) {
+  uint64_t scopeId = parseScopeIdHex(payload["scope_id"]);
+  if (scopeId == 0) scopeId = parseScopeIdHex(payload["property_scope_id"]);
+  const uint64_t radioCommandId = rpv2::fnv1a64(commandId && commandId[0] ? commandId : "set_fence");
+  const uint32_t sessionNonce = esp_random();
+  Rpv2FenceChunkPlan plan;
+  if (!buildFenceRpv2Plan(
+          pointsResolution.points,
+          scopeId,
+          deviceId,
+          radioCommandId,
+          sessionNonce,
+          commandId,
+          "direct_session",
+          &plan,
+          reason)) {
+    const rpv2fenceplanner::DispatchDecision decision =
+        rpv2fenceplanner::decideDispatchAfterPlanning(plan);
+    LOGW(
+        "RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu reason=%s",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        reason && *reason ? *reason : "plan_failed");
+    activeSimpleCommand.lastReasonCode = decision.reasonCode;
+    return false;
+  }
+  if (!sendRtrPageForCommand(
+          deviceId,
+          scopeId,
+          MsgType::SET_FENCE,
+          static_cast<uint16_t>(plan.totalChunks + 2),
+          radioCommandId,
+          sessionNonce,
+          commandId,
+          reason)) {
+    return false;
+  }
+  return executeFenceCommandRpv2Plan(
+      deviceId,
+      scopeId,
+      radioCommandId,
+      sessionNonce,
+      commandId,
+      plan,
+      reason);
+}
+
+static bool prepareFenceWakeSession(
+    uint32_t deviceId,
+    const JsonVariantConst payload,
+    const char* commandId,
+    const FencePointsResolution& pointsResolution,
+    const char** reason) {
+  const int existingIdx = findPendingWakeSessionByDeviceId(deviceId);
+  PendingWakeSession* session = existingIdx >= 0
+      ? &pendingWakeSessions[existingIdx]
+      : allocatePendingWakeSession();
+  if (!session) {
+    if (reason) *reason = "pending_wake_session_full";
+    return false;
+  }
+
+  uint64_t scopeId = parseScopeIdHex(payload["scope_id"]);
+  if (scopeId == 0) scopeId = parseScopeIdHex(payload["property_scope_id"]);
+  const uint64_t radioCommandId =
+      rpv2::fnv1a64(commandId && commandId[0] ? commandId : "set_fence");
+  const uint32_t sessionNonce = esp_random();
+  Rpv2FenceChunkPlan plan;
+  if (!buildFenceRpv2Plan(
+          pointsResolution.points,
+          scopeId,
+          deviceId,
+          radioCommandId,
+          sessionNonce,
+          commandId,
+          "cloud_queue",
+          &plan,
+          reason)) {
+    const rpv2fenceplanner::DispatchDecision decision =
+        rpv2fenceplanner::decideDispatchAfterPlanning(plan);
+    LOGW(
+        "RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu reason=%s",
+        (unsigned long)deviceId,
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long long)radioCommandId,
+        reason && *reason ? *reason : "plan_failed");
+    activeSimpleCommand.lastReasonCode = decision.reasonCode;
+    return false;
+  }
+
+  const uint32_t nowMs = millis();
+  const rtrwake::Presence* presence = findDevicePresence(deviceId);
+  const bool recentHint =
+      presence && presence->valid &&
+      presence->lastSeenAtMs != 0 &&
+      (uint32_t)(nowMs - presence->lastSeenAtMs) <= kRecentWakeHintMs;
+
+  if (existingIdx >= 0) {
+    LOGI(
+        "RTR_WAKE_SESSION_REUSED commandId=%s deviceId=%lu previousState=%s",
+        commandId && commandId[0] ? commandId : "-",
+        (unsigned long)deviceId,
+        pendingWakeStateLabel(session->core.state));
+  }
+  *session = PendingWakeSession{};
+  session->core.active = true;
+  session->core.deviceId = deviceId;
+  session->core.pageSessionId = rtrv1::makeSessionId(radioCommandId, deviceId, sessionNonce);
+  session->core.pageMessageId =
+      static_cast<uint32_t>(sessionNonce ^ deviceId ^ (uint32_t)MsgType::SET_FENCE);
+  session->core.maxCampaigns = rtrv1::MAX_PAGE_CAMPAIGNS;
+  session->core.createdAtMs = nowMs;
+  session->core.lastUplinkAtMs = presence && presence->valid ? presence->lastSeenAtMs : 0;
+  session->core.predictedWakeAtMs =
+      (presence && presence->valid && presence->estimatedCycleMs != 0)
+          ? presence->lastSeenAtMs + presence->estimatedCycleMs
+          : 0;
+  session->core.nextPageAttemptAtMs = recentHint ? nowMs : 0;
+  session->core.state = recentHint
+      ? rtrwake::State::PAGING_READY_TO_SEND
+      : rtrwake::State::PAGING_WAITING_UPLINK;
+  copyStringToBuffer(session->commandId, sizeof(session->commandId), commandId);
+  session->scopeId = scopeId == 0 ? bindingScopeIdValue() : scopeId;
+  session->commandType = MsgType::SET_FENCE;
+  session->radioCommandId = radioCommandId;
+  session->sessionNonce = sessionNonce;
+  session->estimatedFragments = static_cast<uint16_t>(plan.totalChunks + 2);
+  session->rpv2PlanReady = true;
+  session->plan = plan;
+  rtrdiag::notePageOutcome(&lastPageDiag, "none");
+  syncLastPageDiagFromSession(*session);
+  setPendingWakeReason(*session, rtrv1::REASON_NONE, "");
+
+  publishFenceTransportState(
+      deviceId,
+      recentHint ? "paging_ready" : "paging_waiting_uplink");
+  LOGI(
+      "RTR_WAKE_SESSION_CREATED commandId=%s deviceId=%lu state=%s estimatedFragments=%u predictedWakeAtMs=%lu lastUplinkAtMs=%lu",
+      session->commandId[0] ? session->commandId : "-",
+      (unsigned long)deviceId,
+      pendingWakeStateLabel(session->core.state),
+      (unsigned)session->estimatedFragments,
+      (unsigned long)session->core.predictedWakeAtMs,
+      (unsigned long)session->core.lastUplinkAtMs);
+  if (!recentHint) {
+    LOGI(
+        "RTR_PAGE_DEFERRED_WAITING_UPLINK commandId=%s deviceId=%lu campaignCount=%u",
+        session->commandId[0] ? session->commandId : "-",
+        (unsigned long)deviceId,
+        (unsigned)session->core.campaignCount);
+  }
+  return true;
+}
+
+static bool processPendingWakeSessionStep(uint8_t idx, PendingWakeSession& session, uint32_t nowMs) {
+    switch (session.core.state) {
+      case rtrwake::State::PAGING_WAITING_UPLINK:
+        if (session.core.createdAtMs != 0 &&
+            (uint32_t)(nowMs - session.core.createdAtMs) >= kPendingWakeWaitingUplinkTimeoutMs) {
+          noteWakeLoopStage("waiting_uplink_timeout", session);
+          LOGW(
+              "RTR_WAITING_UPLINK_TIMEOUT deviceId=%lu commandId=%s createdAtMs=%lu nowMs=%lu timeoutMs=%lu",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              (unsigned long)session.core.createdAtMs,
+              (unsigned long)nowMs,
+              (unsigned long)kPendingWakeWaitingUplinkTimeoutMs);
+          appendPropertyCommandEvent(
+              activeSimpleCommand.propertyId,
+              activeSimpleCommand.commandId,
+              "rtr_waiting_uplink_timeout",
+              nullptr,
+              nullptr);
+          failPendingWakeSession(
+              session,
+              rtrv1::REASON_PAGE_TIMEOUT_FINAL,
+              "waiting_uplink_timeout");
+          return true;
+        }
+        if (rtrwake::predictedWakeReady(session.core, nowMs)) {
+          noteWakeLoopStage("predicted_wake", session);
+          transitionPendingWakeState(
+              session, rtrwake::State::PAGING_READY_TO_SEND, "predicted_wake");
+          publishFenceTransportState(session.core.deviceId, "paging_ready");
+          LOGI(
+              "RTR_PAGE_READY_TO_SEND deviceId=%lu commandId=%s campaignCount=%u",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              (unsigned)session.core.campaignCount);
+          return true;
+        }
+        break;
+
+      case rtrwake::State::PAGING_READY_TO_SEND:
+        if (session.core.nextPageAttemptAtMs == 0 ||
+            (int32_t)(nowMs - session.core.nextPageAttemptAtMs) >= 0) {
+          if (reschedulePendingWakeForFreshUplink(
+                  session,
+                  nowMs,
+                  "wake_hint_stale",
+                  "wake_hint_stale_wait_next_uplink")) {
+            return true;
+          }
+          noteWakeLoopStage("page_ready_send", session);
+          const uint32_t ageMs = rtrwake::wakeHintAgeMs(session.core, nowMs);
+          LOGI(
+              "RTR_WAKE_FAST_PATH_FALLBACK_ENTER deviceId=%lu commandId=%s uplinkSeq=%lu lastSeenAtMs=%lu nowMs=%lu ageMs=%lu stateBefore=%s source=%s",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              (unsigned long)session.core.uplinkSeq,
+              (unsigned long)session.core.lastUplinkAtMs,
+              (unsigned long)nowMs,
+              (unsigned long)ageMs,
+              pendingWakeStateLabel(session.core.state),
+              "wake_loop");
+          const char* sendReason = nullptr;
+          if (!trySendRtrPage(session, &sendReason)) {
+            const uint32_t resultNowMs = millis();
+            const uint32_t resultAgeMs = rtrwake::wakeHintAgeMs(session.core, resultNowMs);
+            LOGW(
+                "RTR_WAKE_FAST_PATH_FALLBACK_RESULT deviceId=%lu commandId=%s uplinkSeq=%lu nowMs=%lu ageMs=%lu result=%s reason=%s stateAfter=%s source=%s",
+                (unsigned long)session.core.deviceId,
+                session.commandId[0] ? session.commandId : "-",
+                (unsigned long)session.core.uplinkSeq,
+                (unsigned long)resultNowMs,
+                (unsigned long)resultAgeMs,
+                sendReason && strstr(sendReason, "busy") ? "radio_busy" : "send_failed",
+                sendReason ? sendReason : "page_send_failed",
+                pendingWakeStateLabel(session.core.state),
+                "wake_loop");
+            if (session.core.campaignCount < session.core.maxCampaigns) {
+              transitionPendingWakeState(
+                  session, rtrwake::State::PAGING_WAITING_UPLINK, "page_send_failed_retry");
+              rtrwake::scheduleRetryWaitingUplink(&session.core, nowMs);
+              publishFenceTransportState(
+                  session.core.deviceId,
+                  "paging_waiting_uplink",
+                  sendReason ? sendReason : session.lastReasonLabel,
+                  rtrv1::REASON_PAGE_SEND_FAILED,
+                  false,
+                  false);
+            } else {
+              failPendingWakeSession(
+                  session,
+                  rtrv1::REASON_PAGE_SEND_FAILED,
+                  session.lastReasonLabel[0]
+                      ? session.lastReasonLabel
+                      : rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_SEND_FAILED));
+            }
+          } else {
+            const uint32_t resultNowMs = millis();
+            const uint32_t resultAgeMs = rtrwake::wakeHintAgeMs(session.core, resultNowMs);
+            LOGI(
+                "RTR_WAKE_FAST_PATH_FALLBACK_RESULT deviceId=%lu commandId=%s uplinkSeq=%lu nowMs=%lu ageMs=%lu result=%s stateAfter=%s source=%s",
+                (unsigned long)session.core.deviceId,
+                session.commandId[0] ? session.commandId : "-",
+                (unsigned long)session.core.uplinkSeq,
+                (unsigned long)resultNowMs,
+                (unsigned long)resultAgeMs,
+                "page_tx_ok",
+                pendingWakeStateLabel(session.core.state),
+                "wake_loop");
+          }
+          return true;
+        }
+        break;
+
+      case rtrwake::State::PAGING_AWAITING_ACK:
+        if (rtrwake::awaitingAckWithoutPageSent(session.core)) {
+          noteWakeLoopStage("awaiting_ack_invalid", session);
+          LOGW(
+              "RTR_PAGE_TIMEOUT_STATE_INVALID deviceId=%lu commandId=%s campaignCount=%u pageSent=%d lastPageSentAtMs=%lu ackDeadlineAtMs=%lu",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              (unsigned)session.core.campaignCount,
+              session.core.pageSent ? 1 : 0,
+              (unsigned long)session.core.lastPageSentAtMs,
+              (unsigned long)session.core.pageAckDeadlineAtMs);
+          failPendingWakeSession(
+              session,
+              rtrv1::REASON_PAGE_SEND_FAILED,
+              "page_ack_state_without_page_tx");
+          return true;
+        }
+        if (rtrwake::inFlightAttemptSoftTimedOut(session.core, nowMs)) {
+          if (rtrwake::canRetryAfterTimeout(session.core)) {
+            noteWakeLoopStage("soft_timeout_mark", session);
+            wakeLoopDiag.lastSoftTimeoutAtMs = nowMs;
+            const uint32_t retryAtMs = nowMs + rtrv1::PAGE_RETRY_GRACE_MS;
+            rtrdiag::notePageRetry(
+                &lastPageDiag,
+                retryAtMs,
+                static_cast<uint8_t>(session.core.campaignCount + 1),
+                "timeout_retry_grace");
+            LOGW(
+                "RTR_PAGE_SOFT_TIMEOUT deviceId=%lu commandId=%s campaignCount=%u sessionId=%llu messageId=%lu softDeadlineAtMs=%lu hardDeadlineAtMs=%lu",
+                (unsigned long)session.core.deviceId,
+                session.commandId[0] ? session.commandId : "-",
+                (unsigned)session.core.inFlightPage.campaignCount,
+                (unsigned long long)session.core.inFlightPage.sessionId,
+                (unsigned long)session.core.inFlightPage.messageId,
+                (unsigned long)session.core.inFlightPage.softDeadlineAtMs,
+                (unsigned long)session.core.inFlightPage.hardDeadlineAtMs);
+            LOGI(
+                "RTR_PAGE_SOFT_TIMEOUT_MARKED deviceId=%lu commandId=%s atMs=%lu",
+                (unsigned long)session.core.deviceId,
+                session.commandId[0] ? session.commandId : "-",
+                (unsigned long)nowMs);
+            LOGI(
+                "RTR_PAGE_RETRY_SCHEDULED deviceId=%lu commandId=%s retryAtMs=%lu graceMs=%lu nextCampaign=%u",
+                (unsigned long)session.core.deviceId,
+                session.commandId[0] ? session.commandId : "-",
+                (unsigned long)retryAtMs,
+                (unsigned long)rtrv1::PAGE_RETRY_GRACE_MS,
+                (unsigned)(session.core.campaignCount + 1));
+            wakeLoopDiag.lastRetryScheduleAtMs = nowMs;
+            LOGI(
+                "RTR_RETRY_SCHEDULED_LIGHTWEIGHT deviceId=%lu commandId=%s retryAtMs=%lu",
+                (unsigned long)session.core.deviceId,
+                session.commandId[0] ? session.commandId : "-",
+                (unsigned long)retryAtMs);
+            transitionPendingWakeState(
+                session, rtrwake::State::PAGING_RETRY_GRACE, "page_soft_timeout");
+            rtrwake::scheduleRetryReadyToSend(
+                &session.core,
+                nowMs,
+                rtrv1::PAGE_RETRY_GRACE_MS);
+            syncLastPageDiagFromSession(session);
+            setPendingWakeReason(
+                session,
+                rtrv1::REASON_PAGE_TIMEOUT,
+                rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_TIMEOUT));
+            publishFenceTransportState(
+                session.core.deviceId,
+                "page_timeout_retry_grace",
+                rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_TIMEOUT),
+                rtrv1::REASON_PAGE_TIMEOUT,
+                false,
+                false);
+            return true;
+          }
+        }
+        if (!session.core.scheduledRetry.pending &&
+            rtrwake::inFlightAttemptHardTimedOut(session.core, nowMs)) {
+          noteWakeLoopStage("hard_timeout_final", session);
+          LOGW(
+              "RTR_PAGE_HARD_TIMEOUT deviceId=%lu commandId=%s campaignCount=%u sessionId=%llu messageId=%lu hardDeadlineAtMs=%lu nowMs=%lu",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              (unsigned)session.core.inFlightPage.campaignCount,
+              (unsigned long long)session.core.inFlightPage.sessionId,
+              (unsigned long)session.core.inFlightPage.messageId,
+              (unsigned long)session.core.inFlightPage.hardDeadlineAtMs,
+              (unsigned long)nowMs);
+          LOGI(
+              "RTR_PAGE_ATTEMPT_EXPIRED deviceId=%lu commandId=%s sessionId=%llu messageId=%lu",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              (unsigned long long)session.core.inFlightPage.sessionId,
+              (unsigned long)session.core.inFlightPage.messageId);
+          rtrwake::expireInFlightAttempt(&session.core);
+          syncLastPageDiagFromSession(session);
+          rtrdiag::notePageOutcome(&lastPageDiag, "timeout_final");
+          appendPropertyCommandEvent(
+              activeSimpleCommand.propertyId,
+              activeSimpleCommand.commandId,
+              "rtr_page_timeout_final",
+              nullptr,
+              nullptr);
+          failPendingWakeSession(
+              session,
+              rtrv1::REASON_PAGE_TIMEOUT_FINAL,
+              rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_TIMEOUT_FINAL));
+          return true;
+        }
+        break;
+
+      case rtrwake::State::PAGING_RETRY_GRACE:
+        if (rtrwake::inFlightAttemptHardTimedOut(session.core, nowMs)) {
+          noteWakeLoopStage("retry_grace_expire", session);
+          LOGW(
+              "RTR_PAGE_HARD_TIMEOUT deviceId=%lu commandId=%s campaignCount=%u sessionId=%llu messageId=%lu hardDeadlineAtMs=%lu nowMs=%lu",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              (unsigned)session.core.inFlightPage.campaignCount,
+              (unsigned long long)session.core.inFlightPage.sessionId,
+              (unsigned long)session.core.inFlightPage.messageId,
+              (unsigned long)session.core.inFlightPage.hardDeadlineAtMs,
+              (unsigned long)nowMs);
+          LOGI(
+              "RTR_PAGE_ATTEMPT_EXPIRED deviceId=%lu commandId=%s sessionId=%llu messageId=%lu",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              (unsigned long long)session.core.inFlightPage.sessionId,
+              (unsigned long)session.core.inFlightPage.messageId);
+          rtrwake::expireInFlightAttempt(&session.core);
+          syncLastPageDiagFromSession(session);
+          if (session.core.scheduledRetry.pending &&
+              rtrwake::canRetryAfterTimeout(session.core)) {
+            session.core.campaignCount =
+                session.core.scheduledRetry.nextCampaignCount > 0
+                    ? session.core.scheduledRetry.nextCampaignCount - 1
+                    : session.core.campaignCount;
+            session.core.nextPageAttemptAtMs = session.core.scheduledRetry.retryAtMs;
+            transitionPendingWakeState(
+                session,
+                rtrwake::State::PAGING_READY_TO_SEND,
+                "page_hard_timeout_retry_ready");
+            return true;
+          } else {
+            rtrdiag::notePageOutcome(&lastPageDiag, "timeout_final");
+            appendPropertyCommandEvent(
+                activeSimpleCommand.propertyId,
+                activeSimpleCommand.commandId,
+                "rtr_page_timeout_final",
+                nullptr,
+                nullptr);
+            failPendingWakeSession(
+                session,
+                rtrv1::REASON_PAGE_TIMEOUT_FINAL,
+                rtrv1::reasonCodeLabel(rtrv1::REASON_PAGE_TIMEOUT_FINAL));
+            return true;
+          }
+        }
+        break;
+
+      case rtrwake::State::PAGE_ACKED:
+        noteWakeLoopStage("page_acked", session);
+        transitionPendingWakeState(
+            session, rtrwake::State::SESSION_START_READY, "page_ack_ok");
+        return true;
+
+      case rtrwake::State::SESSION_START_READY:
+        noteWakeLoopStage("begin_dispatch_deferred", session);
+        publishFenceTransportState(session.core.deviceId, "session_starting");
+        session.core.beginDispatchPending = true;
+        transitionPendingWakeState(
+            session, rtrwake::State::SESSION_IN_PROGRESS, "rpv2_start");
+        LOGI(
+            "RTR_BEGIN_DISPATCH_DEFERRED deviceId=%lu commandId=%s campaignCount=%u",
+            (unsigned long)session.core.deviceId,
+            session.commandId[0] ? session.commandId : "-",
+            (unsigned)session.core.campaignCount);
+        return true;
+
+      case rtrwake::State::SESSION_IN_PROGRESS: {
+        if (!session.core.beginDispatchPending || session.core.sessionStarted) break;
+        noteWakeLoopStage("begin_dispatch_start", session);
+        wakeLoopDiag.lastBeginDispatchAtMs = nowMs;
+        LOGI(
+            "RTR_BEGIN_DISPATCH_START deviceId=%lu commandId=%s campaignCount=%u",
+            (unsigned long)session.core.deviceId,
+            session.commandId[0] ? session.commandId : "-",
+            (unsigned)session.core.campaignCount);
+        LOGI(
+            "RPV2_SESSION_BEGIN_DISPATCH deviceId=%lu commandId=%s radioCommandId=%llu",
+            (unsigned long)session.core.deviceId,
+            session.commandId[0] ? session.commandId : "-",
+            (unsigned long long)session.radioCommandId);
+        LOGI(
+            "RTR_TO_RPV2_START deviceId=%lu commandId=%s campaignCount=%u",
+            (unsigned long)session.core.deviceId,
+            session.commandId[0] ? session.commandId : "-",
+            (unsigned)session.core.campaignCount);
+        feedWatchdogIfEnabled();
+        delay(1);
+        session.core.sessionStarted = true;
+        session.core.beginDispatchPending = false;
+        const char* sessionReason = nullptr;
+        if (executeFenceCommandRpv2Plan(
+                session.core.deviceId,
+                session.scopeId,
+                session.radioCommandId,
+                session.sessionNonce,
+                session.commandId,
+                session.plan,
+                &sessionReason)) {
+          LOGI(
+              "RPV2_SESSION_END_APPLIED deviceId=%lu commandId=%s radioCommandId=%llu",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              (unsigned long long)session.radioCommandId);
+          transitionPendingWakeState(
+              session, rtrwake::State::COMPLETED, "rpv2_applied");
+        } else {
+          LOGW(
+              "RPV2_SESSION_END_FAILED deviceId=%lu commandId=%s radioCommandId=%llu reason=%s",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              (unsigned long long)session.radioCommandId,
+              sessionReason ? sessionReason : "rpv2_failed");
+          LOGW(
+              "RTR_TO_RPV2_ABORT deviceId=%lu commandId=%s reason=%s",
+              (unsigned long)session.core.deviceId,
+              session.commandId[0] ? session.commandId : "-",
+              sessionReason ? sessionReason : "session_start_failed");
+          failPendingWakeSession(
+              session,
+              activeSimpleCommand.lastReasonCode != rpv2::REASON_NONE
+                  ? activeSimpleCommand.lastReasonCode
+                  : rtrv1::REASON_SESSION_NOT_STARTED_AFTER_PAGE_ACK,
+              sessionReason && sessionReason[0]
+                  ? sessionReason
+                  : rtrv1::reasonCodeLabel(
+                        rtrv1::REASON_SESSION_NOT_STARTED_AFTER_PAGE_ACK));
+        }
+        return true;
+      }
+
+      case rtrwake::State::COMPLETED:
+        noteWakeLoopStage("session_completed", session);
+        clearPendingWakeSession(idx, "completed");
+        return true;
+
+      case rtrwake::State::FAILED:
+        noteWakeLoopStage("session_failed", session);
+        clearPendingWakeSession(idx, session.lastReasonLabel);
+        return true;
+
+      default:
+        break;
+    }
+    return false;
+}
+
+static void processPendingWakeSessions() {
+  constexpr uint8_t kWakeSessionBudgetPerTick = 2;
+  const uint32_t nowMs = millis();
+  wakeLoopDiag.wakeLoopIterationCount++;
+  uint8_t processedCount = 0;
+  bool shouldYield = false;
+  for (uint8_t i = 0; i < kMaxPendingWakeSessions; ++i) {
+    PendingWakeSession& session = pendingWakeSessions[i];
+    if (!session.core.active) continue;
+    feedWatchdogIfEnabled();
+    processedCount++;
+    const bool advanced = processPendingWakeSessionStep(i, session, nowMs);
+    if (advanced) {
+      shouldYield = true;
+      break;
+    }
+    if (processedCount >= kWakeSessionBudgetPerTick) {
+      wakeLoopDiag.wakeLoopBudgetHitCount++;
+      LOGI(
+          "RTR_WAKE_LOOP_BUDGET_HIT processed=%u activeBudget=%u",
+          (unsigned)processedCount,
+          (unsigned)kWakeSessionBudgetPerTick);
+      shouldYield = true;
+      break;
+    }
+  }
+  if (shouldYield) {
+    wakeLoopDiag.wakeLoopYieldCount++;
+    LOGI(
+        "RTR_WAKE_LOOP_YIELD yields=%lu budgetHits=%lu",
+        (unsigned long)wakeLoopDiag.wakeLoopYieldCount,
+        (unsigned long)wakeLoopDiag.wakeLoopBudgetHitCount);
+    feedWatchdogIfEnabled();
+    delay(1);
+  }
+}
+
+static bool sendLoRaJsonFrame(
+    uint32_t deviceId,
+    MsgType msgType,
+    const JsonVariantConst payload,
+    const char** reason,
+    MatrixLoRaTxReason txReason,
+    const char* callerTag,
+    const LoRaFrame* sourceUplinkOrNull,
+    const char* commandId) {
   const size_t bytes = measureJson(payload);
   if (bytes > cfg::LORA_MAX_PAYLOAD_BYTES) {
     if (reason) *reason = "payload_too_large";
@@ -2768,7 +5888,12 @@ static bool sendLoRaJsonFrame(uint32_t deviceId, MsgType msgType, const JsonVari
     return false;
   }
 
-  const bool ok = lora.send(tx);
+  const bool ok = sendMatrixLoRaFrame(
+      tx,
+      txReason,
+      sourceUplinkOrNull,
+      callerTag,
+      commandId);
   const bool chunked = payload["chunked"].is<bool>() && payload["chunked"].as<bool>();
   const int part = payload["part"] | 0;
   const int total = payload["total"] | 1;
@@ -2873,46 +5998,79 @@ static bool splitPointArrayForPayload(
 }
 
 static bool sendFenceCommandChunked(uint32_t deviceId, const JsonVariantConst payload, const char** reason) {
-  const JsonArrayConst points = payload["points"].as<JsonArrayConst>();
+  const FencePointsResolution pointsResolution = resolveFencePoints(payload);
+  const JsonArrayConst points = pointsResolution.points;
+  const char* commandId = pickFirstText(
+      payload["cmd_id"],
+      payload["command_id"],
+      payload["payload"]["cmd_id"],
+      payload["payload"]["command_id"]);
   if (points.isNull()) {
+    AS_MATRIX_FENCE_POINTS_RESOLUTION_FAIL(
+        commandId[0] ? commandId : "-",
+        "root.points,payload.points,payload.payload.points",
+        "none",
+        "missing_or_invalid_points");
     if (reason) *reason = "missing_points";
     return false;
+  }
+  AS_MATRIX_FENCE_POINTS_RESOLVED(
+      commandId[0] ? commandId : "-",
+      pointsResolution.source,
+      points.size());
+
+  if (payloadUsesFenceRpv2(payload)) {
+    return sendFenceCommandRpv2Session(
+        deviceId,
+        payload,
+        commandId,
+        pointsResolution,
+        reason);
   }
 
   uint8_t starts[cfg::MAX_POLYGON_POINTS]{};
   uint8_t ends[cfg::MAX_POLYGON_POINTS]{};
   uint8_t chunkCount = 0;
-  if (!splitPointArrayForPayload(points, starts, ends, chunkCount, false, 0, 0, reason)) return false;
+  if (!splitFencePointArrayForPayload(payload, points, starts, ends, chunkCount, reason)) return false;
 
   for (uint8_t part = 0; part < chunkCount; ++part) {
     StaticJsonDocument<384> chunkDoc;
-    chunkDoc["chunked"] = true;
-    chunkDoc["part"] = part;
-    chunkDoc["total"] = chunkCount;
-    const char* commandId = pickFirstText(payload["cmd_id"], payload["command_id"]);
-    const char* scopeId = pickFirstText(payload["scope_id"], payload["property_scope_id"]);
-    const char* matrixGatewayId = pickFirstText(payload["matrix_gateway_id"]);
-    const char* polygonKind = pickFirstText(payload["polygon_kind"], payload["polygonKind"]);
-    const char* originDocType = pickFirstText(payload["origin_doc_type"], payload["originDocType"]);
-    const char* originDocId = pickFirstText(payload["origin_doc_id"], payload["originDocId"]);
-    if (commandId[0] != '\0') chunkDoc["cmd_id"] = commandId;
-    if (scopeId[0] != '\0') chunkDoc["scope_id"] = scopeId;
-    if (matrixGatewayId[0] != '\0') chunkDoc["matrix_gateway_id"] = matrixGatewayId;
-    if (polygonKind[0] != '\0') chunkDoc["polygon_kind"] = polygonKind;
-    if (originDocType[0] != '\0') chunkDoc["origin_doc_type"] = originDocType;
-    if (originDocId[0] != '\0') chunkDoc["origin_doc_id"] = originDocId;
-    if (!payload["requested_at_ms"].isNull()) {
-      chunkDoc["requested_at_ms"] = payload["requested_at_ms"];
-    }
-    JsonArray chunkPoints = chunkDoc["points"].to<JsonArray>();
-    for (uint8_t i = starts[part]; i < ends[part]; ++i) {
-      const JsonArrayConst srcPair = points[i].as<JsonArrayConst>();
-      JsonArray dstPair = chunkPoints.add<JsonArray>();
-      dstPair.add(srcPair[0].as<double>());
-      dstPair.add(srcPair[1].as<double>());
+    if (!buildFenceChunkPayload(
+            chunkDoc,
+            payload,
+            points,
+            commandId,
+            part,
+            chunkCount,
+            starts[part],
+            ends[part],
+            reason)) {
+      return false;
     }
 
-    if (!sendLoRaJsonFrame(deviceId, MsgType::SET_FENCE, chunkDoc.as<JsonVariantConst>(), reason)) return false;
+    const size_t jsonBytes = measureJson(chunkDoc.as<JsonVariantConst>());
+    size_t packedBytes = 0;
+    size_t cipherBytes = 0;
+    size_t radioBytes = 0;
+    estimateLoRaPayloadSizes(jsonBytes, &packedBytes, &cipherBytes, &radioBytes);
+    AS_MATRIX_FENCE_CHUNK_SIZE_EVAL(
+        commandId[0] ? commandId : "-",
+        part,
+        chunkCount,
+        jsonBytes,
+        packedBytes,
+        cipherBytes,
+        cfg::LORA_MAX_PAYLOAD_BYTES);
+
+    if (!sendLoRaJsonFrame(
+            deviceId,
+            MsgType::SET_FENCE,
+            chunkDoc.as<JsonVariantConst>(),
+            reason,
+            MatrixLoRaTxReason::CommandDispatch,
+            "sendFenceCommandChunked",
+            nullptr,
+            activeSimpleCommand.commandId)) return false;
   }
   return true;
 }
@@ -2974,7 +6132,15 @@ static bool sendHerdingPlanChunked(uint32_t deviceId, const JsonVariantConst pay
         dstPair.add(srcPair[1].as<double>());
       }
 
-      if (!sendLoRaJsonFrame(deviceId, MsgType::SET_HERDING_PLAN, chunkDoc.as<JsonVariantConst>(), reason)) return false;
+      if (!sendLoRaJsonFrame(
+              deviceId,
+              MsgType::SET_HERDING_PLAN,
+              chunkDoc.as<JsonVariantConst>(),
+              reason,
+              MatrixLoRaTxReason::CommandDispatch,
+              "sendHerdingPlanChunked",
+              nullptr,
+              herdOp.loraCommandId)) return false;
     }
   }
 
@@ -3000,37 +6166,632 @@ static void pollQueueCommandStream() {
   if (queueStreamConnected) closeQueueCommandStream("poll_only");
 }
 
-static bool loadNextQueuedCommand(String& commandIdOut, DynamicJsonDocument& commandDocOut) {
-  if (!queuePollingConfigured()) return false;
-  String body;
-  if (!rtdbRead(queueRootPath(), body)) return false;
-  body.trim();
-  if (body.isEmpty() || body == "null") return false;
+static String queueBodyPrefix(const String& body, size_t maxLen = 220) {
+  String prefix = body;
+  prefix.replace("\r", " ");
+  prefix.replace("\n", " ");
+  prefix.trim();
+  if (prefix.length() > maxLen) {
+    prefix = prefix.substring(0, maxLen);
+    prefix += "...";
+  }
+  return prefix;
+}
 
-  DynamicJsonDocument queueDoc(16384);
-  if (deserializeJson(queueDoc, body) != DeserializationError::Ok ||
-      !queueDoc.is<JsonObjectConst>()) {
+static const char* queueBodyShape(const DynamicJsonDocument& doc) {
+  if (doc.is<JsonArrayConst>()) return "array";
+  if (doc.is<JsonObjectConst>()) return "object";
+  if (doc.is<const char*>()) return "string";
+  if (doc.is<bool>()) return "bool";
+  if (doc.is<long>() || doc.is<unsigned long>() || doc.is<float>() || doc.is<double>()) return "number";
+  if (doc.isNull()) return "null";
+  return "unknown";
+}
+
+static const char* deserializationErrorName(DeserializationError error) {
+  switch (error.code()) {
+    case DeserializationError::Ok:
+      return "Ok";
+    case DeserializationError::EmptyInput:
+      return "EmptyInput";
+    case DeserializationError::IncompleteInput:
+      return "IncompleteInput";
+    case DeserializationError::InvalidInput:
+      return "InvalidInput";
+    case DeserializationError::NoMemory:
+      return "NoMemory";
+    case DeserializationError::TooDeep:
+      return "TooDeep";
+    default:
+      return "Unknown";
+  }
+}
+
+static bool queueBodyLooksSemanticallyEmpty(const String& body) {
+  String normalized;
+  normalized.reserve(body.length());
+  for (size_t i = 0; i < body.length(); ++i) {
+    const char ch = body[i];
+    if (ch == ' ' || ch == '\r' || ch == '\n' || ch == '\t') continue;
+    if (ch >= '0' && ch <= '9') continue;
+    normalized += static_cast<char>(tolower(static_cast<unsigned char>(ch)));
+    if (normalized.length() > 12) break;
+  }
+  return normalized == "null";
+}
+
+static bool sanitizeQueueResponseBody(String& body, size_t& trimmedPrefixBytes, char& firstJsonChar) {
+  trimmedPrefixBytes = 0;
+  firstJsonChar = '\0';
+  const size_t len = body.length();
+  size_t idx = 0;
+  while (idx < len) {
+    const char ch = body[idx];
+    if (ch == '{' || ch == '[') {
+      firstJsonChar = ch;
+      break;
+    }
+    ++idx;
+  }
+  if (idx >= len) return false;
+  if (idx > 0) {
+    body.remove(0, idx);
+    trimmedPrefixBytes = idx;
+  }
+  return true;
+}
+
+static FencePointsResolution resolveFencePoints(const JsonVariantConst root) {
+  FencePointsResolution resolution;
+  const JsonArrayConst rootPoints = root["points"].as<JsonArrayConst>();
+  if (!rootPoints.isNull()) {
+    resolution.points = rootPoints;
+    resolution.source = "root.points";
+    return resolution;
+  }
+
+  const JsonVariantConst payload = root["payload"];
+  const JsonArrayConst payloadPoints = payload["points"].as<JsonArrayConst>();
+  if (!payloadPoints.isNull()) {
+    resolution.points = payloadPoints;
+    resolution.source = "payload.points";
+    return resolution;
+  }
+
+  const JsonArrayConst nestedPayloadPoints = payload["payload"]["points"].as<JsonArrayConst>();
+  if (!nestedPayloadPoints.isNull()) {
+    resolution.points = nestedPayloadPoints;
+    resolution.source = "payload.payload.points";
+    return resolution;
+  }
+
+  return resolution;
+}
+
+static void promoteFencePayloadFields(
+    JsonObject payloadObject,
+    JsonObjectConst nestedPayload,
+    JsonVariant rootValue) {
+  if (!payloadObject["points"].is<JsonArrayConst>() &&
+      nestedPayload["points"].is<JsonArrayConst>()) {
+    payloadObject["points"] = nestedPayload["points"].as<JsonArrayConst>();
+  }
+  if (!payloadObject["cmd_id"].is<const char*>() &&
+      nestedPayload["cmd_id"].is<const char*>()) {
+    payloadObject["cmd_id"] = nestedPayload["cmd_id"].as<const char*>();
+  }
+  if (!payloadObject["command_id"].is<const char*>() &&
+      nestedPayload["command_id"].is<const char*>()) {
+    payloadObject["command_id"] = nestedPayload["command_id"].as<const char*>();
+  }
+  if (!payloadObject["property_id"].is<const char*>() &&
+      nestedPayload["property_id"].is<const char*>()) {
+    payloadObject["property_id"] = nestedPayload["property_id"].as<const char*>();
+  }
+  if (!payloadObject["property_scope_id"].is<const char*>() &&
+      nestedPayload["property_scope_id"].is<const char*>()) {
+    payloadObject["property_scope_id"] = nestedPayload["property_scope_id"].as<const char*>();
+  }
+  if (!payloadObject["target_device_ids"].is<JsonArrayConst>() &&
+      nestedPayload["target_device_ids"].is<JsonArrayConst>()) {
+    payloadObject["target_device_ids"] = nestedPayload["target_device_ids"].as<JsonArrayConst>();
+  }
+  if (!payloadObject["target_gateway_ids"].is<JsonArrayConst>() &&
+      nestedPayload["target_gateway_ids"].is<JsonArrayConst>()) {
+    payloadObject["target_gateway_ids"] = nestedPayload["target_gateway_ids"].as<JsonArrayConst>();
+  }
+  if (!payloadObject["matrix_gateway_id"].is<const char*>() &&
+      nestedPayload["matrix_gateway_id"].is<const char*>()) {
+    payloadObject["matrix_gateway_id"] = nestedPayload["matrix_gateway_id"].as<const char*>();
+  }
+  if (!payloadObject["matrixRuntimeId"].is<const char*>() &&
+      nestedPayload["matrixRuntimeId"].is<const char*>()) {
+    payloadObject["matrixRuntimeId"] = nestedPayload["matrixRuntimeId"].as<const char*>();
+  }
+  if (!payloadObject["polygon_kind"].is<const char*>() &&
+      nestedPayload["polygon_kind"].is<const char*>()) {
+    payloadObject["polygon_kind"] = nestedPayload["polygon_kind"].as<const char*>();
+  }
+  if (!payloadObject["origin_doc_type"].is<const char*>() &&
+      nestedPayload["origin_doc_type"].is<const char*>()) {
+    payloadObject["origin_doc_type"] = nestedPayload["origin_doc_type"].as<const char*>();
+  }
+  if (!payloadObject["origin_doc_id"].is<const char*>() &&
+      nestedPayload["origin_doc_id"].is<const char*>()) {
+    payloadObject["origin_doc_id"] = nestedPayload["origin_doc_id"].as<const char*>();
+  }
+
+  if (!payloadObject["points"].is<JsonArrayConst>() &&
+      rootValue["points"].is<JsonArrayConst>()) {
+    payloadObject["points"] = rootValue["points"].as<JsonArrayConst>();
+  }
+  if (!payloadObject["cmd_id"].is<const char*>() &&
+      rootValue["command_id"].is<const char*>()) {
+    payloadObject["cmd_id"] = rootValue["command_id"].as<const char*>();
+  }
+  if (!payloadObject["command_id"].is<const char*>() &&
+      rootValue["command_id"].is<const char*>()) {
+    payloadObject["command_id"] = rootValue["command_id"].as<const char*>();
+  }
+}
+
+static void estimateLoRaPayloadSizes(
+    size_t jsonBytes,
+    size_t* packedBytes,
+    size_t* cipherBytes,
+    size_t* radioBytes) {
+  const size_t safeJsonBytes = jsonBytes;
+  const size_t packed = 4 + 8 + 1 + 4 + 4 + 12 + 1 + safeJsonBytes + 16;
+  const size_t cipher = packed >= 16 ? packed - 16 : 0;
+  const size_t radio = 12 + cipher + 16;
+  if (packedBytes) *packedBytes = packed;
+  if (cipherBytes) *cipherBytes = cipher;
+  if (radioBytes) *radioBytes = radio;
+}
+
+static bool buildFenceChunkPayload(
+    StaticJsonDocument<384>& chunkDoc,
+    const JsonVariantConst payload,
+    const JsonArrayConst& points,
+    const char* commandId,
+    uint8_t part,
+    uint8_t total,
+    uint8_t start,
+    uint8_t end,
+    const char** reason) {
+  chunkDoc.clear();
+  chunkDoc["chunked"] = true;
+  chunkDoc["part"] = part;
+  chunkDoc["total"] = total;
+
+  const char* scopeId = pickFirstText(payload["scope_id"], payload["property_scope_id"]);
+  const char* polygonKind = pickFirstText(payload["polygon_kind"], payload["polygonKind"]);
+  const char* originDocType = pickFirstText(payload["origin_doc_type"], payload["originDocType"]);
+  const char* originDocId = pickFirstText(payload["origin_doc_id"], payload["originDocId"]);
+  if (commandId && commandId[0] != '\0') chunkDoc["cmd_id"] = commandId;
+  if (scopeId[0] != '\0') chunkDoc["scope_id"] = scopeId;
+  if (polygonKind[0] != '\0') chunkDoc["polygon_kind"] = polygonKind;
+  if (originDocType[0] != '\0') chunkDoc["origin_doc_type"] = originDocType;
+  if (originDocId[0] != '\0') chunkDoc["origin_doc_id"] = originDocId;
+
+  JsonArray chunkPoints = chunkDoc["points"].to<JsonArray>();
+  for (uint8_t i = start; i < end; ++i) {
+    double lat = 0.0;
+    double lon = 0.0;
+    if (!readPointPair(points[i].as<JsonArrayConst>(), lat, lon)) {
+      if (reason) *reason = "invalid_point_value";
+      return false;
+    }
+    JsonArray dstPair = chunkPoints.add<JsonArray>();
+    dstPair.add(lat);
+    dstPair.add(lon);
+  }
+  return true;
+}
+
+static bool splitFencePointArrayForPayload(
+    const JsonVariantConst payload,
+    const JsonArrayConst& points,
+    uint8_t starts[cfg::MAX_POLYGON_POINTS],
+    uint8_t ends[cfg::MAX_POLYGON_POINTS],
+    uint8_t& chunkCount,
+    const char** reason) {
+  chunkCount = 0;
+  const uint8_t totalPoints = (uint8_t)points.size();
+  const rtcmd::ValidationCode countCode =
+      rtcmd::validatePointCount(totalPoints, cfg::MAX_POLYGON_POINTS);
+  if (countCode != rtcmd::ValidationCode::kOk) {
+    if (reason) *reason = rtcmd::validationCodeToReason(countCode);
     return false;
+  }
+
+  const char* commandId = pickFirstText(
+      payload["cmd_id"],
+      payload["command_id"],
+      payload["payload"]["cmd_id"],
+      payload["payload"]["command_id"]);
+  uint8_t start = 0;
+  while (start < totalPoints) {
+    if (chunkCount >= cfg::MAX_POLYGON_POINTS) {
+      if (reason) *reason = "chunk_count_exceeded";
+      return false;
+    }
+
+    const uint8_t remainingPoints = totalPoints - start;
+    const uint8_t worstCaseTotal = remainingPoints;
+    const uint8_t worstCasePart = worstCaseTotal > 0 ? (uint8_t)(worstCaseTotal - 1) : 0;
+    bool fitFound = false;
+
+    for (uint8_t end = totalPoints; end > start; --end) {
+      StaticJsonDocument<384> candidateDoc;
+      if (!buildFenceChunkPayload(
+              candidateDoc,
+              payload,
+              points,
+              commandId,
+              worstCasePart,
+              worstCaseTotal,
+              start,
+              end,
+              reason)) {
+        return false;
+      }
+
+      const size_t jsonBytes = measureJson(candidateDoc.as<JsonVariantConst>());
+      size_t packedBytes = 0;
+      size_t cipherBytes = 0;
+      size_t radioBytes = 0;
+      estimateLoRaPayloadSizes(jsonBytes, &packedBytes, &cipherBytes, &radioBytes);
+      const bool fit = jsonBytes <= cfg::LORA_MAX_PAYLOAD_BYTES;
+      AS_MATRIX_FENCE_CHUNK_PLAN(
+          commandId[0] ? commandId : "-",
+          start,
+          end,
+          end - start,
+          jsonBytes,
+          packedBytes,
+          cipherBytes,
+          cfg::LORA_MAX_PAYLOAD_BYTES,
+          fit);
+      if (!fit) continue;
+
+      starts[chunkCount] = start;
+      ends[chunkCount] = end;
+      chunkCount++;
+      start = end;
+      fitFound = true;
+      break;
+    }
+
+    if (fitFound) continue;
+
+    if (reason) {
+      *reason = remainingPoints <= 1
+                    ? "fence_single_point_chunk_too_large"
+                    : "point_chunk_too_large";
+    }
+    return false;
+  }
+
+  return true;
+}
+
+static QueueLoadResult loadNextQueuedCommand(String& commandIdOut, DynamicJsonDocument& commandDocOut) {
+  if (!queuePollingConfigured()) return QueueLoadResult::kEmpty;
+  const String runtimeId = matrixCloudId();
+  String body;
+  CloudWriteTrace trace;
+  if (!rtdbRead(queueRootPath(), body, &trace)) {
+    AS_MATRIX_QUEUE_FETCH_HTTP_FAIL(
+        runtimeId.c_str(),
+        strlen(cfg::RTDB_QUEUE_KEY),
+        trace.httpStatus,
+        trace.stage,
+        trace.detail);
+    return QueueLoadResult::kContentError;
+  }
+  body.trim();
+  if (body.isEmpty() || body == "null" || queueBodyLooksSemanticallyEmpty(body)) {
+    const String bodyPrefix = queueBodyPrefix(body);
+    AS_MATRIX_INFO(
+        "QUEUE_FETCH_HTTP_OK_EMPTY_BODY",
+        "runtimeId=%s queueKeyLen=%d httpStatus=%d bodyLen=%d emptyKind=%s bodyPrefix=%s",
+        runtimeId.c_str(),
+        (int)strlen(cfg::RTDB_QUEUE_KEY),
+        trace.httpStatus,
+        (int)body.length(),
+        body.isEmpty() ? "empty" : "null",
+        bodyPrefix.c_str());
+    return QueueLoadResult::kEmpty;
+  }
+
+  size_t trimmedPrefixBytes = 0;
+  char firstJsonChar = '\0';
+  if (!sanitizeQueueResponseBody(body, trimmedPrefixBytes, firstJsonChar)) {
+    const String bodyPrefix = queueBodyPrefix(body);
+    if (queueBodyLooksSemanticallyEmpty(body)) {
+      AS_MATRIX_INFO(
+          "QUEUE_FETCH_HTTP_OK_EMPTY_BODY",
+          "runtimeId=%s queueKeyLen=%d httpStatus=%d bodyLen=%d emptyKind=sanitized_null bodyPrefix=%s",
+          runtimeId.c_str(),
+          (int)strlen(cfg::RTDB_QUEUE_KEY),
+          trace.httpStatus,
+          (int)body.length(),
+          bodyPrefix.c_str());
+      return QueueLoadResult::kEmpty;
+    }
+    AS_MATRIX_QUEUE_FETCH_HTTP_OK_UNEXPECTED_SHAPE(
+        runtimeId.c_str(),
+        strlen(cfg::RTDB_QUEUE_KEY),
+        trace.httpStatus,
+        body.length(),
+        "no_json_start",
+        bodyPrefix.c_str());
+    return QueueLoadResult::kContentError;
+  }
+  if (trimmedPrefixBytes > 0) {
+    AS_MATRIX_QUEUE_BODY_SANITIZED(
+        runtimeId.c_str(),
+        trimmedPrefixBytes,
+        firstJsonChar,
+        body.length());
+  }
+  const String bodyPrefix = queueBodyPrefix(body);
+  const size_t queueDocCapacity = body.length() + 4096 > 16384 ? body.length() + 4096 : 16384;
+  DynamicJsonDocument queueDoc(queueDocCapacity);
+  DeserializationError queueError = deserializeJson(queueDoc, body);
+  if (queueError != DeserializationError::Ok) {
+    AS_MATRIX_QUEUE_FETCH_HTTP_OK_INVALID_JSON(
+        runtimeId.c_str(),
+        strlen(cfg::RTDB_QUEUE_KEY),
+        trace.httpStatus,
+        body.length(),
+        bodyPrefix.c_str());
+    AS_MATRIX_QUEUE_DESERIALIZE_ERROR(
+        runtimeId.c_str(),
+        trace.httpStatus,
+        body.length(),
+        deserializationErrorName(queueError),
+        queueDocCapacity,
+        bodyPrefix.c_str());
+    return QueueLoadResult::kContentError;
   }
 
   String selectedId;
   String selectedBody;
-  for (JsonPairConst kv : queueDoc.as<JsonObjectConst>()) {
-    const String key = kv.key().c_str();
-    if (!selectedId.isEmpty() && key >= selectedId) continue;
-    String candidateBody;
-    serializeJson(kv.value(), candidateBody);
-    selectedId = key;
-    selectedBody = candidateBody;
+  int itemCount = 0;
+  if (queueDoc.is<JsonArrayConst>()) {
+    JsonArrayConst items = queueDoc.as<JsonArrayConst>();
+    itemCount = (int)items.size();
+    if (itemCount == 0) {
+      AS_MATRIX_QUEUE_FETCH_HTTP_OK_EMPTY_ARRAY(
+          runtimeId.c_str(),
+          strlen(cfg::RTDB_QUEUE_KEY),
+          trace.httpStatus,
+          body.length(),
+          bodyPrefix.c_str());
+      return QueueLoadResult::kEmpty;
+    }
+    for (JsonVariantConst item : items) {
+      if (!item.is<JsonObjectConst>()) continue;
+      const char* candidateId =
+          pickFirstText(item["commandId"], item["command_id"], item["payload"]["commandId"], item["payload"]["command_id"]);
+      if (!candidateId[0]) continue;
+      String candidateBody;
+      if (item["payload"].is<JsonObjectConst>()) {
+        serializeJson(item["payload"], candidateBody);
+      } else {
+        serializeJson(item, candidateBody);
+      }
+      if (!selectedId.isEmpty() && String(candidateId) >= selectedId) continue;
+      selectedId = candidateId;
+      selectedBody = candidateBody;
+    }
+    AS_MATRIX_QUEUE_FETCH_HTTP_OK_NONEMPTY_ARRAY(
+        runtimeId.c_str(),
+        strlen(cfg::RTDB_QUEUE_KEY),
+        trace.httpStatus,
+        body.length(),
+        itemCount,
+        selectedId.isEmpty() ? "-" : selectedId.c_str(),
+        bodyPrefix.c_str());
+  } else if (queueDoc.is<JsonObjectConst>()) {
+    JsonObjectConst queueObject = queueDoc.as<JsonObjectConst>();
+    if (queueObject.containsKey("command_id") || queueObject.containsKey("commandId")) {
+      selectedId = pickFirstText(
+          queueObject["commandId"],
+          queueObject["command_id"],
+          queueObject["payload"]["commandId"],
+          queueObject["payload"]["command_id"]);
+      serializeJson(queueObject, selectedBody);
+      itemCount = selectedId.isEmpty() ? 0 : 1;
+      AS_MATRIX_QUEUE_FETCH_HTTP_OK_OBJECT(
+          runtimeId.c_str(),
+          strlen(cfg::RTDB_QUEUE_KEY),
+          trace.httpStatus,
+          body.length(),
+          itemCount,
+          selectedId.isEmpty() ? "-" : selectedId.c_str(),
+          bodyPrefix.c_str());
+      if (selectedId.isEmpty()) {
+        AS_MATRIX_QUEUE_PARSE_FAIL(
+            runtimeId.c_str(),
+            strlen(cfg::RTDB_QUEUE_KEY),
+            "simple_object_missing_command_id",
+            bodyPrefix.c_str());
+        return QueueLoadResult::kContentError;
+      }
+    } else {
+    itemCount = (int)queueObject.size();
+    if (itemCount == 0) {
+      AS_MATRIX_INFO(
+          "QUEUE_FETCH_HTTP_OK_EMPTY_OBJECT",
+          "runtimeId=%s queueKeyLen=%d httpStatus=%d bodyLen=%d bodyPrefix=%s",
+          runtimeId.c_str(),
+          (int)strlen(cfg::RTDB_QUEUE_KEY),
+          trace.httpStatus,
+          (int)body.length(),
+          bodyPrefix.c_str());
+      return QueueLoadResult::kEmpty;
+    }
+    for (JsonPairConst kv : queueObject) {
+      const String key = kv.key().c_str();
+      if (!selectedId.isEmpty() && key >= selectedId) continue;
+      String candidateBody;
+      serializeJson(kv.value(), candidateBody);
+      selectedId = key;
+      selectedBody = candidateBody;
+    }
+    AS_MATRIX_QUEUE_FETCH_HTTP_OK_OBJECT(
+        runtimeId.c_str(),
+        strlen(cfg::RTDB_QUEUE_KEY),
+        trace.httpStatus,
+        body.length(),
+        itemCount,
+        selectedId.isEmpty() ? "-" : selectedId.c_str(),
+        bodyPrefix.c_str());
+    }
+  } else {
+    AS_MATRIX_QUEUE_FETCH_HTTP_OK_UNEXPECTED_SHAPE(
+        runtimeId.c_str(),
+        strlen(cfg::RTDB_QUEUE_KEY),
+        trace.httpStatus,
+        body.length(),
+        queueBodyShape(queueDoc),
+        bodyPrefix.c_str());
+    return QueueLoadResult::kContentError;
   }
-  if (selectedId.isEmpty() || selectedBody.isEmpty()) return false;
+  if (selectedId.isEmpty() || selectedBody.isEmpty()) {
+    AS_MATRIX_QUEUE_PARSE_FAIL(
+        runtimeId.c_str(),
+        strlen(cfg::RTDB_QUEUE_KEY),
+        "selected_item_missing",
+        bodyPrefix.c_str());
+    return QueueLoadResult::kContentError;
+  }
 
   commandDocOut.clear();
-  if (deserializeJson(commandDocOut, selectedBody) != DeserializationError::Ok) {
-    return false;
+  const size_t commandDocCapacity =
+      selectedBody.length() + 2048 > commandDocOut.capacity()
+          ? selectedBody.length() + 2048
+          : commandDocOut.capacity();
+  commandDocOut.garbageCollect();
+  DeserializationError commandError = deserializeJson(commandDocOut, selectedBody);
+  if (commandError != DeserializationError::Ok) {
+    AS_MATRIX_QUEUE_PARSE_FAIL(
+        runtimeId.c_str(),
+        strlen(cfg::RTDB_QUEUE_KEY),
+        deserializationErrorName(commandError),
+        queueBodyPrefix(selectedBody).c_str());
+    AS_MATRIX_QUEUE_DESERIALIZE_ERROR(
+        runtimeId.c_str(),
+        trace.httpStatus,
+        selectedBody.length(),
+        deserializationErrorName(commandError),
+        commandDocCapacity,
+        queueBodyPrefix(selectedBody).c_str());
+    return QueueLoadResult::kContentError;
   }
+  if (!commandDocOut.is<JsonObjectConst>()) {
+    AS_MATRIX_QUEUE_PARSE_FAIL(
+        runtimeId.c_str(),
+        strlen(cfg::RTDB_QUEUE_KEY),
+        "selected_item_not_object",
+        queueBodyPrefix(selectedBody).c_str());
+    return QueueLoadResult::kContentError;
+  }
+
+  JsonObject payloadObject;
+  if (commandDocOut["payload"].is<JsonObject>()) {
+    payloadObject = commandDocOut["payload"].as<JsonObject>();
+  } else {
+    payloadObject = commandDocOut.createNestedObject("payload");
+  }
+  const JsonObjectConst nestedPayload =
+      payloadObject["payload"].is<JsonObjectConst>()
+          ? payloadObject["payload"].as<JsonObjectConst>()
+          : JsonObjectConst();
+  promoteFencePayloadFields(payloadObject, nestedPayload, commandDocOut.as<JsonVariant>());
+
+  if (!commandDocOut["command"].is<const char*>() &&
+      payloadObject["command"].is<const char*>()) {
+    commandDocOut["command"] = payloadObject["command"].as<const char*>();
+  }
+  if (!commandDocOut["commandId"].is<const char*>() &&
+      payloadObject["commandId"].is<const char*>()) {
+    commandDocOut["commandId"] = payloadObject["commandId"].as<const char*>();
+  }
+  if (!commandDocOut["commandId"].is<const char*>() &&
+      payloadObject["cmd_id"].is<const char*>()) {
+    commandDocOut["commandId"] = payloadObject["cmd_id"].as<const char*>();
+  }
+  if (!commandDocOut["propertyId"].is<const char*>() &&
+      payloadObject["propertyId"].is<const char*>()) {
+    commandDocOut["propertyId"] = payloadObject["propertyId"].as<const char*>();
+  }
+  if (!commandDocOut["propertyId"].is<const char*>() &&
+      payloadObject["property_id"].is<const char*>()) {
+    commandDocOut["propertyId"] = payloadObject["property_id"].as<const char*>();
+  }
+  if (!commandDocOut["propertyScopeId"].is<const char*>() &&
+      payloadObject["propertyScopeId"].is<const char*>()) {
+    commandDocOut["propertyScopeId"] = payloadObject["propertyScopeId"].as<const char*>();
+  }
+  if (!commandDocOut["propertyScopeId"].is<const char*>() &&
+      payloadObject["property_scope_id"].is<const char*>()) {
+    commandDocOut["propertyScopeId"] = payloadObject["property_scope_id"].as<const char*>();
+  }
+  if (!commandDocOut["matrixGatewayId"].is<const char*>() &&
+      payloadObject["matrixGatewayId"].is<const char*>()) {
+    commandDocOut["matrixGatewayId"] = payloadObject["matrixGatewayId"].as<const char*>();
+  }
+  if (!commandDocOut["matrixGatewayId"].is<const char*>() &&
+      payloadObject["matrix_gateway_id"].is<const char*>()) {
+    commandDocOut["matrixGatewayId"] = payloadObject["matrix_gateway_id"].as<const char*>();
+  }
+  if (!commandDocOut["targetDeviceIds"].is<JsonArrayConst>() &&
+      payloadObject["targetDeviceIds"].is<JsonArrayConst>()) {
+    commandDocOut["targetDeviceIds"] = payloadObject["targetDeviceIds"].as<JsonArrayConst>();
+  }
+  if (!commandDocOut["targetDeviceIds"].is<JsonArrayConst>() &&
+      payloadObject["target_device_ids"].is<JsonArrayConst>()) {
+    commandDocOut["targetDeviceIds"] = payloadObject["target_device_ids"].as<JsonArrayConst>();
+  }
+  if (!commandDocOut["targetGatewayIds"].is<JsonArrayConst>() &&
+      payloadObject["targetGatewayIds"].is<JsonArrayConst>()) {
+    commandDocOut["targetGatewayIds"] = payloadObject["targetGatewayIds"].as<JsonArrayConst>();
+  }
+  if (!commandDocOut["targetGatewayIds"].is<JsonArrayConst>() &&
+      payloadObject["target_gateway_ids"].is<JsonArrayConst>()) {
+    commandDocOut["targetGatewayIds"] = payloadObject["target_gateway_ids"].as<JsonArrayConst>();
+  }
+  if (!commandDocOut["createdAtMs"].is<uint64_t>() &&
+      !payloadObject["createdAtMs"].isNull()) {
+    commandDocOut["createdAtMs"] = payloadObject["createdAtMs"].as<uint64_t>();
+  }
+  if (!commandDocOut["createdAtMs"].is<uint64_t>() &&
+      !payloadObject["created_at_ms"].isNull()) {
+    commandDocOut["createdAtMs"] = payloadObject["created_at_ms"].as<uint64_t>();
+  }
+  if (!commandDocOut["expiresAtMs"].is<uint64_t>() &&
+      !payloadObject["expiresAtMs"].isNull()) {
+    commandDocOut["expiresAtMs"] = payloadObject["expiresAtMs"].as<uint64_t>();
+  }
+  if (!commandDocOut["expiresAtMs"].is<uint64_t>() &&
+      !payloadObject["expires_at_ms"].isNull()) {
+    commandDocOut["expiresAtMs"] = payloadObject["expires_at_ms"].as<uint64_t>();
+  }
+
   commandIdOut = selectedId;
-  return true;
+  const char* command = commandDocOut["command"] | "";
+  const char* propertyId = commandDocOut["propertyId"] | "";
+  AS_MATRIX_QUEUE_ITEM_FOUND(
+      runtimeId.c_str(),
+      commandIdOut.c_str(),
+      command,
+      propertyId,
+      commandDocOut["payload"].is<JsonObjectConst>());
+  return QueueLoadResult::kLoaded;
 }
 
 static bool deleteQueuedCommand(const String& commandId) {
@@ -3065,7 +6826,9 @@ static bool dispatchQueuedSimpleCommand(
   clearActiveSimpleCommand();
   activeSimpleCommand.active = true;
   activeSimpleCommand.dispatchAtMs = millis();
+  activeSimpleCommand.lastProgressAtMs = activeSimpleCommand.dispatchAtMs;
   activeSimpleCommand.lastAttemptAtMs = 0;
+  activeSimpleCommand.lastReasonCode = rpv2::REASON_NONE;
   activeSimpleCommand.createdAtMs = commandDoc["createdAtMs"] | 0ULL;
   activeSimpleCommand.expiresAtMs = commandDoc["expiresAtMs"] | 0ULL;
   copyStringToBuffer(activeSimpleCommand.commandId, sizeof(activeSimpleCommand.commandId), commandId.c_str());
@@ -3102,6 +6865,10 @@ static bool dispatchQueuedSimpleCommand(
           payloadDoc["origin_doc_id"],
           payloadDoc["originDocId"],
           payloadDoc["operation_id"]));
+  copyStringToBuffer(
+      activeSimpleCommand.transportState,
+      sizeof(activeSimpleCommand.transportState),
+      "queued");
   if (!cacheActiveSimpleCommandPayload(payloadDoc.as<JsonVariantConst>(), reason)) {
     clearActiveSimpleCommand();
     return false;
@@ -3109,6 +6876,13 @@ static bool dispatchQueuedSimpleCommand(
 
   bool sentAny = false;
   if (!targetDeviceIds.isNull() && targetDeviceIds.size() > 0) {
+    if (strcmp(command, "SET_FENCE") == 0) {
+      AS_MATRIX_DISPATCH_BEGIN(
+          commandId.c_str(),
+          activeSimpleCommand.originDocId,
+          propertyId,
+          (int)targetDeviceIds.size());
+    }
     activeSimpleCommand.targetDeviceCommand = true;
     for (JsonVariantConst rawId : targetDeviceIds) {
       const char* textId = rawId | "";
@@ -3131,11 +6905,29 @@ static bool dispatchQueuedSimpleCommand(
           (unsigned long)deviceId);
       bool ok = false;
       if (strcmp(command, "SET_FENCE") == 0) {
-        ok = sendFenceCommandChunked(deviceId, payloadDoc.as<JsonVariantConst>(), reason);
+        const FencePointsResolution pointsResolution =
+            resolveFencePoints(payloadDoc.as<JsonVariantConst>());
+        ok = prepareFenceWakeSession(
+            deviceId,
+            payloadDoc.as<JsonVariantConst>(),
+            commandId.c_str(),
+            pointsResolution,
+            reason);
+        if (!ok) {
+          AS_MATRIX_LORA_TX_FAIL(commandId.c_str(), deviceId, reason ? *reason : "unknown");
+        }
       } else if (strcmp(command, "SET_PARAMS") == 0 || strcmp(command, "PING") == 0) {
         const MsgType msgType =
             strcmp(command, "SET_PARAMS") == 0 ? MsgType::SET_PARAMS : MsgType::PING;
-        ok = sendLoRaJsonFrame(deviceId, msgType, payloadDoc.as<JsonVariantConst>(), reason);
+        ok = sendLoRaJsonFrame(
+            deviceId,
+            msgType,
+            payloadDoc.as<JsonVariantConst>(),
+            reason,
+            MatrixLoRaTxReason::CommandDispatch,
+            "startQueuedSimpleCommandDevice",
+            nullptr,
+            commandId.c_str());
       }
       if (!ok) {
         clearActiveSimpleCommand();
@@ -3163,7 +6955,15 @@ static bool dispatchQueuedSimpleCommand(
     }
     const MsgType msgType =
         strcmp(command, "SET_PARAMS") == 0 ? MsgType::SET_PARAMS : MsgType::PING;
-    if (!sendLoRaJsonFrame(0, msgType, payloadDoc.as<JsonVariantConst>(), reason)) {
+    if (!sendLoRaJsonFrame(
+            0,
+            msgType,
+            payloadDoc.as<JsonVariantConst>(),
+            reason,
+            MatrixLoRaTxReason::CommandDispatch,
+            "startQueuedSimpleCommandGateway",
+            nullptr,
+            commandId.c_str())) {
       clearActiveSimpleCommand();
       return false;
     }
@@ -3177,15 +6977,46 @@ static bool dispatchQueuedSimpleCommand(
   }
   activeSimpleCommand.lastAttemptAtMs = millis();
   activeSimpleCommand.retryCount = 1;
-  publishSimpleCommandResult("dispatching", nullptr);
+  if (strcmp(command, "SET_FENCE") != 0) {
+    AS_MATRIX_COMMAND_MARK_DISPATCHING_BEGIN(commandId.c_str(), command);
+  }
+  publishSimpleCommandResult(
+      strcmp(command, "SET_FENCE") == 0 ? "paging_waiting_uplink" : "dispatching",
+      nullptr);
   return true;
 }
 
 static void processNextQueuedCommand() {
-  if (!queuePollingConfigured() || !bindingReady) return;
-  if (!backhaulWindowOpen()) return;
-  if (herdOp.active || activeSimpleCommand.active) return;
   const uint32_t nowMsTick = millis();
+  static uint32_t lastQueuePollSkipLogAtMs = 0;
+  static uint32_t lastQueueEmptyLogAtMs = 0;
+  const bool queueConfigured = queuePollingConfigured();
+  const bool backhaulOpen = backhaulWindowOpen();
+  const bool herdActive = herdOp.active;
+  const bool simpleActive = activeSimpleCommand.active;
+  if (!queueConfigured || !bindingReady || !backhaulOpen || herdActive || simpleActive) {
+    if ((uint32_t)(nowMsTick - lastQueuePollSkipLogAtMs) >= 10000UL) {
+      const String runtimeId = matrixCloudId();
+      const char* reason = !queueConfigured
+                               ? "queue_polling_not_configured"
+                           : !bindingReady
+                               ? "binding_not_ready"
+                           : !backhaulOpen
+                               ? "backhaul_window_closed"
+                           : herdActive
+                               ? "herding_operation_active"
+                               : "simple_command_active";
+      AS_MATRIX_QUEUE_POLL_SKIPPED(
+          reason,
+          runtimeId.c_str(),
+          bindingReady,
+          backhaulOpen,
+          herdActive,
+          simpleActive);
+      lastQueuePollSkipLogAtMs = nowMsTick;
+    }
+    return;
+  }
   const bool forceDispatch = queueDispatchRequested;
   if (!forceDispatch &&
       queuePollAtMs != 0 &&
@@ -3195,10 +7026,26 @@ static void processNextQueuedCommand() {
   queueDispatchRequested = false;
   queuePollAtMs = nowMsTick;
   lastQueuePollAtUnixMs = unixNowMs(unixNowSec());
+  AS_MATRIX_INFO(
+      "QUEUE_POLL_START",
+      "runtimeId=%s forceDispatch=%d bindingReady=%d backhaulOpen=%d",
+      matrixCloudId().c_str(),
+      forceDispatch ? 1 : 0,
+      bindingReady ? 1 : 0,
+      backhaulOpen ? 1 : 0);
 
   String commandId;
-  DynamicJsonDocument commandDoc(16384);
-  if (!loadNextQueuedCommand(commandId, commandDoc)) return;
+  DynamicJsonDocument commandDoc(24576);
+  const QueueLoadResult loadResult = loadNextQueuedCommand(commandId, commandDoc);
+  if (loadResult != QueueLoadResult::kLoaded) {
+    if (loadResult == QueueLoadResult::kEmpty &&
+        (uint32_t)(nowMsTick - lastQueueEmptyLogAtMs) >= 10000UL) {
+      const String runtimeId = matrixCloudId();
+      AS_MATRIX_QUEUE_EMPTY(runtimeId.c_str(), strlen(cfg::RTDB_QUEUE_KEY));
+      lastQueueEmptyLogAtMs = nowMsTick;
+    }
+    return;
+  }
 
   const char* command = commandDoc["command"] | "";
   const char* propertyId = commandDoc["propertyId"] | "";
@@ -3211,26 +7058,59 @@ static void processNextQueuedCommand() {
   const char* failStatus = nullptr;
   if (!commandId.length() || !command[0]) {
     return;
-  } else if (expiresAtMs != 0 && expiresAtMs <= nowMs) {
+  }
+
+  if (strcmp(command, "SET_FENCE") == 0) {
+    const char* areaId = commandDoc["payload"]["originDocId"] | commandDoc["payload"]["origin_doc_id"] | "";
+    const int targetCount = commandDoc["targetDeviceIds"].as<JsonArrayConst>().size();
+    const FencePointsResolution pointsResolution =
+        resolveFencePoints(commandDoc["payload"].as<JsonVariantConst>());
+    const int pointCount = pointsResolution.points.isNull() ? 0 : (int)pointsResolution.points.size();
+    AS_MATRIX_FENCE_POINTS_RESOLVED(commandId.c_str(), pointsResolution.source, pointCount);
+    AS_MATRIX_QUEUE_LOADED(
+        commandId.c_str(), areaId, propertyId, propertyScopeId, targetCount, pointCount);
+  }
+
+  if (expiresAtMs != 0 && expiresAtMs <= nowMs) {
     failStatus = "expired";
     failReason = "command_expired";
+    char expected[24];
+    char actual[24];
+    snprintf(expected, sizeof(expected), ">%llu", (unsigned long long)nowMs);
+    snprintf(actual, sizeof(actual), "%llu", (unsigned long long)expiresAtMs);
+    AS_MATRIX_QUEUE_ITEM_FILTERED_OUT(commandId.c_str(), "expiresAtMs", expected, actual);
   } else if (!bindingReady) {
     failStatus = "rejected";
     failReason = "property_binding_missing";
+    AS_MATRIX_QUEUE_ITEM_FILTERED_OUT(commandId.c_str(), "bindingReady", "1", "0");
   } else if (strcmp(propertyId, bindingPropertyId) != 0) {
     failStatus = "rejected";
     failReason = "property_binding_mismatch";
+    AS_MATRIX_QUEUE_ITEM_FILTERED_OUT(commandId.c_str(), "propertyId", bindingPropertyId, propertyId);
   } else if (!rtcmd::isValidScopeId(propertyScopeId) ||
              strcmp(propertyScopeId, bindingPropertyScopeId) != 0) {
     failStatus = "rejected";
     failReason = "property_scope_mismatch";
+    AS_MATRIX_QUEUE_ITEM_FILTERED_OUT(
+        commandId.c_str(),
+        "propertyScopeId",
+        bindingPropertyScopeId,
+        propertyScopeId[0] ? propertyScopeId : "invalid_or_empty");
   } else if (bindingMatrixGatewayId[0] != '\0' &&
              strcmp(matrixGatewayId, bindingMatrixGatewayId) != 0) {
     failStatus = "rejected";
     failReason = "matrix_gateway_mismatch";
+    AS_MATRIX_QUEUE_ITEM_FILTERED_OUT(
+        commandId.c_str(),
+        "matrixGatewayId",
+        bindingMatrixGatewayId,
+        matrixGatewayId);
   }
 
   if (failStatus) {
+    if (strcmp(command, "SET_FENCE") == 0) {
+      AS_MATRIX_QUEUE_REJECTED(commandId.c_str(), failReason);
+    }
     publishImmediateMatrixCommandResult(
         commandId.c_str(),
         command,
@@ -3248,6 +7128,11 @@ static void processNextQueuedCommand() {
         commandDoc["targetGatewayIds"].as<JsonArrayConst>());
     deleteQueuedCommand(commandId);
     return;
+  }
+
+  if (strcmp(command, "SET_FENCE") == 0) {
+    const char* areaId = commandDoc["payload"]["originDocId"] | commandDoc["payload"]["origin_doc_id"] | "";
+    AS_MATRIX_QUEUE_ACCEPTED(commandId.c_str(), areaId, propertyId, propertyScopeId);
   }
 
   if (strcmp(command, "SET_HERDING_PLAN") == 0) {
@@ -3874,6 +7759,15 @@ static void handleSimpleCommandFeedback(const LoRaFrame& rx) {
   const char* reason = payload["reason"] | "";
   const char* status = payload["status"] | (rx.msgType == MsgType::ACK ? "completed" : "nacked");
   markActiveSimpleCommandTarget(targetId, rx.msgType == MsgType::ACK, status, reason);
+
+  if (strcmp(activeSimpleCommand.command, "SET_FENCE") == 0) {
+    if (rx.msgType == MsgType::ACK) {
+      AS_MATRIX_ACK_MATCH(commandId, rx.deviceId, status, reason);
+    } else {
+      AS_MATRIX_NACK_MATCH(commandId, rx.deviceId, status, reason);
+    }
+  }
+
   if (rx.msgType == MsgType::NACK) {
     publishSimpleCommandResult("nacked", reason[0] ? reason : "nack");
     clearActiveSimpleCommand();
@@ -3881,6 +7775,9 @@ static void handleSimpleCommandFeedback(const LoRaFrame& rx) {
   }
 
   if (allActiveSimpleTargetsTerminal()) {
+    if (strcmp(activeSimpleCommand.command, "SET_FENCE") == 0) {
+      AS_MATRIX_RESULT_PUBLISHED(commandId, anyActiveSimpleTargetFailed() ? "failed" : "completed");
+    }
     publishSimpleCommandResult(anyActiveSimpleTargetFailed() ? "failed" : "completed", nullptr);
     clearActiveSimpleCommand();
     return;
@@ -3895,8 +7792,17 @@ static void relayFrameToPeerGateways(const LoRaFrame& rx) {
 
   LoRaFrame relay = rx;
   for (int i = 0; i < 12; ++i) relay.nonce[i] = (uint8_t)esp_random();
-  if (!lora.send(relay)) {
-    LOGW("Falha relay device=%lu seq=%lu", relay.deviceId, relay.seq);
+  if (!sendMatrixLoRaFrame(
+          relay,
+          MatrixLoRaTxReason::RelayForwardValidated,
+          &rx,
+          "relayFrameToPeerGateways")) {
+    LOGI(
+        "RELAY_SUPPRESSED_UPLINK_ECHO deviceId=%lu msgType=%u seq=%lu reason=accepted_uplink_echo_guard",
+        (unsigned long)rx.deviceId,
+        (unsigned)rx.msgType,
+        (unsigned long)rx.seq);
+    return;
   }
 }
 
@@ -3946,8 +7852,23 @@ static void printBootChecklist(
     bool rtcOk,
     bool sdOk,
     bool loraOk,
-    bool cloudConfigured) {
+    bool cloudConfigured,
+    bool queueConfigured) {
   Serial.println("==== HW CHECKLIST | GATEWAY MATRIX ====");
+  Serial.printf("[MODE ] %-24s : %u\n", "DIAG_STAGE", (unsigned)cfg::DIAG_STAGE);
+  Serial.printf("[MODE ] %-24s : %s\n", "DIAG_PROFILE", cfg::DIAG_PROFILE_NAME);
+  Serial.printf("[MODE ] %-24s : %s\n", "MATRIX_RUNTIME_ID", matrixCloudId().c_str());
+  Serial.printf("[MODE ] %-24s : %u\n", "PROTO_VERSION", (unsigned)cfg::LORA_PROTO_VERSION);
+  Serial.printf("[MODE ] %-24s : %u\n", "KEY_ID", (unsigned)cfg::LORA_KEY_ID);
+  Serial.printf("[MODE ] %-24s : %u\n", "RADIO_PROFILE", (unsigned)cfg::LORA_RADIO_PROFILE_ID);
+  Serial.printf(
+      "[MODE ] %-24s : %s\n",
+      "ANTI_REPLAY_MODE",
+      cfg::DISABLE_LORA_REPLAY_FOR_TESTS ? "test-disabled" : "strict");
+  Serial.printf(
+      "[MODE ] %-24s : %s\n",
+      "BINDING_READY",
+      bindingReady ? "true" : "false");
   checklistLine(
       "NVS_SEQ_DOWN",
       seqPrefsReady,
@@ -3989,6 +7910,10 @@ static void printBootChecklist(
       "CLOUD_BACKHAUL_CFG",
       cloudConfigured,
       "Telemetria cloud sem credenciais validas; revisar manual_settings.local.h.");
+  checklistLine(
+      "QUEUE_POLLING_CFG",
+      queueConfigured,
+      "Polling da fila cloud indisponivel; revisar RT_CFG_RTDB_QUEUE_KEY e placeholders cloud.");
   Serial.println("=======================================");
 }
 
@@ -4056,6 +7981,7 @@ void setup() {
   const bool loraOk = lora.begin();
   if (!loraOk) LOGE("LoRa indisponivel");
   const bool cloudConfigured = cloudTelemetryConfigured();
+  const bool queueConfigured = queuePollingConfigured();
   setWatchdogEnabled(wifiOtaEnabled);
   printBootChecklist(
       displayOk,
@@ -4064,8 +7990,45 @@ void setup() {
       rtcOk,
       sdOk,
       loraOk,
-      cloudConfigured);
+      cloudConfigured,
+      queueConfigured);
 
+  LOGI("Matrix diag_stage=%u profile=%s", (unsigned)cfg::DIAG_STAGE, cfg::DIAG_PROFILE_NAME);
+  LOGW("Matrix anti_replay_test_mode=%d", cfg::DISABLE_LORA_REPLAY_FOR_TESTS ? 1 : 0);
+  LOGI("Matrix lora_only_bench_mode=%d", cfg::DIAG_STAGE == 1 ? 1 : 0);
+  LOGI(
+      "Matrix cloud_preflight runtimeId=%s cloudConfigured=%d queuePollingConfigured=%d backhaulFeature=%d cloudFeature=%d",
+      matrixCloudId().c_str(),
+      cloudConfigured ? 1 : 0,
+      queueConfigured ? 1 : 0,
+      cfg::FEATURE_BACKHAUL ? 1 : 0,
+      cfg::FEATURE_CLOUD ? 1 : 0);
+  LOGI(
+      "Matrix boot fw=%s diag_stage=%u proto_version=%u key_id=%u radio_profile=%u bindingReady=%d profile_name=%s",
+      cfg::FW_VERSION,
+      (unsigned)cfg::DIAG_STAGE,
+      (unsigned)cfg::LORA_PROTO_VERSION,
+      (unsigned)cfg::LORA_KEY_ID,
+      (unsigned)cfg::LORA_RADIO_PROFILE_ID,
+      bindingReady ? 1 : 0,
+      cfg::DIAG_PROFILE_NAME);
+  {
+    const buildinfo::BuildInfo build = buildinfo::current();
+    LOGI(
+        "FW_PROVENANCE role=matrix gitSha=%s gitShort=%s dirty=%s buildUtc=%s buildSource=%s firmwareVersion=%s profile=%s diagStage=%u runtimeId=%s",
+        build.gitSha,
+        build.gitShortSha,
+        buildinfo::dirtyString(build.dirty),
+        build.buildUtc,
+        build.buildSource,
+        cfg::FW_VERSION,
+        cfg::DIAG_PROFILE_NAME,
+        (unsigned)cfg::DIAG_STAGE,
+        matrixCloudId().c_str());
+    LOGI(
+        "RPV2_PLANNER_REV rev=canonical_fence_planner_v1 gitShort=%s",
+        build.gitShortSha);
+  }
   LOGI("Gateway matriz pronto fw=%s", cfg::FW_VERSION);
 }
 
@@ -4124,7 +8087,9 @@ void loop() {
 
   LoRaFrame rx;
   if (lora.receive(rx)) {
-    if (!scopeMatchesBinding(rx.scopeId)) {
+    if (tryHandlePendingWakePageAckFastPath(rx)) {
+      feedWatchdogIfEnabled();
+    } else if (!scopeMatchesBinding(rx.scopeId)) {
       LOGW(
           "scope_reject device=%lu msg=%u seq=%lu scope=%s ready=%d",
           (unsigned long)rx.deviceId,
@@ -4153,6 +8118,10 @@ void loop() {
           }
         }
       }
+      tryHandleWakePageImmediatelyAfterAcceptedUplink(
+          rx,
+          lora.lastAcceptedRxAtMs(),
+          "main_lora_rx");
       enqueueAcceptedUplink(rx);
       if (activeSimpleCommand.active) {
         scheduleActiveSimpleCommandRetryForRx(rx);
@@ -4269,7 +8238,15 @@ void loop() {
           } else if (command == "SET_HERDING_PLAN") {
             ok = sendHerdingPlanChunked(deviceId, payload, &failReason);
           } else {
-            ok = sendLoRaJsonFrame(deviceId, msgType, payload, &failReason);
+            ok = sendLoRaJsonFrame(
+                deviceId,
+                msgType,
+                payload,
+                &failReason,
+                MatrixLoRaTxReason::CommandDispatch,
+                "apiSendCommand",
+                nullptr,
+                nullptr);
           }
         }
 
@@ -4296,13 +8273,16 @@ void loop() {
   if (cfg::FEATURE_CLOUD) processNextQueuedCommand();
   flushDeferredAcceptedUplinksIfReady();
   processQueuedAcceptedUplinks();
+  processPendingWakeSessions();
   if (activeSimpleCommand.active) {
     processScheduledActiveSimpleCommandRetry();
     const uint32_t nowTick = millis();
     const bool recentRawRx =
         lora.lastRawRxAtMs() != 0 &&
         (uint32_t)(nowTick - lora.lastRawRxAtMs()) < cfg::SIMPLE_COMMAND_RAW_RX_HOLDOFF_MS;
-    const bool allowBlindPeriodicRetry = !activeSimpleCommand.targetDeviceCommand;
+    const bool allowBlindPeriodicRetry =
+        !activeSimpleCommand.targetDeviceCommand &&
+        strcmp(activeSimpleCommand.command, "SET_FENCE") != 0;
     if (allowBlindPeriodicRetry &&
         !activeSimpleCommand.targetedRetryPending &&
         !recentRawRx) {
@@ -4312,6 +8292,8 @@ void loop() {
     if (activeSimpleCommand.expiresAtMs != 0 && nowMs >= activeSimpleCommand.expiresAtMs) {
       publishSimpleCommandResult("failed", "command_timeout");
       clearActiveSimpleCommand();
+    } else {
+      checkSetFencePlannerDispatchStall(nowTick, nowMs);
     }
   }
   dispatchActiveHerdingOperation();

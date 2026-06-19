@@ -2,6 +2,9 @@
 #include "ApiServer.h"
 #include "config.h"
 #include "LoRaGateway.h"
+#include "../firmware/shared/command_contract.h"
+#include "../firmware/shared/matrix_uplink_antireplay.h"
+#include "../firmware/shared/build_info.h"
 #include <ctype.h>
 #include <math.h>
 #include <stdlib.h>
@@ -31,6 +34,8 @@ extern uint32_t simpleAckWaitDeadlineAtMs;
 extern char simpleAckWaitCommandId[48];
 extern char lastSimpleCommandFeedbackOutcome[24];
 extern uint32_t lastSimpleCommandAckMatchedAtMs;
+extern rtrdiag::PageSnapshot lastPageDiag;
+extern rtrdiag::WakeLoopSnapshot wakeLoopDiag;
 void fillBackhaulDiagJson(JsonObject obj);
 void runBackhaulManualDiagnostic();
 
@@ -47,6 +52,17 @@ static String compactIdentifier(const String& raw) {
     }
   }
   return out;
+}
+
+static String statusMatrixRuntimeId() {
+  if (cfg::RTDB_MATRIX_ID[0] != '\0' &&
+      strncmp(cfg::RTDB_MATRIX_ID, "SET_", 4) != 0) {
+    return String(cfg::RTDB_MATRIX_ID);
+  }
+  if (bindingMatrixGatewayId[0]) {
+    return String(bindingMatrixGatewayId);
+  }
+  return compactIdentifier(WiFi.softAPmacAddress());
 }
 
 static void copyToBuffer(char* dst, size_t dstSize, const char* src) {
@@ -92,16 +108,57 @@ static bool parseCoordinate(const JsonVariantConst& value, double& out) {
   return isfinite(out);
 }
 
+static bool parseKeyId(const JsonVariantConst& value, uint16_t& out) {
+  uint32_t parsed = 0;
+  if (value.is<uint32_t>() || value.is<int>() || value.is<long>()) {
+    parsed = value.as<uint32_t>();
+  } else if (value.is<const char*>()) {
+    const char* text = value.as<const char*>();
+    if (!text || !text[0]) return false;
+    char* end = nullptr;
+    parsed = (uint32_t)strtoul(text, &end, 10);
+    if (end == text) return false;
+  } else {
+    return false;
+  }
+  if (parsed == 0 || parsed > 0xFFFFu) return false;
+  out = static_cast<uint16_t>(parsed);
+  return true;
+}
+
+static bool parseScopeIdText(
+    const JsonVariantConst& value,
+    uint64_t& out,
+    String* normalizedText) {
+  if (!value.is<const char*>()) return false;
+  const String compact = compactIdentifier(value.as<const char*>());
+  if (!rtcmd::isValidScopeId(compact.c_str())) return false;
+  if (normalizedText) *normalizedText = compact;
+  out = strtoull(compact.c_str(), nullptr, 16);
+  return out != 0;
+}
+
 void ApiServer::begin() {
   g_server = this;
   if (cfg::FEATURE_HTTP) {
     http_.on("/status", HTTP_GET, [this]() {
-      StaticJsonDocument<1536> doc;
+      StaticJsonDocument<4096> doc;
+      const buildinfo::BuildInfo build = buildinfo::current();
       doc["ok"] = true;
       doc["service"] = "gateway_matrix";
       doc["fw"] = cfg::FW_VERSION;
+      doc["firmwareVersion"] = cfg::FW_VERSION;
+      doc["firmwareRole"] = "matrix";
+      doc["gitSha"] = build.gitSha;
+      doc["gitShortSha"] = build.gitShortSha;
+      doc["buildUtc"] = build.buildUtc;
+      doc["buildDirty"] = build.dirty;
+      doc["buildSource"] = build.buildSource;
       doc["diagStage"] = cfg::DIAG_STAGE;
       doc["diagProfile"] = cfg::DIAG_PROFILE_NAME;
+      doc["protoVersion"] = cfg::LORA_PROTO_VERSION;
+      doc["keyId"] = cfg::LORA_KEY_ID;
+      doc["radioProfileId"] = cfg::LORA_RADIO_PROFILE_ID;
       const String apSsid = WiFi.softAPSSID();
       doc["ap_ssid"] = apSsid.isEmpty() ? String(cfg::AP_SSID) : apSsid;
       doc["ap_ip"] = WiFi.softAPIP().toString();
@@ -120,9 +177,23 @@ void ApiServer::begin() {
       doc["featureBackhaul"] = cfg::FEATURE_BACKHAUL;
       doc["featureCloud"] = cfg::FEATURE_CLOUD;
       doc["featureSd"] = cfg::FEATURE_SD;
+      doc["matrixRuntimeId"] = statusMatrixRuntimeId();
+      if (cfg::RTDB_MATRIX_ID[0] != '\0') {
+        doc["configuredMatrixId"] = cfg::RTDB_MATRIX_ID;
+      }
+      doc["cloudConfigured"] =
+        cfg::FEATURE_CLOUD &&
+        cfg::BACKHAUL_WIFI_SSID[0] != '\0' &&
+        strncmp(cfg::BACKHAUL_WIFI_SSID, "SET_", 4) != 0 &&
+        cfg::SUPABASE_EDGE_HOST[0] != '\0' &&
+        strncmp(cfg::SUPABASE_EDGE_HOST, "SET_", 4) != 0 &&
+        cfg::RTDB_WRITER_KEY[0] != '\0' &&
+        strncmp(cfg::RTDB_WRITER_KEY, "SET_", 4) != 0;
       doc["queueConfigured"] = cfg::FEATURE_CLOUD &&
         cfg::RTDB_QUEUE_KEY[0] != '\0' &&
         strncmp(cfg::RTDB_QUEUE_KEY, "SET_", 4) != 0;
+      doc["queuePollingConfigured"] = doc["cloudConfigured"].as<bool>() &&
+        doc["queueConfigured"].as<bool>();
       doc["lastQueuePollAtMs"] = lastQueuePollAtUnixMs;
       doc["queueStreamConnected"] = queueStreamConnected;
       doc["queueStreamLastEventAtMs"] = queueStreamLastEventAtUnixMs;
@@ -139,8 +210,139 @@ void ApiServer::begin() {
       doc["lastLoraAcceptedRxAtMs"] = lora.lastAcceptedRxAtMs();
       doc["loraRxArmCount"] = lora.rxArmCount();
       doc["loraTxCount"] = lora.txCount();
+      doc["loraTxFailCount"] = lora.txFailCount();
+      doc["loraDecryptFailCount"] = lora.decryptFailCount();
+      doc["loraNonceMismatchCount"] = lora.nonceMismatchCount();
+      doc["loraReplayRejectCount"] = lora.replayRejectCount();
+      doc["lastAcceptedSeq"] = lora.lastAcceptedSeq();
       doc["lastLoraIrqFlags"] = lora.lastIrqFlags();
       doc["lastLoraState"] = lora.lastRadioState();
+      JsonObject antiReplay = doc["antiReplay"].to<JsonObject>();
+      antiReplay["diagResetEnabled"] = cfg::DIAG_ANTI_REPLAY_RESET_ENABLED;
+      antiReplay["activeKeyId"] = cfg::LORA_KEY_ID;
+      const AntiReplayBlockedSnapshot& blocked = lora.lastBlockedUplink();
+      if (blocked.valid) {
+        JsonObject lastBlocked = antiReplay["lastBlocked"].to<JsonObject>();
+        char blockedScopeHex[rtmatrix::antireplay::kScopeHexSize]{};
+        rtmatrix::antireplay::scopeIdToHex(
+            blocked.scopeId, blockedScopeHex, sizeof(blockedScopeHex));
+        lastBlocked["direction"] = "uplink";
+        lastBlocked["deviceId"] = blocked.deviceId;
+        lastBlocked["scopeId"] = blockedScopeHex;
+        lastBlocked["keyId"] = blocked.keyId;
+        lastBlocked["rxSeq"] = blocked.rxSeq;
+        lastBlocked["lastAcceptedSeq"] = blocked.lastAcceptedSeq;
+        lastBlocked["delta"] = blocked.delta;
+        lastBlocked["frameType"] = blocked.frameType;
+        lastBlocked["protoVersion"] = blocked.protoVersion;
+        lastBlocked["radioProfile"] = blocked.radioProfile;
+        lastBlocked["reason"] = blocked.reason;
+        lastBlocked["atMs"] = blocked.atMs;
+      }
+      const rtrdiag::DecryptFailSnapshot& decryptFail = lora.lastDecryptFail();
+      const rtrdiag::RawRxSnapshot& rawRx = lora.rawRxDiag();
+      doc["lastDecryptFailAtMs"] = decryptFail.atMs;
+      doc["lastDecryptFailLen"] = decryptFail.len;
+      doc["lastDecryptFailRssi"] = decryptFail.rssi;
+      doc["lastDecryptFailSnr"] = decryptFail.snr;
+      doc["lastDecryptFailIrqFlags"] = decryptFail.irqFlags;
+      doc["lastDecryptFailRadioState"] = decryptFail.radioState;
+      doc["lastDecryptFailReason"] = decryptFail.reason;
+      doc["lastDecryptFailHeadHex"] = decryptFail.headHex;
+      doc["lastDecryptFailNonceHex"] = decryptFail.nonceHex;
+      doc["lastDecryptFailTagHex"] = decryptFail.tagHex;
+      doc["lastDecryptFailCount"] = decryptFail.count;
+      doc["rawRxSeenCount"] = rawRx.rawRxSeenCount;
+      doc["rawRxNoiseDropCount"] = rawRx.rawRxNoiseDropCount;
+      doc["rawRxInvalidPatternDropCount"] = rawRx.rawRxInvalidPatternDropCount;
+      doc["rawRxDecryptAttemptCount"] = rawRx.rawRxDecryptAttemptCount;
+      doc["rawRxDecryptFailedCount"] = rawRx.rawRxDecryptFailedCount;
+      doc["rawRxAcceptedCount"] = rawRx.rawRxAcceptedCount;
+      doc["lastRawNoiseReason"] = rawRx.lastRawNoiseReason;
+      doc["lastRawPatternHex"] = rawRx.lastRawPatternHex;
+      doc["lastRawCandidateLen"] = rawRx.lastRawCandidateLen;
+      doc["lastRawCandidateRssi"] = rawRx.lastRawCandidateRssi;
+      doc["lastRawCandidateSnr"] = rawRx.lastRawCandidateSnr;
+      char lastPageSessionId[24]{};
+      snprintf(
+          lastPageSessionId,
+          sizeof(lastPageSessionId),
+          "%llu",
+          (unsigned long long)lastPageDiag.lastPageSessionId);
+      doc["lastPageTargetDeviceId"] = lastPageDiag.lastPageTargetDeviceId;
+      doc["lastPageSessionId"] = lastPageSessionId;
+      doc["lastPageMessageId"] = lastPageDiag.lastPageMessageId;
+      doc["lastPageCampaignCount"] = lastPageDiag.lastPageCampaignCount;
+      doc["lastPageSentAtMs"] = lastPageDiag.lastPageSentAtMs;
+      doc["lastPageAckDeadlineAtMs"] = lastPageDiag.lastPageAckDeadlineAtMs;
+      doc["lastPageRetryAtMs"] = lastPageDiag.lastPageRetryAtMs;
+      doc["lastWakeToPageLatencyMs"] = lastPageDiag.lastWakeToPageLatencyMs;
+      doc["lastSoftDeadlineMs"] = lastPageDiag.lastSoftDeadlineMs;
+      doc["lastSoftDeadlineMet"] = lastPageDiag.lastSoftDeadlineMet;
+      char inFlightPageSessionId[24]{};
+      snprintf(
+          inFlightPageSessionId,
+          sizeof(inFlightPageSessionId),
+          "%llu",
+          (unsigned long long)lastPageDiag.inFlightPageSessionId);
+      doc["inFlightPageValid"] = lastPageDiag.inFlightPageValid;
+      doc["inFlightPageSessionId"] = inFlightPageSessionId;
+      doc["inFlightPageMessageId"] = lastPageDiag.inFlightPageMessageId;
+      doc["inFlightPageCampaignCount"] = lastPageDiag.inFlightPageCampaignCount;
+      doc["inFlightPageSentAtMs"] = lastPageDiag.inFlightPageSentAtMs;
+      doc["inFlightPageSoftDeadlineAtMs"] = lastPageDiag.inFlightPageSoftDeadlineAtMs;
+      doc["inFlightPageHardDeadlineAtMs"] = lastPageDiag.inFlightPageHardDeadlineAtMs;
+      doc["inFlightPageAckAccepted"] = lastPageDiag.inFlightPageAckAccepted;
+      doc["retryPending"] = lastPageDiag.retryPending;
+      doc["retryAtMs"] = lastPageDiag.retryAtMs;
+      doc["retryCampaignCount"] = lastPageDiag.retryCampaignCount;
+      doc["lastAckMatchedInGrace"] = lastPageDiag.lastAckMatchedInGrace;
+      doc["lastAckRejectedReason"] = lastPageDiag.lastAckRejectedReason;
+      doc["lastWakeLoopStage"] = wakeLoopDiag.lastWakeLoopStage;
+      doc["lastWakeLoopStageAtMs"] = wakeLoopDiag.lastWakeLoopStageAtMs;
+      char lastWakeLoopStageSessionId[24]{};
+      snprintf(
+          lastWakeLoopStageSessionId,
+          sizeof(lastWakeLoopStageSessionId),
+          "%llu",
+          (unsigned long long)wakeLoopDiag.lastWakeLoopStageSessionId);
+      doc["lastWakeLoopStageSessionId"] = lastWakeLoopStageSessionId;
+      doc["lastWakeLoopStageDeviceId"] = wakeLoopDiag.lastWakeLoopStageDeviceId;
+      doc["wakeLoopIterationCount"] = wakeLoopDiag.wakeLoopIterationCount;
+      doc["wakeLoopBudgetHitCount"] = wakeLoopDiag.wakeLoopBudgetHitCount;
+      doc["wakeLoopYieldCount"] = wakeLoopDiag.wakeLoopYieldCount;
+      doc["lastSoftTimeoutAtMs"] = wakeLoopDiag.lastSoftTimeoutAtMs;
+      doc["lastRetryScheduleAtMs"] = wakeLoopDiag.lastRetryScheduleAtMs;
+      doc["lastBeginDispatchAtMs"] = wakeLoopDiag.lastBeginDispatchAtMs;
+      doc["lastPageOutcome"] = lastPageDiag.lastPageOutcome;
+      doc["lastWakeHintAtMs"] = lastPageDiag.lastWakeHintAtMs;
+      doc["lastWakeHintSeq"] = lastPageDiag.lastWakeHintSeq;
+      doc["lastWakeHintAccepted"] = lastPageDiag.lastWakeHintAccepted;
+      JsonObject wakeFastPath = doc["wakeFastPath"].to<JsonObject>();
+      wakeFastPath["lastImmediateEnterAtMs"] = lastPageDiag.lastImmediateEnterAtMs;
+      wakeFastPath["lastImmediateResultAtMs"] = lastPageDiag.lastImmediateResultAtMs;
+      wakeFastPath["lastImmediateDeviceId"] = lastPageDiag.lastImmediateDeviceId;
+      wakeFastPath["lastImmediateUplinkSeq"] = lastPageDiag.lastImmediateUplinkSeq;
+      wakeFastPath["lastImmediateAgeMs"] = lastPageDiag.lastImmediateAgeMs;
+      wakeFastPath["lastWakeHintFastDurationMs"] = lastPageDiag.lastWakeHintFastDurationMs;
+      wakeFastPath["lastPrePageGapMs"] = lastPageDiag.lastPrePageGapMs;
+      wakeFastPath["lastImmediateResult"] = lastPageDiag.lastImmediateResult;
+      wakeFastPath["lastImmediateSource"] = lastPageDiag.lastImmediateSource;
+      wakeFastPath["lastPrePageBlockedBy"] = lastPageDiag.lastPrePageBlockedBy;
+      wakeFastPath["lastOrderViolation"] = lastPageDiag.lastOrderViolation;
+      wakeFastPath["lastCloudDeferredForPage"] = lastPageDiag.lastCloudDeferredForPage;
+      JsonObject pageAck = doc["pageAck"].to<JsonObject>();
+      pageAck["lastPagePostTxFastDurationMs"] = lastPageDiag.lastPagePostTxFastDurationMs;
+      pageAck["lastAckRxWindowBeginAtMs"] = lastPageDiag.lastAckRxWindowBeginAtMs;
+      pageAck["lastAckRxWindowEndAtMs"] = lastPageDiag.lastAckRxWindowEndAtMs;
+      pageAck["lastAckRxWindowResult"] = lastPageDiag.lastAckRxWindowResult;
+      pageAck["lastPageTxToAckRxLatencyMs"] = lastPageDiag.lastPageTxToAckRxLatencyMs;
+      pageAck["lastAckLateReason"] = lastPageDiag.lastAckLateReason;
+      pageAck["lastAckToRpv2HandoffBeginAtMs"] = lastPageDiag.lastAckToRpv2HandoffBeginAtMs;
+      pageAck["lastAckToRpv2BeginDispatchAtMs"] = lastPageDiag.lastAckToRpv2BeginDispatchAtMs;
+      pageAck["lastAckToRpv2BeginTxAtMs"] = lastPageDiag.lastAckToRpv2BeginTxAtMs;
+      pageAck["lastAckToRpv2BeginLatencyMs"] = lastPageDiag.lastAckToRpv2BeginLatencyMs;
+      pageAck["lastAckToRpv2Source"] = lastPageDiag.lastAckToRpv2Source;
       doc["acceptedUplinkQueueDepth"] = acceptedUplinkQueueCount;
       doc["acceptedUplinkDropCount"] = acceptedUplinkDropCount;
       doc["acceptedUplinkLastDrainAtMs"] = acceptedUplinkLastDrainAtMs;
@@ -168,6 +370,9 @@ void ApiServer::begin() {
       serializeJson(doc, out);
       http_.send(200, "application/json", out);
     });
+    http_.on("/diag/anti-replay/reset-uplink", HTTP_POST, [this]() {
+      handleAntiReplayResetRequest();
+    });
     http_.on("/devices", HTTP_GET, [this]() { handleDevicesRequest(); });
     http_.on("/logs", HTTP_GET, [this]() { handleLogsRequest(); });
     http_.begin();
@@ -181,6 +386,91 @@ void ApiServer::begin() {
     });
     appendLogLine("WS_READY");
   }
+}
+
+void ApiServer::handleAntiReplayResetRequest() {
+  StaticJsonDocument<512> payload;
+  StaticJsonDocument<512> response;
+  const String body = http_.arg("plain");
+  if (body.isEmpty()) {
+    response["ok"] = false;
+    response["reason"] = "missing_body";
+    String out;
+    serializeJson(response, out);
+    http_.send(400, "application/json", out);
+    return;
+  }
+  if (deserializeJson(payload, body) != DeserializationError::Ok) {
+    response["ok"] = false;
+    response["reason"] = "invalid_json";
+    String out;
+    serializeJson(response, out);
+    http_.send(400, "application/json", out);
+    return;
+  }
+
+  uint32_t deviceId = 0;
+  uint64_t scopeId = 0;
+  uint16_t keyId = 0;
+  String scopeHex;
+  if (!parseDeviceId(payload["deviceId"], deviceId)) {
+    response["ok"] = false;
+    response["reason"] = "invalid_device_id";
+    String out;
+    serializeJson(response, out);
+    http_.send(400, "application/json", out);
+    return;
+  }
+  if (!parseScopeIdText(payload["scopeId"], scopeId, &scopeHex)) {
+    response["ok"] = false;
+    response["reason"] = "invalid_scope_id";
+    String out;
+    serializeJson(response, out);
+    http_.send(400, "application/json", out);
+    return;
+  }
+  if (!parseKeyId(payload["keyId"], keyId)) {
+    response["ok"] = false;
+    response["reason"] = "invalid_key_id";
+    String out;
+    serializeJson(response, out);
+    http_.send(400, "application/json", out);
+    return;
+  }
+  const char* confirm = payload["confirm"] | "";
+  if (strcmp(confirm, "RESET_UPLINK_ANTI_REPLAY") != 0) {
+    response["ok"] = false;
+    response["reason"] = "invalid_confirmation";
+    String out;
+    serializeJson(response, out);
+    http_.send(400, "application/json", out);
+    return;
+  }
+
+  AntiReplayResetResult result;
+  const bool ok = lora.resetUplinkAntiReplayForDevice(
+      deviceId, scopeId, keyId, "diag_http", &result);
+  response["ok"] = ok;
+  if (!ok) {
+    response["reason"] = result.reason;
+    String out;
+    serializeJson(response, out);
+    const int statusCode =
+        strcmp(result.reason, "diag_mode_required") == 0 ? 403 : 400;
+    http_.send(statusCode, "application/json", out);
+    return;
+  }
+
+  response["direction"] = "uplink";
+  response["deviceId"] = result.deviceId;
+  response["scopeId"] = scopeHex;
+  response["keyId"] = result.keyId;
+  response["lastSeqBefore"] = result.lastSeqBefore;
+  response["lastSeqAfter"] = result.lastSeqAfter;
+  response["mode"] = "diag_only";
+  String out;
+  serializeJson(response, out);
+  http_.send(200, "application/json", out);
 }
 
 void ApiServer::appendLogLine(const String& line) {

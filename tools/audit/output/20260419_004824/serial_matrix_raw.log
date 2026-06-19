@@ -1,0 +1,32 @@
+2026-04-19T03:48:39.523608+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-19T03:49:09.586888+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-19T03:49:14.441042+00:00  [I] LoRa RX raw len=157 rssi=-44 snr=9.8
+2026-04-19T03:49:14.458005+00:00  [W] LoRa RX decrypt_failed len=157 cipher_len=129 irq=0x0050 state=rx_decrypt_failed rssi=-44 snr=9.8 nonce=7E1811EB7317728B858222CA tag=434DB9CB471DE548 head=E1A2F3E1F4A8CEC2 fail_count=4
+2026-04-19T03:49:14.460418+00:00  [W] LoRa RX descartado: decrypt_or_hmac_failed len=157
+2026-04-19T03:49:40.659200+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-19T03:50:15.078725+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-19T03:50:49.525926+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-19T03:51:19.542263+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-19T03:51:53.856568+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-19T03:52:28.354131+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-19T03:52:48.260871+00:00  [I] LoRa RX raw len=166 rssi=-44 snr=8.8
+2026-04-19T03:52:48.277519+00:00  [W] LoRa RX decrypt_failed len=166 cipher_len=138 irq=0x0050 state=rx_decrypt_failed rssi=-44 snr=8.8 nonce=EE466A20C2516927C9BE681E tag=2C64A62ED0233725 head=F5A98EF0A4BFA21A fail_count=5
+2026-04-19T03:52:48.280139+00:00  [W] LoRa RX descartado: decrypt_or_hmac_failed len=166
+2026-04-19T03:52:59.578403+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-19T03:53:34.187568+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-19T03:54:08.856995+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-19T03:54:43.438297+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-19T03:55:17.987707+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-19T03:55:52.555881+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-19T03:56:17.406350+00:00  [I] LoRa RX raw len=158 rssi=-44 snr=9.2
+2026-04-19T03:56:17.411768+00:00  [I] LoRa RX aceito device=3222380545 type=1 seq=737000001 scope=9FFFC95AA1624895
+2026-04-19T03:56:23.756018+00:00  [I] CLOUD_TX_BEGIN kind=telemetry device=3222380545 seq=737000001 scope=9FFFC95AA1624895 lat=-16.675516 lon=-49.485027
+2026-04-19T03:56:25.195245+00:00  [I] CLOUD_TX_STEP kind=telemetry step=latest ok=1 code=200 ms=1437 device=3222380545 seq=737000001
+2026-04-19T03:56:26.530587+00:00  [I] CLOUD_TX_STEP kind=telemetry step=history ok=1 code=200 ms=1333 device=3222380545 seq=737000001
+2026-04-19T03:56:26.553090+00:00  [I] CLOUD_TX_DONE kind=telemetry device=3222380545 seq=737000001 latest=1 history=1 total_ms=2771
+2026-04-19T03:56:26.557309+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-19T03:56:26.564193+00:00  [I] LoRa RX raw len=166 rssi=-44 snr=9.0
+2026-04-19T03:56:26.569706+00:00  [I] LoRa RX aceito device=3222380545 type=2 seq=737000002 scope=9FFFC95AA1624895
+2026-04-19T03:56:59.276762+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-19T03:57:34.064413+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-19T03:58:08.864446+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240

@@ -13,7 +13,7 @@ Tambem concentra dados para envio posterior ao backend Supabase, via app/servico
 ## 2) Arquitetura de módulos
 
 1. `gateway-matriz.ino`: fluxo principal (boot, OTA, LoRa, API, relay, comandos).
-2. `LoRaGateway.*`: rádio LoRa seguro com anti-replay por dispositivo.
+2. `LoRaGateway.*`: rádio LoRa seguro com anti-replay por `deviceId + scopeId + keyId`.
 3. `ApiServer.*`: servidor HTTP + WebSocket para o app.
 4. `SdLogger.*`: log local em SD com hash chain.
 5. `LoRaProtocol.*` + `CryptoEngine.*`: serialização segura dos frames LoRa.
@@ -40,6 +40,7 @@ Tambem concentra dados para envio posterior ao backend Supabase, via app/servico
 1. `GET /status`: status do gateway matriz (fw, ssid, ip, ota, role).
 2. `GET /devices`: lista JSON dos dispositivos rastreados em memoria (ordenados por atividade recente), com `device_id`, `online`, `age_ms`, `seq`, `timestamp` e `lat/lon` quando disponivel. Aceita `?limit=<n>`.
 3. `GET /logs`: ultimas linhas do buffer de logs em memoria (`text/plain`). Aceita `?limit=<n>` (padrao 30).
+4. `POST /diag/anti-replay/reset-uplink`: reset diagnostico e escopado do anti-replay uplink. Exige modo diagnostico autorizado e confirmação explícita no payload.
 
 ### WebSocket (`ws://<gateway-ip>:81`)
 
@@ -56,7 +57,7 @@ Fila de comandos WebSocket no firmware: 8 mensagens.
 
 1. Recebe frame LoRa.
 2. Valida e decripta.
-3. Aplica anti-replay por `deviceId + seq`.
+3. Aplica anti-replay por `deviceId + scopeId + keyId + seq`.
 4. Se for candidato a relay (`TELEMETRY`, `EVENT`, `ACK`, `NACK`), retransmite para outros gateways.
 5. Publica JSON no WebSocket para o app.
 6. Registra em SD (`UL|...`).
@@ -87,7 +88,7 @@ Fila de comandos WebSocket no firmware: 8 mensagens.
 1. Habilitado por `GATEWAY_RELAY_ENABLED=true`.
 2. Repassa frames `TELEMETRY`, `EVENT`, `ACK`, `NACK`.
 3. Permite malha LoRa best-effort para levar dados até um gateway com acesso a computador/internet.
-4. Anti-replay acompanha até `32` device IDs distintos (`LORA_REPLAY_TRACKED_DEVICES`).
+4. Anti-replay acompanha até `32` combinações distintas de `deviceId + scopeId + keyId` (`LORA_REPLAY_TRACKED_DEVICES`).
 
 ## 9) Segurança e integridade
 

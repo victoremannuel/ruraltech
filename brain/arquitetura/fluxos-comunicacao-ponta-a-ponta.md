@@ -66,7 +66,53 @@ App chama CloudService.enqueueScopedCommand(command, propertyId, ...)
 → App recebe via Realtime
 ```
 
-### Fluxo 4: Operação de Herding [[regras-negocio]]
+### Fluxo 3.1: SET_FENCE via Protocolo RPv2 (Binário)
+
+```
+App salva rural_properties.points ou areas.perimeter
+→ Supabase trigger onWrite → autoSyncPropertyFence / autoSyncAreaFence
+→ Cria SET_FENCE determinístico em property_commands + RTDB matrixCommandQueues
+→ Matriz: normaliza payload (points em cascata: root.points → payload.points → payload.payload.points)
+→ Matriz: planner RPv2 calcula chunks com overhead real (testa candidato serializado)
+→ Matriz: radio_command_id = FNV-1a 64 + CRC32 do fence
+→ Sessão binária RPv2 (LoRa):
+   1. BEGIN (radio_command_id, pointCount, crc) → Coleira valida, prepara staging
+   2. POINTS (chunk 0..N-1) → Coleira valida CRC por chunk, armazena em staging
+   3. COMMIT → Coleira valida CRC final, persiste em NVS, aplica cerca
+→ Coleira responde por etapa:
+   - ACK binário (etapa OK)
+   - NACK binário (falha: CRC, memória, validação)
+   - APPLY_STATUS final (success=true/false, reasonCode)
+→ Matriz: aguarda ACK/NACK por etapa (timeout por etapa)
+→ Matriz: persiste resultado com transport=radio_fence_v2, transportState, reasonCode
+→ propertyEvents + propertyCommandEvents atualizados
+→ App recebe via Realtime (log auditável com preview SVG)
+```
+
+**Detalhes do RPv2:**
+
+| Etapa | Payload | Validação |
+|---|---|---|
+| BEGIN | radio_command_id (8B), pointCount (2B), fence_crc (4B) | CRC32 do header |
+| POINTS | chunk_index (1B), points (variável), chunk_crc (4B) | CRC32 por chunk |
+| COMMIT | fence_crc (4B) | CRC32 final + validação staging |
+
+**Planner de chunking:**
+
+- Testa payloads candidatos reais do maior para o menor intervalo de pontos
+- Reduz progressivamente até caber no limite LoRa (128 bytes)
+- Falha explícita se nem um ponto couber (`fence_single_point_chunk_too_large`)
+- Cada chunk não repete `matrix_gateway_id` nem `requested_at_ms` (otimização de bytes)
+
+**Estados de transporte:**
+
+- `pending` → aguardando envio
+- `sending_begin` / `sending_points` / `sending_commit`
+- `waiting_ack` / `waiting_apply_status`
+- `applied` (após APPLY_STATUS positivo real)
+- `failed` (NACK, timeout, CRC fail, reasonCode persistido)
+
+### Fluxo 4: Operação de Herding
 
 ```
 App HerdingScreen:

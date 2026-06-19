@@ -1,0 +1,20 @@
+brain/copilot/copilot-custom-prompts/Generate glossary.md
+brain/decisoes/migracao-supabase.md
+brain/projetos/ruraltech.md
+brain/tarefas/auditoria-pos-migracao-supabase.md
+coleira/pinagem.md
+coleira/README.md
+coleira/funcionamento.md
+firmware/shared/command_contract.h
+firmware/shared/command_contract.cpp
+firmware/tests/queue_stream_support_test.cpp
+firmware/tests/command_contract_test.cpp
+gateway/pinagem.md
+gateway/README.md
+gateway/funcionamento.md
+gateway-matriz/pinagem.md
+gateway-matriz/README.md
+gateway-matriz/funcionamento.md
+tests/diag-esp32-sensors/README.md
+tests/diag-lora-lora/build_opt.h
+tests/diag-lora-lora/README.md

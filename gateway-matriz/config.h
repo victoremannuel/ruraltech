@@ -31,6 +31,10 @@
 #define RT_MATRIX_DIAG_STAGE 0
 #endif
 
+#ifndef RT_MATRIX_ENABLE_DIAG_ANTI_REPLAY_RESET
+#define RT_MATRIX_ENABLE_DIAG_ANTI_REPLAY_RESET 0
+#endif
+
 // BLE da matriz:
 // - em partições maiores que min_spiffs, padrão = 1 (onboarding BLE ativo);
 // - em min_spiffs, padrão = 0 para caber em flash sem trocar partição.
@@ -47,6 +51,8 @@ namespace cfg {
 constexpr char FW_VERSION[] = "gateway-matriz-1.0.0";
 constexpr uint8_t LOG_LEVEL = RT_MATRIX_LOG_LEVEL;
 constexpr uint8_t DIAG_STAGE = RT_MATRIX_DIAG_STAGE;
+constexpr bool DIAG_ANTI_REPLAY_RESET_ENABLED =
+    RT_MATRIX_ENABLE_DIAG_ANTI_REPLAY_RESET != 0 || DIAG_STAGE >= 4;
 constexpr bool DISABLE_LORA_REPLAY_FOR_TESTS =
     RT_MATRIX_DISABLE_LORA_REPLAY_FOR_TESTS != 0;
 constexpr uint32_t SERIAL_BAUD = 115200;
@@ -132,10 +138,15 @@ constexpr uint32_t HERD_OPERATION_TIMEOUT_MS = 600000;
 constexpr uint32_t HERD_OPERATION_STATUS_PUBLISH_MS = 3000;
 
 // Relay entre gateways (multi-hop best effort)
-constexpr bool GATEWAY_RELAY_ENABLED = true;
+constexpr bool GATEWAY_RELAY_ENABLED = cfg_manual::GATEWAY_RELAY_ENABLED;
 constexpr uint8_t LORA_REPLAY_TRACKED_DEVICES = 32;
 
 // Criptografia LoRa (deve casar com a coleira no MVP)
+// IDs logicos de compatibilidade: diagnostico operacional apenas.
+// Nao substituem as chaves reais AES/HMAC.
+constexpr uint16_t LORA_PROTO_VERSION = 1;
+constexpr uint16_t LORA_KEY_ID = 1;
+constexpr uint16_t LORA_RADIO_PROFILE_ID = 9151;
 constexpr uint8_t AES_KEY[16] = {0x31,0x62,0x13,0x44,0x75,0x26,0x57,0x98,0xA9,0xBA,0xCB,0xDC,0xED,0x0F,0x11,0x22};
 constexpr uint8_t HMAC_KEY[32] = {
   0x21,0x43,0x65,0x87,0x09,0xAB,0xCD,0xEF,0x10,0x32,0x54,0x76,0x98,0xBA,0xDC,0xFE,

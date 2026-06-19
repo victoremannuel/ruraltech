@@ -53,6 +53,7 @@ class ApiServer {
   void updateDeviceFromPacket(const String& json);
   int findDeviceSlot(uint32_t deviceId) const;
   int allocateDeviceSlot(uint32_t deviceId);
+  void handleAntiReplayResetRequest();
   void handleDevicesRequest();
   void handleLogsRequest();
 };

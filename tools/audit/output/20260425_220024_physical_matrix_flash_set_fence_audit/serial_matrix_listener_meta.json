@@ -1,0 +1,13 @@
+{
+  "role": "MATRIX",
+  "port": "/dev/tty.usbserial-59470049741",
+  "baud": 115200,
+  "filter_cmd": "",
+  "started_at": "2026-04-26T01:19:38.071962+00:00",
+  "open_ok": true,
+  "lines_read": 22,
+  "area_sync_events": 10,
+  "last_line_at": "2026-04-26T01:19:45.229085+00:00",
+  "stopped_at": "",
+  "stop_reason": ""
+}

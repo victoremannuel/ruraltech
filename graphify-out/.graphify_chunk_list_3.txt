@@ -1,0 +1,20 @@
+brain/arquitetura/regras-negocio.md
+brain/arquitetura/fluxos-comunicacao-ponta-a-ponta.md
+brain/arquitetura/stack-tecnologico.md
+brain/arquitetura/modelagem-dados-supabase.md
+brain/conhecimento/padroes-implementacao.md
+brain/conhecimento/convencoes-codigo.md
+brain/copilot/copilot-custom-prompts/Rewrite as tweet.md
+brain/copilot/copilot-custom-prompts/Clip Web Page.md
+brain/copilot/copilot-custom-prompts/Fix grammar and spelling.md
+brain/copilot/copilot-custom-prompts/Make longer.md
+brain/copilot/copilot-custom-prompts/Explain like I am 5.md
+brain/copilot/copilot-custom-prompts/Translate to Chinese.md
+brain/copilot/copilot-custom-prompts/Clip YouTube Transcript.md
+brain/copilot/copilot-custom-prompts/Make shorter.md
+brain/copilot/copilot-custom-prompts/Rewrite as tweet thread.md
+brain/copilot/copilot-custom-prompts/Simplify.md
+brain/copilot/copilot-custom-prompts/Emojify.md
+brain/copilot/copilot-custom-prompts/Generate table of contents.md
+brain/copilot/copilot-custom-prompts/Summarize.md
+brain/copilot/copilot-custom-prompts/Remove URLs.md

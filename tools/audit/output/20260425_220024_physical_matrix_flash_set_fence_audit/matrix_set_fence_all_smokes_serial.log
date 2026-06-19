@@ -1,0 +1,122 @@
+2026-04-26T01:19:39.911058+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_FETCH_HTTP_OK_EMPTY_BODY] runtimeId=matriz_fazenda_01 queueKeyLen=64 httpStatus=200 bodyLen=10 emptyKind=null bodyPrefix=4  null  0
+2026-04-26T01:19:39.916641+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_EMPTY] runtimeId=matriz_fazenda_01 queueKeyLen=64
+2026-04-26T01:19:39.926478+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_POLL_START] runtimeId=matriz_fazenda_01 forceDispatch=0 bindingReady=1 backhaulOpen=1
+2026-04-26T01:19:44.868232+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_BODY_SANITIZED] runtimeId=matriz_fazenda_01 trimmedPrefixBytes=5 firstJsonChar={ newBodyLen=1389
+2026-04-26T01:19:44.917260+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_FETCH_HTTP_OK_OBJECT] runtimeId=matriz_fazenda_01 queueKeyLen=64 httpStatus=200 bodyLen=1389 itemCount=1 firstCommandId=AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388859F00:23A00185B336A70A bodyPrefix={"command_id":"AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388859F00:23A00185B336A70A","payload":{"command":"SET_FENCE","payload":{"cmd_id":"AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388859F00:23A00185B336A70A","points...
+2026-04-26T01:19:44.933995+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_ITEM_FOUND] runtimeId=matriz_fazenda_01 commandId=AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388859F00:23A00185B336A70A command=SET_FENCE propertyId=T0xeG8WQHwJRI6H3t7vr hasPayload=1
+2026-04-26T01:19:44.950442+00:00  [AREA_SYNC][MATRIX][INFO][FENCE_POINTS_RESOLVED] commandId=AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388859F00:23A00185B336A70A resolvedSource=root.points pointCount=6
+2026-04-26T01:19:44.967593+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_COMMAND_LOADED] commandId=AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388859F00:23A00185B336A70A areaId=kQSjWOVdkqTNDM9WBggT propertyId=T0xeG8WQHwJRI6H3t7vr scopeId=9FFFC95AA1624895 targetCount=1 pointCount=6
+2026-04-26T01:19:44.989145+00:00  [AREA_SYNC][MATRIX][INFO][QUEUE_COMMAND_ACCEPTED] commandId=AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388859F00:23A00185B336A70A areaId=kQSjWOVdkqTNDM9WBggT propertyId=T0xeG8WQHwJRI6H3t7vr scopeId=9FFFC95AA1624895
+2026-04-26T01:19:45.005730+00:00  [AREA_SYNC][MATRIX][INFO][DISPATCH_BEGIN] commandId=AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388859F00:23A00185B336A70A areaId=kQSjWOVdkqTNDM9WBggT propertyId=T0xeG8WQHwJRI6H3t7vr targetCount=1
+2026-04-26T01:19:45.022103+00:00  [I] RPV2_PLAN_ENTER deviceId=3222380545 commandId=AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388859F00:23A00185B336A70A totalPoints=6 maxFrame=128 source=cloud_queue
+2026-04-26T01:19:45.027915+00:00  [I] SET_FENCE_PROGRESS commandId=AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388 stage=planner_enter atMs=194104
+2026-04-26T01:19:45.033428+00:00  [I] RPV2_PLANNER_REV rev=canonical_fence_planner_v1 gitShort=23d7f93
+2026-04-26T01:19:45.066397+00:00  [I] RPV2_PLAN_CANDIDATE_EVAL deviceId=3222380545 commandId=AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388859F00:23A00185B336A70A radioCommandId=1459991615976664799 fragmentIndex=1 startPointIndex=0 endPointIndex=5 pointCount=6 plainFrameSize=72 secureWireSize=134 wireLenFinal=134 limit=128 measurementOk=1 fitsLimit=0 classification=oversize_reducible
+2026-04-26T01:19:45.093951+00:00  [W] RPV2_PLAN_CHUNK_REJECT deviceId=3222380545 commandId=AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388859F00:23A00185B336A70A radioCommandId=1459991615976664799 fragmentIndex=1 startPointIndex=0 pointCount=6 reason=secure_envelope_too_large wireLenFinal=134 limit=128 classification=oversize_reducible
+2026-04-26T01:19:45.121689+00:00  [I] RPV2_PLAN_CANDIDATE_EVAL deviceId=3222380545 commandId=AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388859F00:23A00185B336A70A radioCommandId=1459991615976664799 fragmentIndex=1 startPointIndex=0 endPointIndex=4 pointCount=5 plainFrameSize=64 secureWireSize=126 wireLenFinal=126 limit=128 measurementOk=1 fitsLimit=1 classification=fit
+2026-04-26T01:19:45.143680+00:00  [I] RPV2_PLAN_CHUNK_FIT deviceId=3222380545 commandId=AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388859F00:23A00185B336A70A radioCommandId=1459991615976664799 fragmentIndex=1 startPointIndex=0 pointCount=5 plainFrameSize=64 wireLenFinal=126 limit=128
+2026-04-26T01:19:45.171363+00:00  [I] RPV2_PLAN_CANDIDATE_EVAL deviceId=3222380545 commandId=AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388859F00:23A00185B336A70A radioCommandId=1459991615976664799 fragmentIndex=2 startPointIndex=5 endPointIndex=5 pointCount=1 plainFrameSize=32 secureWireSize=94 wireLenFinal=94 limit=128 measurementOk=1 fitsLimit=1 classification=fit
+2026-04-26T01:19:45.193437+00:00  [I] RPV2_PLAN_CHUNK_FIT deviceId=3222380545 commandId=AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388859F00:23A00185B336A70A radioCommandId=1459991615976664799 fragmentIndex=2 startPointIndex=5 pointCount=1 plainFrameSize=32 wireLenFinal=94 limit=128
+2026-04-26T01:19:45.210033+00:00  [I] RPV2_PLAN_FINAL deviceId=3222380545 commandId=AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388859F00:23A00185B336A70A planReady=1 chunkCount=2 totalPoints=6 minWireLen=94 maxWireLen=126 reason=-
+2026-04-26T01:19:45.221076+00:00  [I] SET_FENCE_PROGRESS commandId=AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388 stage=planner_final_ready atMs=194305
+2026-04-26T01:19:45.229085+00:00  [I] SET_FENCE_PROGRESS commandId=AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:360D51D388 stage=paging_waiting_uplink atMs=194316
+2026-04-26T01:20:25.759270+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:20:31.703740+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:20:41.706654+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:20:51.711095+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:20:55.762331+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:21:01.742769+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:21:11.721364+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:21:21.723137+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:21:25.760765+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:21:31.725581+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:21:41.727806+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:21:50.969419+00:00  [I] LoRa RX raw len=159 rssi=-35 snr=12.0
+2026-04-26T01:21:50.975277+00:00  [I] LORA_RX_DECRYPT_ATTEMPT len=159 rssi=-35 snr=12.0 attempts=2
+2026-04-26T01:21:50.977560+00:00  [W] Replay bloqueado device=3222380545 seq=75000001
+2026-04-26T01:21:51.731469+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=backhaul_window_closed runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=0 herdActive=0 simpleActive=1
+2026-04-26T01:21:55.758752+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:22:02.320953+00:00  [I] LoRa RX raw len=166 rssi=-36 snr=11.8
+2026-04-26T01:22:02.326485+00:00  [I] LORA_RX_DECRYPT_ATTEMPT len=166 rssi=-36 snr=11.8 attempts=3
+2026-04-26T01:22:02.331901+00:00  [W] Replay bloqueado device=3222380545 seq=75000002
+2026-04-26T01:22:02.343221+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=backhaul_window_closed runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=0 herdActive=0 simpleActive=1
+2026-04-26T01:22:12.397247+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:22:22.349005+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:22:25.762454+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:22:32.349003+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:22:42.352804+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:22:52.352837+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:22:55.765353+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:23:02.711281+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:23:12.712412+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:23:22.711867+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:23:25.770340+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:23:32.713799+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:23:42.715775+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:23:52.719687+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:23:55.771291+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:24:02.719799+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:24:12.724777+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:24:22.729741+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:24:25.775256+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:24:32.734709+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:24:42.739689+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:24:52.744594+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:24:55.778425+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:25:02.752030+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:25:12.755254+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:25:22.760053+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:26:12.779075+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:26:22.783412+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:26:25.787008+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:26:32.783970+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:26:42.787725+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:26:52.787385+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:26:55.789960+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:27:02.791661+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:27:12.797428+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:27:22.797339+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:27:25.793984+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:27:32.799482+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:27:42.800384+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:27:52.805269+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:27:55.795983+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:28:02.810366+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:28:12.815295+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:28:22.820203+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:28:25.799761+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:28:32.820294+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:28:42.824239+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:28:52.829210+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:28:55.802798+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:29:02.834231+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:29:04.963941+00:00  [I] LoRa RX raw len=159 rssi=-35 snr=12.2
+2026-04-26T01:29:04.968349+00:00  [I] LORA_RX_DECRYPT_ATTEMPT len=159 rssi=-35 snr=12.2 attempts=6
+2026-04-26T01:29:04.971362+00:00  [W] Replay bloqueado device=3222380545 seq=77000001
+2026-04-26T01:29:11.323890+00:00  [I] LoRa RX raw len=166 rssi=-35 snr=12.5
+2026-04-26T01:29:11.329279+00:00  [I] LORA_RX_DECRYPT_ATTEMPT len=166 rssi=-35 snr=12.5 attempts=7
+2026-04-26T01:29:11.332261+00:00  [W] Replay bloqueado device=3222380545 seq=77000002
+2026-04-26T01:29:12.836252+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:29:22.839168+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:29:25.806773+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:29:32.844276+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:29:42.870496+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:29:52.863024+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:29:55.809831+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:30:02.859516+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:30:12.859493+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:30:22.863178+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:30:25.812806+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:30:32.868460+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:30:42.873156+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:30:52.879223+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:30:55.815691+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:31:02.883096+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:31:12.882989+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:31:22.888192+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:31:25.819596+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:31:32.893173+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:31:42.898087+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:31:52.898122+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1
+2026-04-26T01:31:55.822547+00:00  [I] Backhaul status: state=connected wl=connected(3) elapsed_ms=0 attempt=1 reason=UNSPECIFIED(1) target_visible=0 target_rssi=0 ip=192.168.0.240
+2026-04-26T01:32:02.901188+00:00  [AREA_SYNC][MATRIX][WARN][QUEUE_POLL_SKIPPED] reason=simple_command_active runtimeId=matriz_fazenda_01 bindingReady=1 backhaulOpen=1 herdActive=0 simpleActive=1

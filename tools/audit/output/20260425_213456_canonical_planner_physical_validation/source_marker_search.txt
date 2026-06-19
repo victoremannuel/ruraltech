@@ -1,0 +1,104 @@
+$ rg -n -F FenceRpv2Planner gateway-matriz firmware/shared firmware/tests
+firmware/tests/rpv2_fence_planner_test.cpp:7:#include "../../gateway-matriz/FenceRpv2Planner.h"
+firmware/tests/matrix_cloud_set_fence_dispatch_integration_test.cpp:4:#include "../../gateway-matriz/FenceRpv2Planner.h"
+gateway-matriz/gateway-matriz.ino:40:#include "FenceRpv2Planner.h"
+$ rg -n -F buildFenceRpv2PlanStrict gateway-matriz firmware/shared firmware/tests
+firmware/tests/matrix_cloud_set_fence_dispatch_integration_test.cpp:75:  const bool ok = rpv2fenceplanner::buildFenceRpv2PlanStrict(
+gateway-matriz/gateway-matriz.ino:4207:  const bool ok = rpv2fenceplanner::buildFenceRpv2PlanStrict(
+firmware/tests/rpv2_fence_planner_test.cpp:148:    const bool ok = rpv2fenceplanner::buildFenceRpv2PlanStrict(
+firmware/tests/rpv2_fence_planner_test.cpp:181:    const bool ok = rpv2fenceplanner::buildFenceRpv2PlanStrict(
+gateway-matriz/FenceRpv2Planner.h:139:static inline bool buildFenceRpv2PlanStrict(
+$ rg -n -F RPV2_PLAN_ENTER gateway-matriz firmware/shared firmware/tests
+firmware/tests/matrix_cloud_set_fence_dispatch_integration_test.cpp:50:  if (strcmp(event.eventType, "RPV2_PLAN_ENTER") == 0) state->plannerCalled = true;
+gateway-matriz/gateway-matriz.ino:4072:  if (strcmp(event.eventType, "RPV2_PLAN_ENTER") == 0) {
+gateway-matriz/gateway-matriz.ino:4074:        "RPV2_PLAN_ENTER deviceId=%lu commandId=%s totalPoints=%u maxFrame=%u source=%s",
+gateway-matriz/FenceRpv2Planner.h:164:  enterEvent.eventType = "RPV2_PLAN_ENTER";
+$ rg -n -F RPV2_PLANNER_REV gateway-matriz firmware/shared firmware/tests
+gateway-matriz/gateway-matriz.ino:4083:  if (strcmp(event.eventType, "RPV2_PLANNER_REV") == 0) {
+gateway-matriz/gateway-matriz.ino:4085:        "RPV2_PLANNER_REV rev=%s gitShort=%s",
+gateway-matriz/gateway-matriz.ino:7281:        "RPV2_PLANNER_REV rev=canonical_fence_planner_v1 gitShort=%s",
+gateway-matriz/FenceRpv2Planner.h:173:  revEvent.eventType = "RPV2_PLANNER_REV";
+$ rg -n -F canonical_fence_planner_v1 gateway-matriz firmware/shared firmware/tests
+firmware/tests/rpv2_fence_planner_test.cpp:141:  ctx.plannerRevision = "canonical_fence_planner_v1";
+firmware/tests/matrix_cloud_set_fence_dispatch_integration_test.cpp:71:  ctx.plannerRevision = "canonical_fence_planner_v1";
+gateway-matriz/gateway-matriz.ino:4086:        event.plannerRevision && event.plannerRevision[0] ? event.plannerRevision : "canonical_fence_planner_v1",
+gateway-matriz/gateway-matriz.ino:4202:  ctx.plannerRevision = "canonical_fence_planner_v1";
+gateway-matriz/gateway-matriz.ino:7281:        "RPV2_PLANNER_REV rev=canonical_fence_planner_v1 gitShort=%s",
+gateway-matriz/FenceRpv2Planner.h:45:  const char* plannerRevision = "canonical_fence_planner_v1";
+$ rg -n -F RPV2_PLAN_CHUNK_REJECT gateway-matriz firmware/shared firmware/tests
+firmware/tests/matrix_cloud_set_fence_dispatch_integration_test.cpp:52:  if (strcmp(event.eventType, "RPV2_PLAN_CHUNK_REJECT") == 0) state->rejectCount++;
+firmware/tests/rpv2_fence_planner_test.cpp:107:  if (strcmp(event.eventType, "RPV2_PLAN_CHUNK_REJECT") == 0) state->rejectCount++;
+gateway-matriz/gateway-matriz.ino:4109:  if (strcmp(event.eventType, "RPV2_PLAN_CHUNK_REJECT") == 0) {
+gateway-matriz/gateway-matriz.ino:4111:        "RPV2_PLAN_CHUNK_REJECT deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u reason=%s wireLenFinal=%u limit=%u classification=%s",
+gateway-matriz/FenceRpv2Planner.h:327:        rejectEvent.eventType = "RPV2_PLAN_CHUNK_REJECT";
+$ rg -n -F RPV2_PLAN_CANDIDATE_EVAL gateway-matriz firmware/shared firmware/tests
+firmware/tests/matrix_cloud_set_fence_dispatch_integration_test.cpp:51:  if (strcmp(event.eventType, "RPV2_PLAN_CANDIDATE_EVAL") == 0) state->candidateEvalCount++;
+firmware/tests/rpv2_fence_planner_test.cpp:106:  if (strcmp(event.eventType, "RPV2_PLAN_CANDIDATE_EVAL") == 0) state->candidateEvalCount++;
+gateway-matriz/FenceRpv2Planner.h:241:      evalEvent.eventType = "RPV2_PLAN_CANDIDATE_EVAL";
+gateway-matriz/gateway-matriz.ino:4090:  if (strcmp(event.eventType, "RPV2_PLAN_CANDIDATE_EVAL") == 0) {
+gateway-matriz/gateway-matriz.ino:4092:        "RPV2_PLAN_CANDIDATE_EVAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u endPointIndex=%u pointCount=%u plainFrameSize=%u secureWireSize=%u wireLenFinal=%u limit=%u measurementOk=%u fitsLimit=%u classification=%s",
+$ rg -n -F RPV2_PLAN_CHUNK_FIT gateway-matriz firmware/shared firmware/tests
+gateway-matriz/gateway-matriz.ino:4124:  if (strcmp(event.eventType, "RPV2_PLAN_CHUNK_FIT") == 0) {
+gateway-matriz/gateway-matriz.ino:4126:        "RPV2_PLAN_CHUNK_FIT deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u plainFrameSize=%u wireLenFinal=%u limit=%u",
+firmware/tests/matrix_cloud_set_fence_dispatch_integration_test.cpp:53:  if (strcmp(event.eventType, "RPV2_PLAN_CHUNK_FIT") == 0) state->fitCount++;
+gateway-matriz/FenceRpv2Planner.h:304:        fitEvent.eventType = "RPV2_PLAN_CHUNK_FIT";
+firmware/tests/rpv2_fence_planner_test.cpp:108:  if (strcmp(event.eventType, "RPV2_PLAN_CHUNK_FIT") == 0) state->fitCount++;
+$ rg -n -F RPV2_PLAN_FINAL gateway-matriz firmware/shared firmware/tests
+firmware/tests/matrix_cloud_set_fence_dispatch_integration_test.cpp:54:  if (strcmp(event.eventType, "RPV2_PLAN_FINAL") == 0) state->finalCount++;
+gateway-matriz/FenceRpv2Planner.h:191:    finalEvent.eventType = "RPV2_PLAN_FINAL";
+gateway-matriz/FenceRpv2Planner.h:277:          capacityFinalEvent.eventType = "RPV2_PLAN_FINAL";
+gateway-matriz/FenceRpv2Planner.h:362:      terminalFinalEvent.eventType = "RPV2_PLAN_FINAL";
+gateway-matriz/FenceRpv2Planner.h:381:      incompleteFinalEvent.eventType = "RPV2_PLAN_FINAL";
+gateway-matriz/FenceRpv2Planner.h:399:  readyFinalEvent.eventType = "RPV2_PLAN_FINAL";
+gateway-matriz/gateway-matriz.ino:4153:  if (strcmp(event.eventType, "RPV2_PLAN_FINAL") == 0) {
+gateway-matriz/gateway-matriz.ino:4155:        "RPV2_PLAN_FINAL deviceId=%lu commandId=%s planReady=%u chunkCount=%u totalPoints=%u minWireLen=%u maxWireLen=%u reason=%s",
+firmware/tests/rpv2_fence_planner_test.cpp:109:  if (strcmp(event.eventType, "RPV2_PLAN_FINAL") == 0) state->finalCount++;
+$ rg -n -F RPV2_PLAN_FAILED_TERMINAL gateway-matriz firmware/shared firmware/tests
+gateway-matriz/FenceRpv2Planner.h:182:    failedEvent.eventType = "RPV2_PLAN_FAILED_TERMINAL";
+gateway-matriz/FenceRpv2Planner.h:264:          capacityFailedEvent.eventType = "RPV2_PLAN_FAILED_TERMINAL";
+gateway-matriz/FenceRpv2Planner.h:349:      terminalEvent.eventType = "RPV2_PLAN_FAILED_TERMINAL";
+gateway-matriz/gateway-matriz.ino:4138:  if (strcmp(event.eventType, "RPV2_PLAN_FAILED_TERMINAL") == 0) {
+gateway-matriz/gateway-matriz.ino:4140:        "RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u reason=%s wireLenFinal=%u limit=%u classification=%s",
+gateway-matriz/gateway-matriz.ino:4629:        "RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu reason=%s",
+gateway-matriz/gateway-matriz.ino:4692:        "RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu reason=%s",
+$ rg -n -F SIMPLE_COMMAND_CLEARED gateway-matriz firmware/shared firmware/tests
+firmware/shared/AreaSyncLogger.h:129:#define AS_MATRIX_SIMPLE_COMMAND_CLEARED(commandId, command, reason) \
+firmware/shared/AreaSyncLogger.h:130:  AS_MATRIX_INFO("SIMPLE_COMMAND_CLEARED", \
+gateway-matriz/gateway-matriz.ino:1979:    AS_MATRIX_SIMPLE_COMMAND_CLEARED(
+$ rg -n -F planner_or_dispatch_stall gateway-matriz firmware/shared firmware/tests
+gateway-matriz/FenceRpv2Planner.h:113:  if (strcmp(reason, "planner_or_dispatch_stall") == 0) {
+gateway-matriz/gateway-matriz.ino:3068:  if (strcmp(reason, "planner_or_dispatch_stall") == 0) return rpv2::REASON_RETRY_EXHAUSTED;
+gateway-matriz/gateway-matriz.ino:3341:      rpv2fenceplanner::reasonCodeFromLabel("planner_or_dispatch_stall");
+gateway-matriz/gateway-matriz.ino:3342:  publishSimpleCommandResult("failed", "planner_or_dispatch_stall");
+$ rg -n -F measurementOk gateway-matriz firmware/shared firmware/tests
+gateway-matriz/gateway-matriz.ino:4063:  measured->measurementOk = buildExactSecureWireMetrics(tx, &metrics, nullptr, 0);
+gateway-matriz/gateway-matriz.ino:4067:  return measured->measurementOk;
+gateway-matriz/gateway-matriz.ino:4092:        "RPV2_PLAN_CANDIDATE_EVAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u endPointIndex=%u pointCount=%u plainFrameSize=%u secureWireSize=%u wireLenFinal=%u limit=%u measurementOk=%u fitsLimit=%u classification=%s",
+gateway-matriz/gateway-matriz.ino:4104:        event.measurementOk ? 1U : 0U,
+firmware/tests/rpv2_fence_planner_test.cpp:81:  measured->measurementOk = true;
+firmware/tests/rpv2_fence_planner_test.cpp:95:  measured->measurementOk = true;
+firmware/tests/rpv2_fence_planner_test.cpp:122:    assert(reducible.measurementOk);
+firmware/shared/radio_proto_v2_planner_support.h:8:  bool measurementOk = false;
+firmware/shared/radio_proto_v2_planner_support.h:18:    bool measurementOk,
+firmware/shared/radio_proto_v2_planner_support.h:24:  decision.measurementOk = encodeOk && measurementOk;
+firmware/shared/radio_proto_v2_planner_support.h:25:  decision.fitsLimit = decision.measurementOk && wireLenFinal <= limit;
+firmware/shared/radio_proto_v2_planner_support.h:31:  const bool oversize = decision.measurementOk && wireLenFinal > limit;
+gateway-matriz/FenceRpv2Planner.h:52:  bool measurementOk = false;
+gateway-matriz/FenceRpv2Planner.h:79:  bool measurementOk = false;
+gateway-matriz/FenceRpv2Planner.h:227:          measured.measurementOk,
+gateway-matriz/FenceRpv2Planner.h:255:      evalEvent.measurementOk = decision.measurementOk;
+gateway-matriz/FenceRpv2Planner.h:316:        fitEvent.measurementOk = true;
+firmware/tests/matrix_cloud_set_fence_dispatch_integration_test.cpp:23:  measured->measurementOk = true;
+firmware/tests/matrix_cloud_set_fence_dispatch_integration_test.cpp:39:  measured->measurementOk = true;
+$ rg -n -F fitsLimit gateway-matriz firmware/shared firmware/tests
+firmware/shared/radio_proto_v2_planner_support.h:9:  bool fitsLimit = false;
+firmware/shared/radio_proto_v2_planner_support.h:25:  decision.fitsLimit = decision.measurementOk && wireLenFinal <= limit;
+firmware/shared/radio_proto_v2_planner_support.h:26:  if (decision.fitsLimit) {
+gateway-matriz/gateway-matriz.ino:4092:        "RPV2_PLAN_CANDIDATE_EVAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u endPointIndex=%u pointCount=%u plainFrameSize=%u secureWireSize=%u wireLenFinal=%u limit=%u measurementOk=%u fitsLimit=%u classification=%s",
+gateway-matriz/gateway-matriz.ino:4105:        event.fitsLimit ? 1U : 0U,
+gateway-matriz/FenceRpv2Planner.h:80:  bool fitsLimit = false;
+gateway-matriz/FenceRpv2Planner.h:232:      const char* classification = decision.fitsLimit
+gateway-matriz/FenceRpv2Planner.h:256:      evalEvent.fitsLimit = decision.fitsLimit;
+gateway-matriz/FenceRpv2Planner.h:259:      if (decision.fitsLimit) {
+gateway-matriz/FenceRpv2Planner.h:317:        fitEvent.fitsLimit = true;
+firmware/tests/rpv2_fence_planner_test.cpp:123:    assert(!reducible.fitsLimit);

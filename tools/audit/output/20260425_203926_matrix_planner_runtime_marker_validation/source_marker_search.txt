@@ -1,0 +1,43 @@
+$ rg -n -F RPV2_PLAN_ENTER gateway-matriz firmware/shared firmware/tests
+gateway-matriz/gateway-matriz.ino:4022:      "RPV2_PLAN_ENTER deviceId=%lu commandId=%s totalPoints=%u maxFrame=%u source=%s",
+$ rg -n -F RPV2_PLANNER_REV gateway-matriz firmware/shared firmware/tests
+gateway-matriz/gateway-matriz.ino:4029:      "RPV2_PLANNER_REV rev=progressive_reduce_real_path_v1 gitShort=%s",
+gateway-matriz/gateway-matriz.ino:7261:        "RPV2_PLANNER_REV rev=progressive_reduce_real_path_v1 gitShort=%s",
+$ rg -n -F progressive_reduce_real_path_v1 gateway-matriz firmware/shared firmware/tests
+gateway-matriz/gateway-matriz.ino:4029:      "RPV2_PLANNER_REV rev=progressive_reduce_real_path_v1 gitShort=%s",
+gateway-matriz/gateway-matriz.ino:7261:        "RPV2_PLANNER_REV rev=progressive_reduce_real_path_v1 gitShort=%s",
+$ rg -n -F RPV2_PLAN_CANDIDATE_EVAL gateway-matriz firmware/shared firmware/tests
+gateway-matriz/gateway-matriz.ino:4092:          "RPV2_PLAN_CANDIDATE_EVAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u endPointIndex=%u pointCount=%u plainFrameSize=%u secureWireSize=%u wireLenFinal=%u limit=%u measurementOk=%u fitsLimit=%u",
+$ rg -n -F RPV2_PLAN_CHUNK_FIT gateway-matriz firmware/shared firmware/tests
+gateway-matriz/gateway-matriz.ino:4169:        "RPV2_PLAN_CHUNK_FIT deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u plainFrameSize=%u wireLenFinal=%u limit=%u",
+$ rg -n -F RPV2_PLAN_FINAL gateway-matriz firmware/shared firmware/tests
+gateway-matriz/gateway-matriz.ino:4148:          "RPV2_PLAN_FINAL deviceId=%lu commandId=%s planReady=0 chunkCount=%u totalPoints=%u minWireLen=%u maxWireLen=%u failStartPoint=%u reason=%s",
+gateway-matriz/gateway-matriz.ino:4196:      "RPV2_PLAN_FINAL deviceId=%lu commandId=%s planReady=1 chunkCount=%u totalPoints=%u minWireLen=%u maxWireLen=%u",
+$ rg -n -F RPV2_PLAN_FAILED_TERMINAL gateway-matriz firmware/shared firmware/tests
+gateway-matriz/gateway-matriz.ino:4137:          "RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u pointCount=%u reason=%s wireLenFinal=%u limit=%u",
+gateway-matriz/gateway-matriz.ino:4610:        "RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu reason=%s",
+gateway-matriz/gateway-matriz.ino:4672:        "RPV2_PLAN_FAILED_TERMINAL deviceId=%lu commandId=%s radioCommandId=%llu reason=%s",
+$ rg -n -F radio_proto_v2_planner_support gateway-matriz firmware/shared firmware/tests
+gateway-matriz/gateway-matriz.ino:54:#include "../firmware/shared/radio_proto_v2_planner_support.h"
+firmware/tests/rpv2_fence_planner_test.cpp:6:#include "../shared/radio_proto_v2_planner_support.h"
+$ rg -n -F measurementOk gateway-matriz firmware/shared firmware/tests
+gateway-matriz/gateway-matriz.ino:4092:          "RPV2_PLAN_CANDIDATE_EVAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u endPointIndex=%u pointCount=%u plainFrameSize=%u secureWireSize=%u wireLenFinal=%u limit=%u measurementOk=%u fitsLimit=%u",
+gateway-matriz/gateway-matriz.ino:4104:          decision.measurementOk ? 1U : 0U,
+firmware/tests/rpv2_fence_planner_test.cpp:164:    assert(reducible.measurementOk);
+firmware/tests/rpv2_fence_planner_test.cpp:180:    assert(terminalSinglePoint.measurementOk);
+firmware/tests/rpv2_fence_planner_test.cpp:196:    assert(!codecFailure.measurementOk);
+firmware/shared/radio_proto_v2_planner_support.h:8:  bool measurementOk = false;
+firmware/shared/radio_proto_v2_planner_support.h:18:    bool measurementOk,
+firmware/shared/radio_proto_v2_planner_support.h:24:  decision.measurementOk = encodeOk && measurementOk;
+firmware/shared/radio_proto_v2_planner_support.h:25:  decision.fitsLimit = decision.measurementOk && wireLenFinal <= limit;
+firmware/shared/radio_proto_v2_planner_support.h:31:  const bool oversize = decision.measurementOk && wireLenFinal > limit;
+$ rg -n -F fitsLimit gateway-matriz firmware/shared firmware/tests
+gateway-matriz/gateway-matriz.ino:4092:          "RPV2_PLAN_CANDIDATE_EVAL deviceId=%lu commandId=%s radioCommandId=%llu fragmentIndex=%u startPointIndex=%u endPointIndex=%u pointCount=%u plainFrameSize=%u secureWireSize=%u wireLenFinal=%u limit=%u measurementOk=%u fitsLimit=%u",
+gateway-matriz/gateway-matriz.ino:4105:          decision.fitsLimit ? 1U : 0U);
+gateway-matriz/gateway-matriz.ino:4106:      if (decision.fitsLimit) {
+firmware/tests/rpv2_fence_planner_test.cpp:165:    assert(!reducible.fitsLimit);
+firmware/tests/rpv2_fence_planner_test.cpp:181:    assert(!terminalSinglePoint.fitsLimit);
+firmware/tests/rpv2_fence_planner_test.cpp:197:    assert(!codecFailure.fitsLimit);
+firmware/shared/radio_proto_v2_planner_support.h:9:  bool fitsLimit = false;
+firmware/shared/radio_proto_v2_planner_support.h:25:  decision.fitsLimit = decision.measurementOk && wireLenFinal <= limit;
+firmware/shared/radio_proto_v2_planner_support.h:26:  if (decision.fitsLimit) {

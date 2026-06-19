@@ -16,11 +16,27 @@ Sistema de pecuária de precisão com coleiras inteligentes, gateways LoRa e app
 
 ## Flow
 
+### SET_FENCE via RPv2 (binário)
+
 ```
 App → Supabase Edge Function queue-lora-command
     → Supabase property_commands + RTDB matrixCommandQueues
     → Matriz: stream RTDB (prioritário) + polling (fallback)
-    → LoRa → Coleira
+    → Matriz normaliza payload → planner RPv2 calcula chunks por bytes reais
+    → Sessão binária RPv2: BEGIN → POINTS → COMMIT (LoRa)
+    → Coleira: valida CRC, persiste em staging, aplica se OK
+    → ACK/NACK binário por etapa + APPLY_STATUS final
+    → Supabase propertyEvents + propertyCommandEvents (transport=radio_fence_v2)
+    → App Realtime (log auditável com preview SVG)
+```
+
+### Comandos legados (JSON textual)
+
+```
+App → Supabase Edge Function queue-lora-command
+    → Supabase property_commands + RTDB matrixCommandQueues
+    → Matriz: stream RTDB (prioritário) + polling (fallback)
+    → LoRa JSON → Coleira
     → ACK/NACK + polygon_apply_result
     → Supabase propertyEvents + propertyCommandEvents
     → App Realtime (log auditável com preview SVG)
@@ -32,6 +48,7 @@ App → Supabase Edge Function queue-lora-command
 - Flutter (Dart, Material 3)
 - Supabase: Auth, Postgres, Realtime, Edge Functions (Deno)
 - Contrato de comandos em C++/Dart compartilhado
+- Protocolo RPv2 binário para SET_FENCE (CRC32, FNV-1a 64, sessão BEGIN/POINTS/COMMIT)
 
 ## Related
 

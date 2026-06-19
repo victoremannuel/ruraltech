@@ -1,6 +1,7 @@
 # ruraltech
 
 Monorepo com:
+
 - `coleira/`: firmware ESP32 da coleira
 - `gateway/`: firmware ESP32 do gateway
 - `app/`: aplicativo Flutter + Firebase
@@ -99,3 +100,71 @@ git config --global --unset core.compression
 ```
 
 Sugestão: manter `http.version=HTTP/1.1` caso a rede continue instável para uploads maiores.
+
+## Firmwares
+
+### Comando de gravação
+
+#### Coleira
+
+Compilação:
+
+```bash
+rtk arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs coleira
+```
+
+Upload:
+
+```bash
+rtk arduino-cli upload -p /dev/cu.usbserial-1420 --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs --upload-property upload.speed=115200 coleira
+```
+
+#### Gateway matriz
+
+Compilação:
+
+```bash
+rtk arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs gateway-matriz
+```
+
+Upload:
+
+```bash
+rtk arduino-cli upload -p /dev/cu.usbserial-59470049741 --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs --upload-property upload.speed=115200 gateway-matriz
+```
+
+```bash
+rtk bash -lc 'set -euo pipefail
+COLEIRA_PORT="/dev/cu.usbserial-1420"
+MATRIZ_PORT="/dev/cu.usbserial-59470049741"
+FQBN="esp32:esp32:esp32:PartitionScheme=min_spiffs"
+
+printf "\n=== PREP: cores e libs ===\n"
+arduino-cli config init --overwrite || true
+arduino-cli core update-index --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+arduino-cli core install esp32:esp32 --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+
+arduino-cli lib install "ArduinoJson@7.4.2" || true
+arduino-cli lib install "RadioLib@6.6.0" || true
+arduino-cli lib install "TinyGPSPlus@1.0.3" || true
+arduino-cli lib install "Adafruit MLX90614 Library@2.1.5" || true
+arduino-cli lib install "MPU6050_tockn@1.5.2" || true
+arduino-cli lib install "WebSockets@2.7.2" || true
+arduino-cli lib install "RTClib@2.1.4" || true
+arduino-cli lib install "Adafruit SSD1306@2.5.15" || true
+arduino-cli lib install "Adafruit GFX Library@1.12.1" || true
+
+printf "\n=== COLEIRA: compilando ===\n"
+arduino-cli compile --fqbn "$FQBN" coleira
+
+printf "\n=== COLEIRA: gravando em %s ===\n" "$COLEIRA_PORT"
+arduino-cli upload -p "$COLEIRA_PORT" --fqbn "$FQBN" coleira
+
+printf "\n=== MATRIZ: compilando ===\n"
+arduino-cli compile --fqbn "$FQBN" gateway-matriz
+
+printf "\n=== MATRIZ: gravando em %s ===\n" "$MATRIZ_PORT"
+arduino-cli upload -p "$MATRIZ_PORT" --fqbn "$FQBN" gateway-matriz
+
+printf "\n=== OK: coleira e matriz gravadas ===\n"'
+```

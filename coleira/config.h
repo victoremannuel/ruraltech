@@ -88,11 +88,21 @@ constexpr uint16_t LORA_SEQ_RESERVE_WINDOW = 128;
 constexpr uint32_t NORMAL_INTERVAL_MS = 180000;
 constexpr uint32_t ALERT_INTERVAL_MS = 20000;
 constexpr uint32_t HERDING_INTERVAL_MS = 15000;
-constexpr uint32_t RX_WINDOW_MS = 2500;
+constexpr bool RTR_BENCH_EXTENDED_DISCOVERY = true;
+constexpr uint32_t RTR_DISCOVERY_WINDOW_MS_NORMAL = 2500;
+constexpr uint32_t RTR_DISCOVERY_WINDOW_MS_BENCH = 5000;
+constexpr uint32_t RTR_SECONDARY_RX_WINDOW_MS = 1200;
+constexpr uint32_t RTR_SESSION_FOLLOWUP_WINDOW_MS = 2200;
+constexpr uint32_t RX_WINDOW_MS = RTR_DISCOVERY_WINDOW_MS_NORMAL;
 constexpr uint32_t LORA_POST_BEGIN_SETTLE_MS = 350;
 constexpr uint32_t LORA_COMMAND_FEEDBACK_DELAY_MS = 180;
 constexpr uint32_t LORA_POST_COMMAND_EVENT_HOLDOFF_MS = 300;
 constexpr uint32_t DAILY_HEALTH_FALLBACK_MS = 86400000UL;
+constexpr bool RTR_BENCH_MODE = false;
+constexpr bool RTR_DISABLE_DEEP_SLEEP_FOR_BENCH = false;
+constexpr bool RTR_FORCE_DISCOVERY_RX_OPEN = false;
+constexpr uint32_t RTR_BENCH_HOLD_AFTER_UPLINK_MS = 0;
+constexpr uint32_t RTR_BENCH_SECONDARY_WINDOW_MS = 0;
 
 // Segurança animal
 constexpr uint8_t MAX_PULSES_PER_10_MIN = 3;
@@ -117,6 +127,13 @@ constexpr float GPS_SPEED_MOVE_THRESHOLD_KMPH = 1.2f;
 constexpr bool SMART_GPS_TEST_MODE = false;
 constexpr bool SMART_GPS_PERSISTENCE_ENABLED = cfg_manual::SMART_GPS_PERSISTENCE_ENABLED;
 constexpr bool STORAGE_QUEUE_PERSISTENCE_ENABLED = cfg_manual::STORAGE_QUEUE_PERSISTENCE_ENABLED;
+// Deep sleep deve permanecer habilitado por padrao em producao e ser
+// desabilitavel por configuracao manual em bancada.
+constexpr bool DEEP_SLEEP_ENABLED = cfg_manual::DEEP_SLEEP_ENABLED;
+constexpr uint32_t DEEP_SLEEP_PREPARE_DELAY_MS = 20;
+constexpr uint32_t DEEP_SLEEP_ARM_DELAY_MS = 10;
+// Flag temporaria de bancada para isolar panic no dreno de eventos pendentes.
+constexpr bool DEBUG_DISABLE_PENDING_EVENT_DRAIN = false;
 
 // Persistência
 constexpr uint16_t EEPROM_SIZE = 2048;
@@ -134,6 +151,11 @@ constexpr uint8_t EVENT_ERROR_CODE_MAX_LEN = 32;
 constexpr float FENCE_WARNING_METERS = 20.0f;
 
 // Criptografia (MVP: chave estática por device; em produção provisionar seguro)
+// IDs logicos de compatibilidade: diagnostico operacional apenas.
+// Nao substituem as chaves reais AES/HMAC.
+constexpr uint16_t LORA_PROTO_VERSION = 1;
+constexpr uint16_t LORA_KEY_ID = 1;
+constexpr uint16_t LORA_RADIO_PROFILE_ID = 9151;
 constexpr uint8_t AES_KEY[16] = {0x31,0x62,0x13,0x44,0x75,0x26,0x57,0x98,0xA9,0xBA,0xCB,0xDC,0xED,0x0F,0x11,0x22};
 constexpr uint8_t HMAC_KEY[32] = {
   0x21,0x43,0x65,0x87,0x09,0xAB,0xCD,0xEF,0x10,0x32,0x54,0x76,0x98,0xBA,0xDC,0xFE,

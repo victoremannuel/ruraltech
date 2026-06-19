@@ -1,0 +1,9 @@
+2026-04-26T01:41:14.215859+00:00  [I] FW_PROVENANCE role=matrix gitSha=9508a21ea62988025ec98d5f8310336465193e50 gitShort=9508a21 dirty=0 buildUtc=2026-04-26T01:34:00Z buildSource=generated firmwareVersion=gateway-matriz-1.0.0 profile=diag-cloud-no-sd diagStage=4 runtimeId=matriz_fazenda_01
+2026-04-26T01:41:14.215859+00:00  [I] FW_PROVENANCE role=matrix gitSha=9508a21ea62988025ec98d5f8310336465193e50 gitShort=9508a21 dirty=0 buildUtc=2026-04-26T01:34:00Z buildSource=generated firmwareVersion=gateway-matriz-1.0.0 profile=diag-cloud-no-sd diagStage=4 runtimeId=matriz_fazenda_01
+2026-04-26T01:41:14.215859+00:00  [I] FW_PROVENANCE role=matrix gitSha=9508a21ea62988025ec98d5f8310336465193e50 gitShort=9508a21 dirty=0 buildUtc=2026-04-26T01:34:00Z buildSource=generated firmwareVersion=gateway-matriz-1.0.0 profile=diag-cloud-no-sd diagStage=4 runtimeId=matriz_fazenda_01
+2026-04-26T01:41:14.221292+00:00  [I] RPV2_PLANNER_REV rev=canonical_fence_planner_v1 gitShort=9508a21
+2026-04-26T01:41:14.221292+00:00  [I] RPV2_PLANNER_REV rev=canonical_fence_planner_v1 gitShort=9508a21
+2026-04-26T01:41:14.221292+00:00  [I] RPV2_PLANNER_REV rev=canonical_fence_planner_v1 gitShort=9508a21
+2026-04-26T01:41:14.088405+00:00  [MODE ] DIAG_STAGE               : 4
+2026-04-26T01:41:14.154986+00:00  [CHECK] CLOUD_BACKHAUL_CFG       : OK
+2026-04-26T01:41:14.155555+00:00  [CHECK] QUEUE_POLLING_CFG        : OK
