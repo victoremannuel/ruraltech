@@ -31,7 +31,8 @@ Substitui o envio JSON textual para comandos de cerca, oferecendo:
 | `radio_proto_v2_constants` | `firmware/shared/radio_proto_v2_constants.h` | Constantes do protocolo |
 | `radio_proto_v2_id` | `firmware/shared/radio_proto_v2_id.h` | FNV-1a 64 para radio_command_id |
 | `radio_proto_v2_reason_codes` | `firmware/shared/radio_proto_v2_reason_codes.h` | Códigos de erro/status |
-| `rpv2_transport_policy` | `firmware/shared/rpv2_transport_policy.h` | Política compartilhada de retry, duplicidade e deadlines |
+| `rpv2_transport_policy` | `firmware/shared/rpv2_transport_policy.h` | Política compartilhada de retry, duplicidade e deadlines; inclui `shouldOpenFirstPointsWindow` e `shouldOpenCommitWindow` |
+| `rtr_wake_policy` | `firmware/shared/rtr_wake_policy.h` | `waitingUplinkTimeoutMs(estimatedCycleMs, floor, margin)` — timeout dinâmico de espera de uplink proporcional ao ciclo real do dispositivo |
 | `command_id_policy` | `firmware/shared/command_id_policy.h` | Limite canônico de 128 bytes e cópia sem truncamento silencioso |
 | Fila de status diferidos | `gateway-matriz/gateway-matriz.ino` | Preserva progresso em RAM e faz flush após a seção radio-crítica |
 
@@ -49,6 +50,8 @@ Substitui o envio JSON textual para comandos de cerca, oferecendo:
 | `rpv2_codec_test` | `firmware/tests/rpv2_codec_test.cpp` | Codificação/decodificação |
 | `rpv2_crc_test` | `firmware/tests/rpv2_crc_test.cpp` | Cálculo CRC32 |
 | `rpv2_fence_planner_test` | `firmware/tests/rpv2_fence_planner_test.cpp` | Planner de chunking |
+| `rpv2_transport_policy_test` | `firmware/tests/rpv2_transport_policy_test.cpp` | Política de retry/duplicidade, `shouldOpenFirstPointsWindow`, `shouldOpenCommitWindow` (CI) |
+| `rtr_wake_policy_test` | `firmware/tests/rtr_wake_policy_test.cpp` | `waitingUplinkTimeoutMs` (floor, dinâmico, margem) (CI) |
 
 ## Flow
 
@@ -109,6 +112,33 @@ Command IDs de cloud são preservados em buffers fixos de 128 bytes na matriz e
 na coleira. Overflow é rejeitado com `command_id_too_long`; não há truncamento
 silencioso nos estados ativos, sessões de wake, feedback ou fila diferida.
 
+### Pump unificado de recepção (coleira) — Class-A-like
+
+A partir de 2026-06-19, a recepção síncrona da sessão RPv2 na coleira é dirigida
+por um **único loop iterativo plano**, `runRpv2SessionReceivePump(sessionId,
+scopeId, pageAckTxAtMs)`, que substitui as 3 funções aninhadas anteriores
+(`waitForRpv2BeginImmediatelyAfterPageAck`, `waitForRpv2PointsImmediatelyAfterAck`,
+`waitForRpv2CommitImmediatelyAfterAck`).
+
+Motivação: a recursão `applyDownlink → handler → próxima janela` deixava lacunas
+entre estágios. A transição `BEGIN_ACK → POINTS#1` **não tinha janela**: a coleira
+enviava `BEGIN_ACK_TX` e voltava ao loop principal, não escutando quando a matriz
+disparava `FENCE_POINTS#1` → `points_retry_exhausted`. Mesma classe do gap
+`POINTS→COMMIT` corrigido antes.
+
+O pump deriva o estágio do estado da sessão a cada iteração:
+- `WAIT_BEGIN` enquanto `!session.active` → janela `RPV2_BEGIN_IMMEDIATE_RX_WINDOW_MS` (3 s), ancorada em `pageAckTxAtMs`.
+- `WAIT_POINTS` enquanto `!stageComplete` → `RPV2_POINTS_IMMEDIATE_RX_WINDOW_MS` (10 s), re-ancorada em `lastAckTxAtMs`. O primeiro fragmento loga `RPV2_FIRST_POINTS_RX_WINDOW_BEGIN/END`.
+- `WAIT_COMMIT` após `stageComplete` → `RPV2_COMMIT_IMMEDIATE_RX_WINDOW_MS` (10 s), re-ancorada em `lastAckTxAtMs`.
+
+Cada janela é **re-ancorada na última TX** (`lastAckTxAtMs`, novo campo em
+`Rpv2FenceSessionState`, gravado após cada `sendRpv2Ack`) — padrão LoRaWAN Class A /
+Symphony Link: a RX abre logo após a própria TX do nó. `applyFenceRpv2Frame` volta
+a ser "processa 1 frame → ACK → atualiza estado", sem abrir janelas. Um único
+`LoRaFrame` por iteração (pilha plana, sem recursão). Teto de segurança global
+`RPV2_SESSION_MAX_MS` (60 s). Watchdog alimentado a cada iteração. Sem cloud I/O
+no pump.
+
 ### Timeout e recovery da coleira
 
 A janela imediata de pontos é configurável e usa 10 segundos na bancada.
@@ -119,6 +149,22 @@ Após o último ACK de pontos, a coleira abre uma janela imediata de COMMIT de
 10 segundos. Se o COMMIT não chegar, mantém somente a espera limitada por mais
 15 segundos; ao expirar, encerra a sessão com `commit_wait_timeout`, em vez de
 aguardar todo o wake lock.
+
+### Timing do RTR na matriz (paging de nó dormindo)
+
+O agendador de wake (`RtrWakeOrchestrator`) pagina o dispositivo só após um uplink
+recente provar que está acordado. Dois ajustes (2026-06-19):
+
+- **Freshness gate desacoplado do soft-deadline diagnóstico:** o gate de paginação
+  usa `WAKE_HINT_FRESHNESS_MS = 2500` (não mais `FAST_PAGE_DEADLINE_MS = 300`). A
+  latência real uplink→page é ~1119 ms, então o limiar de 300 ms tornava o hint
+  sempre stale → churn `PAGING_WAITING_UPLINK` → `waiting_uplink_timeout`.
+  `FAST_PAGE_DEADLINE_MS` permanece apenas como métrica em `computeFastPathMetric`.
+- **Timeout de espera de uplink dinâmico:** no estado `PAGING_WAITING_UPLINK`, o
+  timeout vem de `rtrwakepolicy::waitingUplinkTimeoutMs(estimatedCycleMs, floor=180s,
+  margin=30s)` = `max(floor, 2×cycle + margin)`, usando `estimatedCycleMs` da
+  presença do dispositivo — proporcional ao duty cycle/deep sleep real, em vez de
+  um valor fixo.
 
 ### Estruturas Binárias
 
@@ -233,6 +279,8 @@ App (Realtime)
 | Ponto não cabe no frame | Planner falha com `fence_single_point_chunk_too_large` |
 | Cloud bloqueia próximo fragmento | Status diferido em RAM e flush pós-sessão |
 | COMMIT chega logo após o ACK final fora da escuta normal | Janela síncrona de COMMIT com validação completa e grace timeout |
+| Lacuna de escuta entre estágios (ex.: `BEGIN_ACK → POINTS#1`) | Pump unificado que re-ancora a janela em cada TX, sem janelas aninhadas |
+| Paging falha por hint stale com nó dormindo | `WAKE_HINT_FRESHNESS_MS=2500` e timeout de espera de uplink proporcional ao ciclo |
 | ACK perdido causa reenvio | Fragmento anterior é ACKado idempotentemente |
 | Heap instável no drain de eventos | Burst limitado e consumo somente após TX |
 | Command ID longo perde correlação cloud | Política compartilhada de 128 bytes e cópia estrita |
@@ -249,5 +297,6 @@ App (Realtime)
 [[padroes-implementacao]]
 [[estabilizacao-transporte-rpv2-2026-06-19]]
 [[estabilizacao-commit-window-flush-slicing-rpv2-2026-06-19]]
+[[pump-unificado-rpv2-timing-rtr-2026-06-19]]
 
 #arquitetura #ruraltech

@@ -98,6 +98,16 @@ inline bool shouldOpenCommitWindow(
          expectedFragment >= totalChunks;
 }
 
+inline bool shouldOpenFirstPointsWindow(
+    bool beginAckSent,
+    bool sessionActive,
+    bool stageComplete,
+    uint16_t expectedFragment,
+    uint16_t totalChunks) {
+  return beginAckSent && sessionActive && !stageComplete &&
+         expectedFragment == 1 && totalChunks > 0;
+}
+
 inline bool commitSessionMatches(
     uint64_t expectedRadioCommandId,
     uint32_t expectedSessionNonce,

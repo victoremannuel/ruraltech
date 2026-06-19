@@ -184,21 +184,10 @@ static void holdRpv2Session(
     const char* reason);
 static void logRtrDropReason(const char* reason, const LoRaFrame& frame);
 static void applyDownlink(const LoRaFrame& frame);
-static bool waitForRpv2BeginImmediatelyAfterPageAck(
+static void runRpv2SessionReceivePump(
     uint64_t sessionId,
     uint64_t scopeId,
-    uint32_t ackTxAtMs);
-static bool waitForRpv2PointsImmediatelyAfterAck(
-    uint64_t scopeId,
-    uint64_t radioCommandId,
-    uint32_t sessionNonce,
-    uint16_t expectedFragment,
-    uint32_t ackTxAtMs);
-static bool waitForRpv2CommitImmediatelyAfterAck(
-    uint64_t scopeId,
-    uint64_t radioCommandId,
-    uint32_t sessionNonce,
-    uint32_t ackTxAtMs);
+    uint32_t pageAckTxAtMs);
 static void clearActiveRpv2FenceSession(const char* reason, bool rememberReplay);
 static void rememberRpv2Replay(uint64_t radioCommandId, uint32_t sessionNonce);
 
@@ -254,6 +243,7 @@ struct Rpv2FenceSessionState {
   uint16_t nextPointIndex = 0;
   uint32_t retryGraceUntilMs = 0;
   uint32_t commitGraceUntilMs = 0;
+  uint32_t lastAckTxAtMs = 0;
   Polygon fence{};
   PolygonAuditContext audit{};
 } rpv2FenceSession_;
@@ -1485,6 +1475,7 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
     const bool beginAckTxOk =
         sendRpv2Ack(frame, header, rpv2::FENCE_BEGIN, 0, 1, 0, 0);
     const uint32_t beginAckTxAtMs = millis();
+    rpv2FenceSession_.lastAckTxAtMs = beginAckTxAtMs;
     LOGI(
         "RPV2_BEGIN_%s_TX radioCommandId=%llu sessionNonce=%lu nextExpectedFragment=%u",
         beginAckTxOk ? "ACK" : "ACK_FAIL",
@@ -1561,6 +1552,7 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
             rpv2FenceSession_.expectedFragment,
             rpv2FenceSession_.fence.count,
             0);
+        rpv2FenceSession_.lastAckTxAtMs = millis();
         return true;
       }
     }
@@ -1623,6 +1615,7 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
         rpv2FenceSession_.fence.count,
         0);
     const uint32_t pointsAckTxAtMs = millis();
+    rpv2FenceSession_.lastAckTxAtMs = pointsAckTxAtMs;
     LOGI(
         "RPV2_POINTS_%s_TX radioCommandId=%llu sessionNonce=%lu fragmentIndex=%u nextExpected=%u acceptedPoints=%u",
         pointsAckTxOk ? "ACK" : "ACK_FAIL",
@@ -1637,36 +1630,6 @@ static bool applyFenceRpv2Frame(const LoRaFrame& frame) {
         (unsigned long)header.sessionNonce,
         (unsigned)header.fragmentIndex,
         (unsigned long)(pointsAckTxAtMs - pointsAckPrepareAtMs));
-    const bool openCommitWindow =
-        rpv2transport::shouldOpenCommitWindow(
-            pointsAckTxOk,
-            rpv2FenceSession_.active,
-            rpv2FenceSession_.stageComplete,
-            rpv2FenceSession_.expectedFragment,
-            rpv2FenceSession_.totalChunks);
-    if (openCommitWindow && !rpv2FenceSession_.syncCommitWindowActive) {
-      rpv2FenceSession_.waitingForCommit = true;
-      rpv2FenceSession_.commitGraceUntilMs =
-          pointsAckTxAtMs + cfg::RPV2_COMMIT_IMMEDIATE_RX_WINDOW_MS +
-          cfg::RPV2_COMMIT_WAIT_GRACE_MS;
-      waitForRpv2CommitImmediatelyAfterAck(
-          frame.scopeId,
-          header.radioCommandId,
-          header.sessionNonce,
-          pointsAckTxAtMs);
-    } else if (
-        pointsAckTxOk &&
-        rpv2FenceSession_.active &&
-        !rpv2FenceSession_.stageComplete &&
-        rpv2FenceSession_.expectedFragment <= rpv2FenceSession_.totalChunks &&
-        !rpv2FenceSession_.syncPointsWindowActive) {
-      waitForRpv2PointsImmediatelyAfterAck(
-          frame.scopeId,
-          header.radioCommandId,
-          header.sessionNonce,
-          rpv2FenceSession_.expectedFragment,
-          pointsAckTxAtMs);
-    }
     return true;
   }
 
@@ -2922,7 +2885,7 @@ static bool handleRtrControlDownlink(const LoRaFrame& frame) {
       (unsigned long)(ackTxAtMs - ackPrepareAtMs));
   rtrSessionMode_.waitingForBegin = page.commandType == static_cast<uint8_t>(MsgType::SET_FENCE);
   if (rtrSessionMode_.waitingForBegin) {
-    waitForRpv2BeginImmediatelyAfterPageAck(
+    runRpv2SessionReceivePump(
         header.sessionId,
         frame.scopeId,
         ackTxAtMs);
@@ -2930,406 +2893,367 @@ static bool handleRtrControlDownlink(const LoRaFrame& frame) {
   return true;
 }
 
-static bool waitForRpv2BeginImmediatelyAfterPageAck(
+static void runRpv2SessionReceivePump(
     uint64_t sessionId,
     uint64_t scopeId,
-    uint32_t ackTxAtMs) {
+    uint32_t pageAckTxAtMs) {
   if (!rtrSessionMode_.active ||
       !rtrSessionMode_.waitingForBegin ||
       rtrSessionMode_.sessionId != sessionId) {
-    return false;
+    return;
   }
 
-  const uint32_t windowStartAtMs = millis();
-  LOGI(
-      "RPV2_BEGIN_RX_WINDOW_BEGIN sessionId=%llu messageId=%lu scopeId=%016llX ackTxAtMs=%lu atMs=%lu deltaMs=%lu windowMs=%lu estimatedFragments=%u",
-      (unsigned long long)sessionId,
-      (unsigned long)rtrSessionMode_.pageMessageId,
-      (unsigned long long)scopeId,
-      (unsigned long)ackTxAtMs,
-      (unsigned long)windowStartAtMs,
-      (unsigned long)(windowStartAtMs - ackTxAtMs),
-      (unsigned long)kRpv2BeginImmediateRxWindowMs,
-      (unsigned)rtrSessionMode_.estimatedFragments);
+  enum class RxStage : uint8_t { WAIT_BEGIN, WAIT_POINTS, WAIT_COMMIT };
 
-  const uint32_t deadlineAtMs = windowStartAtMs + kRpv2BeginImmediateRxWindowMs;
-  while ((int32_t)(millis() - deadlineAtMs) <= 0) {
-    feedWatchdogIfEnabled();
-    const uint32_t nowMs = millis();
-    const uint32_t remainingMs = deadlineAtMs - nowMs;
-    LoRaFrame down{};
-    if (!lora.receiveFrame(down, remainingMs)) {
-      break;
+  const uint32_t sessionDeadlineAtMs = pageAckTxAtMs + cfg::RPV2_SESSION_MAX_MS;
+  uint32_t lastAckTxAtMs = pageAckTxAtMs;
+  uint64_t radioCommandId = 0;
+  uint32_t sessionNonce = 0;
+
+  while (true) {
+    // Derive current stage from session state
+    RxStage stage;
+    uint32_t stageWindowMs;
+    if (!rpv2FenceSession_.active) {
+      if (!rtrSessionMode_.waitingForBegin) {
+        return;
+      }
+      stage = RxStage::WAIT_BEGIN;
+      stageWindowMs = kRpv2BeginImmediateRxWindowMs;
+    } else if (!rpv2FenceSession_.stageComplete) {
+      stage = RxStage::WAIT_POINTS;
+      stageWindowMs = kRpv2PointsImmediateRxWindowMs;
+      radioCommandId = rpv2FenceSession_.radioCommandId;
+      sessionNonce = rpv2FenceSession_.sessionNonce;
+    } else {
+      stage = RxStage::WAIT_COMMIT;
+      stageWindowMs = kRpv2CommitImmediateRxWindowMs;
+      radioCommandId = rpv2FenceSession_.radioCommandId;
+      sessionNonce = rpv2FenceSession_.sessionNonce;
     }
 
-    LOGI(
-        "RPV2_BEGIN_RX_WINDOW_FRAME rawLen=%u msgType=%u seq=%lu rssi=%d snr=%.1f",
-        (unsigned)rtrWindowDiag_.lastDownlinkRawLen,
-        (unsigned)down.msgType,
-        (unsigned long)down.seq,
-        (int)lora.lastRssi(),
-        lora.lastSnr());
-
-    if (!bindingReady_) {
+    // Global session ceiling check
+    const uint32_t outerNowMs = millis();
+    if (rpv2transport::deadlineReached(outerNowMs, sessionDeadlineAtMs)) {
       LOGW(
-          "RPV2_BEGIN_RX_REJECT reason=binding_missing sessionId=%llu",
-          (unsigned long long)sessionId);
-      continue;
-    }
-    if (scopeId == 0 || down.scopeId == 0 || down.scopeId != scopeId || down.scopeId != bindingScopeIdValue()) {
-      LOGW(
-          "RPV2_BEGIN_RX_REJECT reason=scope_mismatch sessionId=%llu frameScopeId=%016llX expectedScopeId=%016llX",
+          "RPV2_SESSION_MAX_DEADLINE sessionId=%llu radioCommandId=%llu sessionNonce=%lu atMs=%lu",
           (unsigned long long)sessionId,
-          (unsigned long long)down.scopeId,
-          (unsigned long long)scopeId);
-      continue;
-    }
-    if (down.msgType != MsgType::SET_FENCE) {
-      LOGW(
-          "RPV2_BEGIN_RX_REJECT reason=unexpected_type sessionId=%llu outerMsgType=%u",
-          (unsigned long long)sessionId,
-          (unsigned)down.msgType);
-      continue;
+          (unsigned long long)radioCommandId,
+          (unsigned long)sessionNonce,
+          (unsigned long)outerNowMs);
+      rpv2FenceSession_.syncPointsWindowActive = false;
+      rpv2FenceSession_.syncCommitWindowActive = false;
+      return;
     }
 
-    rpv2::Header header{};
-    if (!rpv2::decodeHeader(down.payload, down.payloadLen, &header)) {
-      LOGW(
-          "RPV2_BEGIN_RX_REJECT reason=decode_header sessionId=%llu",
-          (unsigned long long)sessionId);
-      continue;
-    }
-    if (header.msgType != rpv2::FENCE_BEGIN) {
-      LOGW(
-          "RPV2_BEGIN_RX_REJECT reason=unexpected_type sessionId=%llu innerMsgType=%u",
-          (unsigned long long)sessionId,
-          (unsigned)header.msgType);
-      continue;
+    // Stage deadline anchored on last ACK TX, capped by session deadline
+    uint32_t stageDeadlineAtMs = lastAckTxAtMs + stageWindowMs;
+    if ((int32_t)(stageDeadlineAtMs - sessionDeadlineAtMs) > 0) {
+      stageDeadlineAtMs = sessionDeadlineAtMs;
     }
 
-    applyDownlink(down);
-    if (rpv2FenceSession_.active &&
-        rpv2FenceSession_.radioCommandId == header.radioCommandId &&
-        rpv2FenceSession_.sessionNonce == header.sessionNonce) {
-      rtrSessionMode_.waitingForBegin = false;
+    // Log window begin
+    const uint32_t windowStartAtMs = millis();
+    if (stage == RxStage::WAIT_BEGIN) {
       LOGI(
-          "RPV2_BEGIN_RX_WINDOW_END sessionId=%llu messageId=%lu result=begin_rx atMs=%lu",
+          "RPV2_BEGIN_RX_WINDOW_BEGIN sessionId=%llu messageId=%lu scopeId=%016llX ackTxAtMs=%lu atMs=%lu deltaMs=%lu windowMs=%lu estimatedFragments=%u",
           (unsigned long long)sessionId,
           (unsigned long)rtrSessionMode_.pageMessageId,
-          (unsigned long)millis());
-      return true;
-    }
-    LOGW(
-        "RPV2_BEGIN_RX_REJECT reason=session_mismatch sessionId=%llu radioCommandId=%llu sessionNonce=%lu",
-        (unsigned long long)sessionId,
-        (unsigned long long)header.radioCommandId,
-        (unsigned long)header.sessionNonce);
-  }
-
-  rtrSessionMode_.waitingForBegin = false;
-  LOGW(
-      "RPV2_BEGIN_RX_WINDOW_END sessionId=%llu messageId=%lu result=timeout atMs=%lu",
-      (unsigned long long)sessionId,
-      (unsigned long)rtrSessionMode_.pageMessageId,
-      (unsigned long)millis());
-  return false;
-}
-
-static bool waitForRpv2PointsImmediatelyAfterAck(
-    uint64_t scopeId,
-    uint64_t radioCommandId,
-    uint32_t sessionNonce,
-    uint16_t expectedFragment,
-    uint32_t ackTxAtMs) {
-  if (!rpv2FenceSession_.active ||
-      !rtrSessionMode_.active ||
-      !rtrSessionMode_.rpv2InProgress ||
-      rpv2FenceSession_.radioCommandId != radioCommandId ||
-      rpv2FenceSession_.sessionNonce != sessionNonce ||
-      rpv2FenceSession_.expectedFragment != expectedFragment) {
-    return false;
-  }
-
-  const uint32_t windowStartAtMs = millis();
-  LOGI(
-      "RPV2_POINTS_RX_WINDOW_BEGIN radioCommandId=%llu sessionNonce=%lu expectedFragment=%u ackTxAtMs=%lu atMs=%lu deltaMs=%lu windowMs=%lu",
-      (unsigned long long)radioCommandId,
-      (unsigned long)sessionNonce,
-      (unsigned)expectedFragment,
-      (unsigned long)ackTxAtMs,
-      (unsigned long)windowStartAtMs,
-      (unsigned long)(windowStartAtMs - ackTxAtMs),
-      (unsigned long)kRpv2PointsImmediateRxWindowMs);
-
-  rpv2FenceSession_.syncPointsWindowActive = true;
-  const uint32_t deadlineAtMs = windowStartAtMs + kRpv2PointsImmediateRxWindowMs;
-  while ((int32_t)(millis() - deadlineAtMs) <= 0) {
-    feedWatchdogIfEnabled();
-    const uint32_t nowMs = millis();
-    const uint32_t remainingMs = deadlineAtMs - nowMs;
-    LoRaFrame down{};
-    if (!lora.receiveFrame(down, remainingMs)) {
-      break;
-    }
-
-    LOGI(
-        "RPV2_POINTS_RX_WINDOW_FRAME rawLen=%u msgType=%u seq=%lu rssi=%d snr=%.1f",
-        (unsigned)rtrWindowDiag_.lastDownlinkRawLen,
-        (unsigned)down.msgType,
-        (unsigned long)down.seq,
-        (int)lora.lastRssi(),
-        lora.lastSnr());
-
-    if (!bindingReady_) {
-      LOGW(
-          "RPV2_POINTS_RX_REJECT reason=binding_missing radioCommandId=%llu expectedFragment=%u",
-          (unsigned long long)radioCommandId,
-          (unsigned)expectedFragment);
-      continue;
-    }
-    if (scopeId == 0 || down.scopeId == 0 || down.scopeId != scopeId || down.scopeId != bindingScopeIdValue()) {
-      LOGW(
-          "RPV2_POINTS_RX_REJECT reason=scope_mismatch radioCommandId=%llu frameScopeId=%016llX expectedScopeId=%016llX",
-          (unsigned long long)radioCommandId,
-          (unsigned long long)down.scopeId,
-          (unsigned long long)scopeId);
-      continue;
-    }
-    if (down.msgType != MsgType::SET_FENCE) {
-      LOGW(
-          "RPV2_POINTS_RX_REJECT reason=unexpected_type radioCommandId=%llu outerMsgType=%u",
-          (unsigned long long)radioCommandId,
-          (unsigned)down.msgType);
-      continue;
-    }
-
-    rpv2::Header header{};
-    if (!rpv2::decodeHeader(down.payload, down.payloadLen, &header)) {
-      LOGW(
-          "RPV2_POINTS_RX_REJECT reason=decode_header radioCommandId=%llu",
-          (unsigned long long)radioCommandId);
-      continue;
-    }
-    if (header.msgType != rpv2::FENCE_POINTS) {
-      LOGW(
-          "RPV2_POINTS_RX_REJECT reason=unexpected_type radioCommandId=%llu innerMsgType=%u",
-          (unsigned long long)radioCommandId,
-          (unsigned)header.msgType);
-      continue;
-    }
-    if (header.radioCommandId != radioCommandId || header.sessionNonce != sessionNonce) {
-      LOGW(
-          "RPV2_POINTS_RX_REJECT reason=session_mismatch radioCommandId=%llu rxRadioCommandId=%llu rxSessionNonce=%lu",
-          (unsigned long long)radioCommandId,
-          (unsigned long long)header.radioCommandId,
-          (unsigned long)header.sessionNonce);
-      continue;
-    }
-    const bool expectedOrPrevious =
-        header.fragmentIndex == rpv2FenceSession_.expectedFragment ||
-        rpv2transport::isImmediatelyPreviousFragment(
-            header.fragmentIndex,
-            rpv2FenceSession_.expectedFragment);
-    if (!expectedOrPrevious) {
-      LOGW(
-          "RPV2_POINTS_RX_REJECT reason=fragment_mismatch radioCommandId=%llu expectedFragment=%u rxFragmentIndex=%u",
-          (unsigned long long)radioCommandId,
-          (unsigned)rpv2FenceSession_.expectedFragment,
-          (unsigned)header.fragmentIndex);
-      continue;
-    }
-
-    applyDownlink(down);
-    if (!rpv2FenceSession_.active) {
-      rpv2FenceSession_.syncPointsWindowActive = false;
+          (unsigned long long)scopeId,
+          (unsigned long)lastAckTxAtMs,
+          (unsigned long)windowStartAtMs,
+          (unsigned long)(windowStartAtMs - lastAckTxAtMs),
+          (unsigned long)stageWindowMs,
+          (unsigned)rtrSessionMode_.estimatedFragments);
+    } else if (stage == RxStage::WAIT_POINTS) {
+      const uint16_t expectedFrag = rpv2FenceSession_.expectedFragment;
+      if (expectedFrag == 1) {
+        LOGI(
+            "RPV2_FIRST_POINTS_RX_WINDOW_BEGIN radioCommandId=%llu sessionNonce=%lu expectedFragment=%u ackTxAtMs=%lu atMs=%lu deltaMs=%lu windowMs=%lu",
+            (unsigned long long)radioCommandId,
+            (unsigned long)sessionNonce,
+            (unsigned)expectedFrag,
+            (unsigned long)lastAckTxAtMs,
+            (unsigned long)windowStartAtMs,
+            (unsigned long)(windowStartAtMs - lastAckTxAtMs),
+            (unsigned long)stageWindowMs);
+      } else {
+        LOGI(
+            "RPV2_POINTS_RX_WINDOW_BEGIN radioCommandId=%llu sessionNonce=%lu expectedFragment=%u ackTxAtMs=%lu atMs=%lu deltaMs=%lu windowMs=%lu",
+            (unsigned long long)radioCommandId,
+            (unsigned long)sessionNonce,
+            (unsigned)expectedFrag,
+            (unsigned long)lastAckTxAtMs,
+            (unsigned long)windowStartAtMs,
+            (unsigned long)(windowStartAtMs - lastAckTxAtMs),
+            (unsigned long)stageWindowMs);
+      }
+      rpv2FenceSession_.syncPointsWindowActive = true;
+    } else {
       LOGI(
-          "RPV2_POINTS_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=session_closed atMs=%lu",
+          "RPV2_COMMIT_RX_WINDOW_BEGIN radioCommandId=%llu sessionNonce=%lu ackTxAtMs=%lu atMs=%lu deltaMs=%lu windowMs=%lu",
           (unsigned long long)radioCommandId,
           (unsigned long)sessionNonce,
-          (unsigned long)millis());
-      return true;
+          (unsigned long)lastAckTxAtMs,
+          (unsigned long)windowStartAtMs,
+          (unsigned long)(windowStartAtMs - lastAckTxAtMs),
+          (unsigned long)stageWindowMs);
+      rpv2FenceSession_.syncCommitWindowActive = true;
     }
-    if (rpv2FenceSession_.radioCommandId != radioCommandId ||
-        rpv2FenceSession_.sessionNonce != sessionNonce) {
-      LOGW(
-          "RPV2_POINTS_RX_REJECT reason=session_replaced radioCommandId=%llu",
-          (unsigned long long)radioCommandId);
-      break;
-    }
-    if (rpv2FenceSession_.expectedFragment > rpv2FenceSession_.totalChunks) {
-      rpv2FenceSession_.syncPointsWindowActive = false;
+
+    // Inner RX loop for this stage
+    bool frameAccepted = false;
+    while (!rpv2transport::deadlineReached(millis(), stageDeadlineAtMs)) {
+      feedWatchdogIfEnabled();
+      const uint32_t innerNowMs = millis();
+      if (rpv2transport::deadlineReached(innerNowMs, stageDeadlineAtMs)) break;
+      const uint32_t remainingMs = stageDeadlineAtMs - innerNowMs;
+      LoRaFrame down{};
+      if (!lora.receiveFrame(down, remainingMs)) break;
+
       LOGI(
-          "RPV2_POINTS_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=points_rx atMs=%lu acceptedPoints=%u",
-          (unsigned long long)radioCommandId,
-          (unsigned long)sessionNonce,
-          (unsigned long)millis(),
-          (unsigned)rpv2FenceSession_.fence.count);
-      return true;
+          "RPV2_SESSION_RX_WINDOW_FRAME rawLen=%u msgType=%u seq=%lu rssi=%d snr=%.1f",
+          (unsigned)rtrWindowDiag_.lastDownlinkRawLen,
+          (unsigned)down.msgType,
+          (unsigned long)down.seq,
+          (int)lora.lastRssi(),
+          lora.lastSnr());
+
+      if (!bindingReady_) {
+        LOGW(
+            "RPV2_SESSION_RX_REJECT reason=binding_missing sessionId=%llu stage=%u",
+            (unsigned long long)sessionId,
+            (unsigned)stage);
+        continue;
+      }
+      if (scopeId == 0 || down.scopeId == 0 || down.scopeId != scopeId ||
+          down.scopeId != bindingScopeIdValue()) {
+        LOGW(
+            "RPV2_SESSION_RX_REJECT reason=scope_mismatch sessionId=%llu stage=%u frameScopeId=%016llX expectedScopeId=%016llX",
+            (unsigned long long)sessionId,
+            (unsigned)stage,
+            (unsigned long long)down.scopeId,
+            (unsigned long long)scopeId);
+        continue;
+      }
+      if (down.msgType != MsgType::SET_FENCE) {
+        LOGW(
+            "RPV2_SESSION_RX_REJECT reason=unexpected_outer_type sessionId=%llu stage=%u outerMsgType=%u",
+            (unsigned long long)sessionId,
+            (unsigned)stage,
+            (unsigned)down.msgType);
+        continue;
+      }
+      rpv2::Header header{};
+      if (!rpv2::decodeHeader(down.payload, down.payloadLen, &header)) {
+        LOGW(
+            "RPV2_SESSION_RX_REJECT reason=decode_header sessionId=%llu stage=%u",
+            (unsigned long long)sessionId,
+            (unsigned)stage);
+        continue;
+      }
+
+      if (stage == RxStage::WAIT_BEGIN) {
+        if (header.msgType != rpv2::FENCE_BEGIN) {
+          LOGW(
+              "RPV2_BEGIN_RX_REJECT reason=unexpected_type sessionId=%llu innerMsgType=%u",
+              (unsigned long long)sessionId,
+              (unsigned)header.msgType);
+          continue;
+        }
+      } else if (stage == RxStage::WAIT_POINTS) {
+        if (header.msgType != rpv2::FENCE_POINTS) {
+          LOGW(
+              "RPV2_POINTS_RX_REJECT reason=unexpected_type radioCommandId=%llu innerMsgType=%u",
+              (unsigned long long)radioCommandId,
+              (unsigned)header.msgType);
+          continue;
+        }
+        if (header.radioCommandId != radioCommandId || header.sessionNonce != sessionNonce) {
+          LOGW(
+              "RPV2_POINTS_RX_REJECT reason=session_mismatch radioCommandId=%llu rxRadioCommandId=%llu rxSessionNonce=%lu",
+              (unsigned long long)radioCommandId,
+              (unsigned long long)header.radioCommandId,
+              (unsigned long)header.sessionNonce);
+          continue;
+        }
+        const bool expectedOrPrevious =
+            header.fragmentIndex == rpv2FenceSession_.expectedFragment ||
+            rpv2transport::isImmediatelyPreviousFragment(
+                header.fragmentIndex,
+                rpv2FenceSession_.expectedFragment);
+        if (!expectedOrPrevious) {
+          LOGW(
+              "RPV2_POINTS_RX_REJECT reason=fragment_mismatch radioCommandId=%llu expectedFragment=%u rxFragmentIndex=%u",
+              (unsigned long long)radioCommandId,
+              (unsigned)rpv2FenceSession_.expectedFragment,
+              (unsigned)header.fragmentIndex);
+          continue;
+        }
+      } else {
+        if (header.msgType != rpv2::FENCE_COMMIT) {
+          LOGW(
+              "RPV2_COMMIT_RX_REJECT reason=unexpected_type radioCommandId=%llu innerMsgType=%u",
+              (unsigned long long)radioCommandId,
+              (unsigned)header.msgType);
+          continue;
+        }
+        if (!rpv2transport::commitSessionMatches(
+                radioCommandId,
+                sessionNonce,
+                header.radioCommandId,
+                header.sessionNonce)) {
+          LOGW(
+              "RPV2_COMMIT_RX_REJECT reason=session_mismatch radioCommandId=%llu rxRadioCommandId=%llu rxSessionNonce=%lu",
+              (unsigned long long)radioCommandId,
+              (unsigned long long)header.radioCommandId,
+              (unsigned long)header.sessionNonce);
+          continue;
+        }
+      }
+
+      // Apply and dispatch per stage
+      const uint32_t prevAckTxAtMs = rpv2FenceSession_.lastAckTxAtMs;
+      applyDownlink(down);
+
+      if (stage == RxStage::WAIT_BEGIN) {
+        if (rpv2FenceSession_.active &&
+            rpv2FenceSession_.radioCommandId == header.radioCommandId &&
+            rpv2FenceSession_.sessionNonce == header.sessionNonce) {
+          rtrSessionMode_.waitingForBegin = false;
+          lastAckTxAtMs = rpv2FenceSession_.lastAckTxAtMs;
+          radioCommandId = rpv2FenceSession_.radioCommandId;
+          sessionNonce = rpv2FenceSession_.sessionNonce;
+          LOGI(
+              "RPV2_BEGIN_RX_WINDOW_END sessionId=%llu messageId=%lu result=begin_rx atMs=%lu",
+              (unsigned long long)sessionId,
+              (unsigned long)rtrSessionMode_.pageMessageId,
+              (unsigned long)millis());
+          frameAccepted = true;
+          break;
+        }
+        LOGW(
+            "RPV2_BEGIN_RX_REJECT reason=session_mismatch sessionId=%llu radioCommandId=%llu sessionNonce=%lu",
+            (unsigned long long)sessionId,
+            (unsigned long long)header.radioCommandId,
+            (unsigned long)header.sessionNonce);
+      } else if (stage == RxStage::WAIT_POINTS) {
+        if (!rpv2FenceSession_.active) {
+          rpv2FenceSession_.syncPointsWindowActive = false;
+          LOGI(
+              "RPV2_POINTS_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=session_closed atMs=%lu",
+              (unsigned long long)radioCommandId,
+              (unsigned long)sessionNonce,
+              (unsigned long)millis());
+          return;
+        }
+        if (rpv2FenceSession_.radioCommandId != radioCommandId ||
+            rpv2FenceSession_.sessionNonce != sessionNonce) {
+          rpv2FenceSession_.syncPointsWindowActive = false;
+          LOGW(
+              "RPV2_POINTS_RX_REJECT reason=session_replaced radioCommandId=%llu",
+              (unsigned long long)radioCommandId);
+          return;
+        }
+        if (rpv2FenceSession_.lastAckTxAtMs != prevAckTxAtMs) {
+          // ACK transmitted (new fragment or duplicate) — re-anchor deadline
+          lastAckTxAtMs = rpv2FenceSession_.lastAckTxAtMs;
+          if (rpv2FenceSession_.stageComplete) {
+            rpv2FenceSession_.syncPointsWindowActive = false;
+            rpv2FenceSession_.waitingForCommit = true;
+            rpv2FenceSession_.commitGraceUntilMs =
+                lastAckTxAtMs + cfg::RPV2_COMMIT_IMMEDIATE_RX_WINDOW_MS +
+                cfg::RPV2_COMMIT_WAIT_GRACE_MS;
+            LOGI(
+                "RPV2_POINTS_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=points_rx atMs=%lu acceptedPoints=%u",
+                (unsigned long long)radioCommandId,
+                (unsigned long)sessionNonce,
+                (unsigned long)millis(),
+                (unsigned)rpv2FenceSession_.fence.count);
+          }
+          frameAccepted = true;
+          break;
+        }
+        // NACK path — continue inner loop waiting for retry
+      } else {
+        if (!rpv2FenceSession_.active) {
+          LOGI(
+              "RPV2_COMMIT_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=session_closed atMs=%lu",
+              (unsigned long long)radioCommandId,
+              (unsigned long)sessionNonce,
+              (unsigned long)millis());
+          return;
+        }
+        if (rpv2FenceSession_.radioCommandId != radioCommandId ||
+            rpv2FenceSession_.sessionNonce != sessionNonce) {
+          rpv2FenceSession_.syncCommitWindowActive = false;
+          LOGW(
+              "RPV2_COMMIT_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=session_replaced atMs=%lu",
+              (unsigned long long)radioCommandId,
+              (unsigned long)sessionNonce,
+              (unsigned long)millis());
+          return;
+        }
+        // NACK path — continue inner loop waiting for retry
+      }
+    } // inner loop
+
+    // Stage timeout handler
+    if (!frameAccepted) {
+      if (stage == RxStage::WAIT_BEGIN) {
+        rtrSessionMode_.waitingForBegin = false;
+        LOGW(
+            "RPV2_BEGIN_RX_WINDOW_END sessionId=%llu messageId=%lu result=timeout atMs=%lu",
+            (unsigned long long)sessionId,
+            (unsigned long)rtrSessionMode_.pageMessageId,
+            (unsigned long)millis());
+        return;
+      } else if (stage == RxStage::WAIT_POINTS) {
+        rpv2FenceSession_.syncPointsWindowActive = false;
+        const uint16_t expectedFrag = rpv2FenceSession_.expectedFragment;
+        rpv2FenceSession_.waitingForRetryFragment = true;
+        rpv2FenceSession_.retryExpectedFragment = expectedFrag;
+        rpv2FenceSession_.retryGraceUntilMs =
+            millis() + cfg::RPV2_SESSION_GRACE_AFTER_POINTS_TIMEOUT_MS;
+        if (expectedFrag == 1) {
+          LOGW(
+              "RPV2_FIRST_POINTS_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=timeout atMs=%lu expectedFragment=%u timeoutMs=%lu",
+              (unsigned long long)radioCommandId,
+              (unsigned long)sessionNonce,
+              (unsigned long)millis(),
+              (unsigned)expectedFrag,
+              (unsigned long)stageWindowMs);
+        } else {
+          LOGW(
+              "RPV2_POINTS_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=timeout atMs=%lu expectedFragment=%u timeoutMs=%lu",
+              (unsigned long long)radioCommandId,
+              (unsigned long)sessionNonce,
+              (unsigned long)millis(),
+              (unsigned)expectedFrag,
+              (unsigned long)stageWindowMs);
+        }
+        LOGW(
+            "RPV2_POINTS_RETRY_WAIT_BEGIN radioCommandId=%llu sessionNonce=%lu expectedFragment=%u graceMs=%lu retryWindowMs=%lu",
+            (unsigned long long)radioCommandId,
+            (unsigned long)sessionNonce,
+            (unsigned)expectedFrag,
+            (unsigned long)cfg::RPV2_SESSION_GRACE_AFTER_POINTS_TIMEOUT_MS,
+            (unsigned long)cfg::RPV2_POINTS_RETRY_RX_WINDOW_MS);
+        return;
+      } else {
+        rpv2FenceSession_.syncCommitWindowActive = false;
+        LOGW(
+            "RPV2_COMMIT_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=timeout atMs=%lu timeoutMs=%lu graceMs=%lu",
+            (unsigned long long)radioCommandId,
+            (unsigned long)sessionNonce,
+            (unsigned long)millis(),
+            (unsigned long)stageWindowMs,
+            (unsigned long)cfg::RPV2_COMMIT_WAIT_GRACE_MS);
+        return;
+      }
     }
-
-    expectedFragment = rpv2FenceSession_.expectedFragment;
-    LOGI(
-        "RPV2_POINTS_RX_WINDOW_BEGIN radioCommandId=%llu sessionNonce=%lu expectedFragment=%u ackTxAtMs=%lu atMs=%lu deltaMs=%lu windowMs=%lu",
-        (unsigned long long)radioCommandId,
-        (unsigned long)sessionNonce,
-        (unsigned)expectedFragment,
-        (unsigned long)millis(),
-        (unsigned long)millis(),
-        0UL,
-        (unsigned long)kRpv2PointsImmediateRxWindowMs);
-  }
-
-  rpv2FenceSession_.syncPointsWindowActive = false;
-  rpv2FenceSession_.waitingForRetryFragment = true;
-  rpv2FenceSession_.retryExpectedFragment = expectedFragment;
-  rpv2FenceSession_.retryGraceUntilMs =
-      millis() + cfg::RPV2_SESSION_GRACE_AFTER_POINTS_TIMEOUT_MS;
-  LOGW(
-      "RPV2_POINTS_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=timeout atMs=%lu expectedFragment=%u timeoutMs=%lu",
-      (unsigned long long)radioCommandId,
-      (unsigned long)sessionNonce,
-      (unsigned long)millis(),
-      (unsigned)expectedFragment,
-      (unsigned long)kRpv2PointsImmediateRxWindowMs);
-  LOGW(
-      "RPV2_POINTS_RETRY_WAIT_BEGIN radioCommandId=%llu sessionNonce=%lu expectedFragment=%u graceMs=%lu retryWindowMs=%lu",
-      (unsigned long long)radioCommandId,
-      (unsigned long)sessionNonce,
-      (unsigned)expectedFragment,
-      (unsigned long)cfg::RPV2_SESSION_GRACE_AFTER_POINTS_TIMEOUT_MS,
-      (unsigned long)cfg::RPV2_POINTS_RETRY_RX_WINDOW_MS);
-  return false;
-}
-
-static bool waitForRpv2CommitImmediatelyAfterAck(
-    uint64_t scopeId,
-    uint64_t radioCommandId,
-    uint32_t sessionNonce,
-    uint32_t ackTxAtMs) {
-  if (!rpv2FenceSession_.active ||
-      !rpv2FenceSession_.stageComplete ||
-      !rpv2FenceSession_.waitingForCommit ||
-      !rtrSessionMode_.active ||
-      !rtrSessionMode_.rpv2InProgress ||
-      rpv2FenceSession_.radioCommandId != radioCommandId ||
-      rpv2FenceSession_.sessionNonce != sessionNonce) {
-    return false;
-  }
-
-  const uint32_t windowStartAtMs = millis();
-  LOGI(
-      "RPV2_COMMIT_RX_WINDOW_BEGIN radioCommandId=%llu sessionNonce=%lu ackTxAtMs=%lu atMs=%lu deltaMs=%lu windowMs=%lu",
-      (unsigned long long)radioCommandId,
-      (unsigned long)sessionNonce,
-      (unsigned long)ackTxAtMs,
-      (unsigned long)windowStartAtMs,
-      (unsigned long)(windowStartAtMs - ackTxAtMs),
-      (unsigned long)kRpv2CommitImmediateRxWindowMs);
-
-  rpv2FenceSession_.syncCommitWindowActive = true;
-  const uint32_t deadlineAtMs =
-      windowStartAtMs + kRpv2CommitImmediateRxWindowMs;
-  while ((int32_t)(millis() - deadlineAtMs) <= 0) {
-    feedWatchdogIfEnabled();
-    const uint32_t nowMs = millis();
-    const uint32_t remainingMs = deadlineAtMs - nowMs;
-    LoRaFrame down{};
-    if (!lora.receiveFrame(down, remainingMs)) break;
-
-    LOGI(
-        "RPV2_COMMIT_RX_WINDOW_FRAME rawLen=%u msgType=%u seq=%lu rssi=%d snr=%.1f",
-        (unsigned)rtrWindowDiag_.lastDownlinkRawLen,
-        (unsigned)down.msgType,
-        (unsigned long)down.seq,
-        (int)lora.lastRssi(),
-        lora.lastSnr());
-    if (!bindingReady_) {
-      LOGW(
-          "RPV2_COMMIT_RX_REJECT reason=binding_missing radioCommandId=%llu",
-          (unsigned long long)radioCommandId);
-      continue;
-    }
-    if (scopeId == 0 || down.scopeId == 0 || down.scopeId != scopeId ||
-        down.scopeId != bindingScopeIdValue()) {
-      LOGW(
-          "RPV2_COMMIT_RX_REJECT reason=scope_mismatch radioCommandId=%llu frameScopeId=%016llX expectedScopeId=%016llX",
-          (unsigned long long)radioCommandId,
-          (unsigned long long)down.scopeId,
-          (unsigned long long)scopeId);
-      continue;
-    }
-    if (down.msgType != MsgType::SET_FENCE) {
-      LOGW(
-          "RPV2_COMMIT_RX_REJECT reason=unexpected_type radioCommandId=%llu outerMsgType=%u",
-          (unsigned long long)radioCommandId,
-          (unsigned)down.msgType);
-      continue;
-    }
-
-    rpv2::Header header{};
-    if (!rpv2::decodeHeader(down.payload, down.payloadLen, &header)) {
-      LOGW(
-          "RPV2_COMMIT_RX_REJECT reason=decode_header radioCommandId=%llu",
-          (unsigned long long)radioCommandId);
-      continue;
-    }
-    if (header.msgType != rpv2::FENCE_COMMIT) {
-      LOGW(
-          "RPV2_COMMIT_RX_REJECT reason=unexpected_type radioCommandId=%llu innerMsgType=%u",
-          (unsigned long long)radioCommandId,
-          (unsigned)header.msgType);
-      continue;
-    }
-    if (!rpv2transport::commitSessionMatches(
-            radioCommandId,
-            sessionNonce,
-            header.radioCommandId,
-            header.sessionNonce)) {
-      LOGW(
-          "RPV2_COMMIT_RX_REJECT reason=session_mismatch radioCommandId=%llu rxRadioCommandId=%llu rxSessionNonce=%lu",
-          (unsigned long long)radioCommandId,
-          (unsigned long long)header.radioCommandId,
-          (unsigned long)header.sessionNonce);
-      continue;
-    }
-
-    applyDownlink(down);
-    if (!rpv2FenceSession_.active) {
-      LOGI(
-          "RPV2_COMMIT_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=session_closed atMs=%lu",
-          (unsigned long long)radioCommandId,
-          (unsigned long)sessionNonce,
-          (unsigned long)millis());
-      return true;
-    }
-    if (rpv2FenceSession_.radioCommandId != radioCommandId ||
-        rpv2FenceSession_.sessionNonce != sessionNonce) {
-      LOGW(
-          "RPV2_COMMIT_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=session_replaced atMs=%lu",
-          (unsigned long long)radioCommandId,
-          (unsigned long)sessionNonce,
-          (unsigned long)millis());
-      return true;
-    }
-
-    rpv2FenceSession_.syncCommitWindowActive = false;
-    LOGI(
-        "RPV2_COMMIT_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=commit_rx atMs=%lu",
-        (unsigned long long)radioCommandId,
-        (unsigned long)sessionNonce,
-        (unsigned long)millis());
-    return true;
-  }
-
-  rpv2FenceSession_.syncCommitWindowActive = false;
-  LOGW(
-      "RPV2_COMMIT_RX_WINDOW_END radioCommandId=%llu sessionNonce=%lu result=timeout atMs=%lu timeoutMs=%lu graceMs=%lu",
-      (unsigned long long)radioCommandId,
-      (unsigned long)sessionNonce,
-      (unsigned long)millis(),
-      (unsigned long)kRpv2CommitImmediateRxWindowMs,
-      (unsigned long)cfg::RPV2_COMMIT_WAIT_GRACE_MS);
-  return false;
+    // frameAccepted — outer loop continues, re-derives stage
+  } // outer loop
 }
 
 static void applyDownlink(const LoRaFrame& frame) {

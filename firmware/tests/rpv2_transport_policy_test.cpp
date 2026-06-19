@@ -83,6 +83,24 @@ int main() {
   assert(rpv2transport::shouldOpenCommitWindow(true, true, true, 2, 2));
   assert(!rpv2transport::shouldOpenCommitWindow(true, true, false, 1, 2));
   assert(!rpv2transport::shouldOpenCommitWindow(false, true, true, 2, 2));
+
+  // shouldOpenFirstPointsWindow
+  assert(rpv2transport::shouldOpenFirstPointsWindow(true, true, false, 1, 2));
+  assert(rpv2transport::shouldOpenFirstPointsWindow(true, true, false, 1, 1));
+  // ACK not sent
+  assert(!rpv2transport::shouldOpenFirstPointsWindow(false, true, false, 1, 2));
+  // session not active
+  assert(!rpv2transport::shouldOpenFirstPointsWindow(true, false, false, 1, 2));
+  // stage already complete
+  assert(!rpv2transport::shouldOpenFirstPointsWindow(true, true, true, 1, 2));
+  // not first fragment (expectedFragment != 1)
+  assert(!rpv2transport::shouldOpenFirstPointsWindow(true, true, false, 2, 2));
+  // totalChunks == 0
+  assert(!rpv2transport::shouldOpenFirstPointsWindow(true, true, false, 1, 0));
+  // no conflict: shouldOpenCommitWindow and shouldOpenFirstPointsWindow are mutually exclusive
+  // (commit requires stageComplete=true; first-points requires stageComplete=false)
+  assert(!(rpv2transport::shouldOpenCommitWindow(true, true, true, 2, 2) &&
+           rpv2transport::shouldOpenFirstPointsWindow(true, true, true, 2, 2)));
   assert(rpv2transport::commitSessionMatches(10, 20, 10, 20));
   assert(!rpv2transport::commitSessionMatches(10, 20, 11, 20));
   assert(!rpv2transport::commitSessionMatches(10, 20, 10, 21));

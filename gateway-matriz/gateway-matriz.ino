@@ -55,6 +55,7 @@
 #include "../firmware/shared/radio_proto_v2_planner_support.h"
 #include "../firmware/shared/radio_proto_v2_reason_codes.h"
 #include "../firmware/shared/rpv2_transport_policy.h"
+#include "../firmware/shared/rtr_wake_policy.h"
 #include "../firmware/shared/command_id_policy.h"
 
 LoRaGateway lora;
@@ -4011,7 +4012,7 @@ static bool reschedulePendingWakeForFreshUplink(
     const char* stage,
     const char* reasonLabel) {
   const uint32_t hintAgeMs = rtrwake::wakeHintAgeMs(session.core, nowMs);
-  if (rtrwake::hasFreshWakeHint(session.core, nowMs, rtrv1::FAST_PAGE_DEADLINE_MS)) {
+  if (rtrwake::hasFreshWakeHint(session.core, nowMs, rtrv1::WAKE_HINT_FRESHNESS_MS)) {
     return false;
   }
   noteWakeLoopStage(stage, session);
@@ -4020,7 +4021,7 @@ static bool reschedulePendingWakeForFreshUplink(
       (unsigned long)session.core.deviceId,
       session.commandId[0] ? session.commandId : "-",
       (unsigned long)hintAgeMs,
-      (unsigned long)rtrv1::FAST_PAGE_DEADLINE_MS,
+      (unsigned long)rtrv1::WAKE_HINT_FRESHNESS_MS,
       pendingWakeStateLabel(session.core.state));
   transitionPendingWakeState(
       session,
@@ -6105,9 +6106,20 @@ static bool prepareFenceWakeSession(
 
 static bool processPendingWakeSessionStep(uint8_t idx, PendingWakeSession& session, uint32_t nowMs) {
     switch (session.core.state) {
-      case rtrwake::State::PAGING_WAITING_UPLINK:
+      case rtrwake::State::PAGING_WAITING_UPLINK: {
+        const rtrwake::Presence* pres = nullptr;
+        for (uint8_t pi = 0; pi < kMaxDevicePresenceEntries; ++pi) {
+          if (devicePresence[pi].deviceId == session.core.deviceId) {
+            pres = &devicePresence[pi];
+            break;
+          }
+        }
+        const uint32_t dynamicTimeoutMs = rtrwakepolicy::waitingUplinkTimeoutMs(
+            pres ? pres->estimatedCycleMs : 0u,
+            kPendingWakeWaitingUplinkTimeoutMs,
+            30000u);
         if (session.core.createdAtMs != 0 &&
-            (uint32_t)(nowMs - session.core.createdAtMs) >= kPendingWakeWaitingUplinkTimeoutMs) {
+            (uint32_t)(nowMs - session.core.createdAtMs) >= dynamicTimeoutMs) {
           noteWakeLoopStage("waiting_uplink_timeout", session);
           LOGW(
               "RTR_WAITING_UPLINK_TIMEOUT deviceId=%lu commandId=%s createdAtMs=%lu nowMs=%lu timeoutMs=%lu",
@@ -6115,7 +6127,7 @@ static bool processPendingWakeSessionStep(uint8_t idx, PendingWakeSession& sessi
               session.commandId[0] ? session.commandId : "-",
               (unsigned long)session.core.createdAtMs,
               (unsigned long)nowMs,
-              (unsigned long)kPendingWakeWaitingUplinkTimeoutMs);
+              (unsigned long)dynamicTimeoutMs);
           appendPropertyCommandEvent(
               activeSimpleCommand.propertyId,
               activeSimpleCommand.commandId,
@@ -6141,6 +6153,7 @@ static bool processPendingWakeSessionStep(uint8_t idx, PendingWakeSession& sessi
           return true;
         }
         break;
+      }
 
       case rtrwake::State::PAGING_READY_TO_SEND:
         if (session.core.nextPageAttemptAtMs == 0 ||
