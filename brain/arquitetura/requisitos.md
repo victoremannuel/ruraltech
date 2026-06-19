@@ -121,8 +121,10 @@ Requisitos funcionais e não funcionais do sistema de pecuária de precisão.
 
 ## Related
 
+[[ruraltech]]
 [[regras-negocio]]
 [[fluxos-comunicacao-ponta-a-ponta]]
 [[modelagem-dados-supabase]]
+[[visao-geral]]
 
 #arquitetura #ruraltech 

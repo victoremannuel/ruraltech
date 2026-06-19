@@ -4,10 +4,18 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../components/map/rt_filter_chips.dart';
+import '../components/primitives/rt_badge.dart';
+import '../design/colors.dart';
+import '../design/tokens.dart';
+import '../design/typography.dart';
 import '../models/device_model.dart';
 import '../services/cloud_service.dart';
 import '../utils/polygon_log_preview.dart';
 
+/// Log da coleira em tema escuro ("terminal-style"), conforme Sprint 4 do
+/// redesign v2. Mantém a lógica de auto-refresh + manual refresh e adiciona
+/// chips de filtro por tipo de evento.
 class CollarLogScreen extends StatefulWidget {
   final DeviceModel device;
 
@@ -22,6 +30,23 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
   late Future<List<Map<String, dynamic>>> _manualFuture;
   final Map<String, Future<PolygonLogPreviewResolution>> _previewFutures =
       <String, Future<PolygonLogPreviewResolution>>{};
+
+  static const _filterAll = 'all';
+  static const _filterTelemetry = 'telemetry';
+  static const _filterHealth = 'health_daily';
+  static const _filterPolygon = 'polygon';
+  static const _filterOther = 'other';
+
+  String _selectedFilter = _filterAll;
+
+  static final Color _terminalBg = RTColors.ink;
+  static final Color _terminalSurface = Color.alphaBlend(
+    Colors.white.withValues(alpha: 0.04),
+    RTColors.ink,
+  );
+  static final Color _terminalBorder = Colors.white.withValues(alpha: 0.10);
+  static final Color _terminalInk = Colors.white.withValues(alpha: 0.92);
+  static final Color _terminalInkSoft = Colors.white.withValues(alpha: 0.60);
 
   @override
   void initState() {
@@ -56,7 +81,7 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
   }
 
   String _formatTimestamp(int? ms) {
-    if (ms == null || ms <= 0) return 'Sem horario';
+    if (ms == null || ms <= 0) return '--/--/---- --:--:--';
     final dt = DateTime.fromMillisecondsSinceEpoch(ms);
     final d = dt.day.toString().padLeft(2, '0');
     final m = dt.month.toString().padLeft(2, '0');
@@ -71,82 +96,68 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
     final type = (entry['type'] ?? '').toString();
     final kind = (entry['kind'] ?? '').toString();
     if (_isPolygonAuditEntry(entry)) {
-      final status = _polygonAuditStatus(entry);
       final label = _polygonLabel(entry);
-      return status == 'success'
-          ? 'Sucesso na gravacao do $label'
-          : 'Falha na gravacao do $label';
+      return _isPolygonAuditSuccess(entry)
+          ? 'Gravação OK · $label'
+          : 'Falha gravação · $label';
     }
     if (type == 'telemetry') return 'Telemetria';
-    if (type == 'health_daily') return 'Saude diaria';
+    if (type == 'health_daily') return 'Saúde diária';
     if (kind.isNotEmpty) return kind;
     return 'Evento';
   }
 
-  String _subtitleForEntry(Map<String, dynamic> entry) {
-    final parts = <String>[
-      _formatTimestamp(entry['receivedAtMs'] as int?),
-    ];
+  String _typeTagForEntry(Map<String, dynamic> entry) {
+    final type = (entry['type'] ?? '').toString();
+    if (_isPolygonAuditEntry(entry)) {
+      return _isPolygonAuditSuccess(entry) ? 'POLY_OK' : 'POLY_ERR';
+    }
+    if (type == 'telemetry') return 'TELEMETRY';
+    if (type == 'health_daily') return 'HEALTH';
+    final kind = (entry['kind'] ?? '').toString().trim().toUpperCase();
+    return kind.isEmpty ? 'EVENT' : kind;
+  }
 
+  RTTone _toneForEntry(Map<String, dynamic> entry) {
+    final type = (entry['type'] ?? '').toString();
+    if (_isPolygonAuditEntry(entry)) {
+      return _isPolygonAuditSuccess(entry) ? RTTone.ok : RTTone.danger;
+    }
+    if (type == 'telemetry') return RTTone.info;
+    if (type == 'health_daily') return RTTone.primary;
+    return RTTone.neutral;
+  }
+
+  String _subtitleForEntry(Map<String, dynamic> entry) {
+    final parts = <String>[];
     final type = (entry['type'] ?? '').toString();
     if (type == 'telemetry') {
       final lat = entry['lat'] as double?;
       final lon = entry['lon'] as double?;
       if (lat != null && lon != null) {
-        parts.add(
-          '${lat.toStringAsFixed(6)}, ${lon.toStringAsFixed(6)}',
-        );
+        parts.add('${lat.toStringAsFixed(6)}, ${lon.toStringAsFixed(6)}');
       }
     } else if (type == 'health_daily') {
       final sat = entry['sat'];
       final temperatureDeciC = entry['temperatureDeciC'];
       if (temperatureDeciC is int) {
-        parts.add('Temp ${(temperatureDeciC / 10.0).toStringAsFixed(1)} C');
+        parts.add('temp ${(temperatureDeciC / 10.0).toStringAsFixed(1)}°C');
       }
-      if (sat != null) parts.add('Sat $sat');
+      if (sat != null) parts.add('sat $sat');
     } else if (_isPolygonAuditEntry(entry)) {
       final command = (entry['command'] ?? '').toString().trim();
       if (command.isNotEmpty) parts.add(command);
-      parts.add(_polygonLabel(entry));
       final cmdId = (entry['cmdId'] ?? '').toString().trim();
-      if (cmdId.isNotEmpty) parts.add('cmd $cmdId');
+      if (cmdId.isNotEmpty) parts.add('cmd=$cmdId');
     } else {
       final kind = (entry['kind'] ?? '').toString().trim();
       if (kind.isNotEmpty) parts.add(kind);
     }
-
     final gatewayId = (entry['gatewayId'] ?? '').toString().trim();
-    if (gatewayId.isNotEmpty) parts.add('GW $gatewayId');
-
+    if (gatewayId.isNotEmpty) parts.add('gw=$gatewayId');
     final gatewayRole = (entry['gatewayRole'] ?? '').toString().trim();
     if (gatewayRole.isNotEmpty) parts.add(gatewayRole);
-
-    return parts.join(' | ');
-  }
-
-  IconData _iconForEntry(Map<String, dynamic> entry) {
-    final type = (entry['type'] ?? '').toString();
-    if (_isPolygonAuditEntry(entry)) {
-      return _isPolygonAuditSuccess(entry)
-          ? Icons.task_alt
-          : Icons.warning_amber_rounded;
-    }
-    if (type == 'telemetry') return Icons.location_on;
-    if (type == 'health_daily') return Icons.health_and_safety;
-    return Icons.notifications_active_outlined;
-  }
-
-  Color _colorForEntry(Map<String, dynamic> entry, BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final type = (entry['type'] ?? '').toString();
-    if (_isPolygonAuditEntry(entry)) {
-      return _isPolygonAuditSuccess(entry)
-          ? const Color(0xFF24523A)
-          : scheme.error;
-    }
-    if (type == 'telemetry') return Colors.blue;
-    if (type == 'health_daily') return scheme.primary;
-    return scheme.secondary;
+    return parts.join(' · ');
   }
 
   bool _isPolygonAuditEntry(Map<String, dynamic> entry) {
@@ -170,8 +181,8 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
     final originDocType = (entry['originDocType'] ?? '').toString().trim();
     if (originDocType == 'ruralProperty') return 'fazenda';
     if (originDocType == 'area') return 'piquete';
-    if (originDocType == 'herdingOperation') return 'conducao';
-    return 'poligono';
+    if (originDocType == 'herdingOperation') return 'condução';
+    return 'polígono';
   }
 
   String _friendlyPolygonFailure(Map<String, dynamic> entry) {
@@ -184,7 +195,7 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
     final parts = <String>[source];
     if (errorStage.isNotEmpty) parts.add('etapa $errorStage');
     if (errorCode.isNotEmpty) parts.add(errorCode);
-    return parts.join(' | ');
+    return parts.join(' · ');
   }
 
   Future<PolygonLogPreviewResolution> _previewForEntry(
@@ -209,155 +220,21 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
     }
   }
 
-  Widget _buildPolygonResultSection(Map<String, dynamic> entry) {
-    if (!_isPolygonAuditEntry(entry)) return const SizedBox.shrink();
-
-    if (!_isPolygonAuditSuccess(entry)) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: const Color(0xFFFFF5F3),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE4B4AA)),
-        ),
-        child: Text(_friendlyPolygonFailure(entry)),
-      );
+  bool _matchesFilter(Map<String, dynamic> entry) {
+    if (_selectedFilter == _filterAll) return true;
+    final type = (entry['type'] ?? '').toString();
+    final isPoly = _isPolygonAuditEntry(entry);
+    switch (_selectedFilter) {
+      case _filterTelemetry:
+        return type == 'telemetry';
+      case _filterHealth:
+        return type == 'health_daily';
+      case _filterPolygon:
+        return isPoly;
+      case _filterOther:
+        return !isPoly && type != 'telemetry' && type != 'health_daily';
     }
-
-    return FutureBuilder<PolygonLogPreviewResolution>(
-      future: _previewForEntry(entry),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
-            child: Center(child: CircularProgressIndicator()),
-          );
-        }
-
-        final resolution = snapshot.data;
-        if (snapshot.hasError) {
-          return Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFF5F3),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFE4B4AA)),
-            ),
-            child: Text('Falha ao montar preview do mapa: ${snapshot.error}'),
-          );
-        }
-        if (resolution == null || !resolution.ok || resolution.data == null) {
-          return Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFF9EC),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFE0C89C)),
-            ),
-            child: Text(
-              resolution?.errorMessage ??
-                  'Nao foi possivel montar o mapa desse evento.',
-            ),
-          );
-        }
-
-        final svg = buildPolygonLogPreviewSvg(resolution.data!);
-        return Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF6FAF5),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFB8CFBD)),
-          ),
-          child: AspectRatio(
-            aspectRatio: 420 / 280,
-            child: SvgPicture.string(
-              svg,
-              fit: BoxFit.contain,
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildLogList(List<Map<String, dynamic>> items) {
-    if (items.isEmpty) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(16),
-          child: Text(
-            'Nenhuma mensagem da coleira foi encontrada no backend ainda.',
-            textAlign: TextAlign.center,
-          ),
-        ),
-      );
-    }
-
-    return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      itemCount: items.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 10),
-      itemBuilder: (context, index) {
-        final entry = items[index];
-        return Card(
-          child: ExpansionTile(
-            leading: Icon(
-              _iconForEntry(entry),
-              color: _colorForEntry(entry, context),
-            ),
-            title: Text(_titleForEntry(entry)),
-            subtitle: Text(_subtitleForEntry(entry)),
-            childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            children: [
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Payload recebido no backend',
-                  style: Theme.of(context).textTheme.labelLarge,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF6FAF5),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFB8CFBD)),
-                ),
-                child: SelectableText(
-                  _prettyJson(entry['raw']),
-                  style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 12,
-                    height: 1.4,
-                  ),
-                ),
-              ),
-              if (_isPolygonAuditEntry(entry)) ...[
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    _isPolygonAuditSuccess(entry)
-                        ? 'Mapa do poligono'
-                        : 'Resumo da falha',
-                    style: Theme.of(context).textTheme.labelLarge,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                _buildPolygonResultSection(entry),
-              ],
-            ],
-          ),
-        );
-      },
-    );
+    return true;
   }
 
   @override
@@ -366,85 +243,54 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
     final deviceId = _deviceId;
 
     return Scaffold(
+      backgroundColor: _terminalBg,
       appBar: AppBar(
-        title: Text('Log ${widget.device.networkId}'),
+        backgroundColor: _terminalBg,
+        foregroundColor: _terminalInk,
+        elevation: 0,
+        title: Text(
+          'Log ${widget.device.networkId}',
+          style: RTTypography.mono.copyWith(
+            color: _terminalInk,
+            fontSize: 16,
+          ),
+        ),
+        iconTheme: IconThemeData(color: _terminalInk),
+        actions: [
+          IconButton(
+            tooltip: 'Atualizar manual',
+            icon: const Icon(Icons.refresh),
+            onPressed: _autoRefresh ? null : _refreshManually,
+          ),
+        ],
       ),
       body: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Mensagens recebidas no backend para a coleira ${widget.device.networkId}.',
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: _autoRefresh ? null : _refreshManually,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Atualizar log'),
-                    ),
-                    const Spacer(),
-                    const Text('Atualizar automatico'),
-                    Switch.adaptive(
-                      value: _autoRefresh,
-                      onChanged: (value) {
-                        setState(() {
-                          _autoRefresh = value;
-                          if (!value) {
-                            _manualFuture = _loadLog();
-                          }
-                        });
-                      },
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1),
+          _buildControlBar(),
+          Divider(height: 1, color: _terminalBorder),
           Expanded(
             child: (propertyId == null || deviceId == null)
-                ? const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(16),
-                      child: Text(
-                        'A coleira precisa ter propriedade vinculada e ID LoRa valido para exibir o log.',
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
+                ? _emptyMessage(
+                    'A coleira precisa ter propriedade vinculada e ID LoRa válido para exibir o log.',
                   )
                 : _autoRefresh
                     ? StreamBuilder<List<Map<String, dynamic>>>(
-                        stream: context
-                            .read<CloudService>()
-                            .streamCollarLog(
+                        stream: context.read<CloudService>().streamCollarLog(
                               propertyId: propertyId,
                               deviceId: deviceId,
                             ),
                         builder: (context, snapshot) {
-                          final items =
-                              snapshot.data ?? const <Map<String, dynamic>>[];
                           if (snapshot.hasError) {
-                            return Center(
-                              child: Padding(
-                                padding: const EdgeInsets.all(16),
-                                child: Text(
-                                  'Falha ao carregar log em tempo real:\n${snapshot.error}',
-                                  textAlign: TextAlign.center,
-                                ),
-                              ),
+                            return _emptyMessage(
+                              'Falha ao carregar log em tempo real: ${snapshot.error}',
                             );
                           }
+                          final items = snapshot.data ??
+                              const <Map<String, dynamic>>[];
                           if (snapshot.connectionState ==
                                   ConnectionState.waiting &&
                               items.isEmpty) {
-                            return const Center(
-                              child: CircularProgressIndicator(),
-                            );
+                            return _loading();
                           }
                           return _buildLogList(items);
                         },
@@ -452,31 +298,330 @@ class _CollarLogScreenState extends State<CollarLogScreen> {
                     : FutureBuilder<List<Map<String, dynamic>>>(
                         future: _manualFuture,
                         builder: (context, snapshot) {
-                          final items =
-                              snapshot.data ?? const <Map<String, dynamic>>[];
                           if (snapshot.hasError) {
-                            return Center(
-                              child: Padding(
-                                padding: const EdgeInsets.all(16),
-                                child: Text(
-                                  'Falha ao carregar log:\n${snapshot.error}',
-                                  textAlign: TextAlign.center,
-                                ),
-                              ),
+                            return _emptyMessage(
+                              'Falha ao carregar log: ${snapshot.error}',
                             );
                           }
+                          final items = snapshot.data ??
+                              const <Map<String, dynamic>>[];
                           if (snapshot.connectionState ==
                                   ConnectionState.waiting &&
                               items.isEmpty) {
-                            return const Center(
-                              child: CircularProgressIndicator(),
-                            );
+                            return _loading();
                           }
                           return _buildLogList(items);
                         },
                       ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildControlBar() {
+    return Container(
+      color: _terminalBg,
+      padding: const EdgeInsets.fromLTRB(
+        0,
+        RTSpacing.x2,
+        RTSpacing.x4,
+        RTSpacing.x2,
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Theme(
+                  data: ThemeData.dark(),
+                  child: RTFilterChips(
+                    chips: const [
+                      RTFilterChipData(
+                        id: _filterAll,
+                        label: 'Todos',
+                        icon: Icons.list,
+                      ),
+                      RTFilterChipData(
+                        id: _filterTelemetry,
+                        label: 'Telemetria',
+                        icon: Icons.location_on_outlined,
+                      ),
+                      RTFilterChipData(
+                        id: _filterHealth,
+                        label: 'Saúde',
+                        icon: Icons.favorite_outline,
+                      ),
+                      RTFilterChipData(
+                        id: _filterPolygon,
+                        label: 'Polígono',
+                        icon: Icons.crop_free,
+                      ),
+                      RTFilterChipData(
+                        id: _filterOther,
+                        label: 'Outros',
+                        icon: Icons.more_horiz,
+                      ),
+                    ],
+                    selectedIds: {_selectedFilter},
+                    onToggle: (id) => setState(() => _selectedFilter = id),
+                  ),
+                ),
+              ),
+              const SizedBox(width: RTSpacing.x2),
+              Text('AUTO', style: RTTypography.eyebrow.copyWith(
+                color: _terminalInkSoft,
+              )),
+              Switch.adaptive(
+                value: _autoRefresh,
+                activeThumbColor: RTColors.ok,
+                onChanged: (value) {
+                  setState(() {
+                    _autoRefresh = value;
+                    if (!value) _manualFuture = _loadLog();
+                  });
+                },
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _loading() {
+    return Center(
+      child: CircularProgressIndicator(color: RTColors.ok),
+    );
+  }
+
+  Widget _emptyMessage(String message) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(RTSpacing.x4),
+        child: Text(
+          message,
+          textAlign: TextAlign.center,
+          style: RTTypography.mono.copyWith(
+            color: _terminalInkSoft,
+            fontSize: 13,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLogList(List<Map<String, dynamic>> items) {
+    final filtered = items.where(_matchesFilter).toList();
+    if (filtered.isEmpty) {
+      return _emptyMessage(
+        items.isEmpty
+            ? 'Nenhuma mensagem da coleira foi encontrada no backend ainda.'
+            : 'Nenhum evento corresponde ao filtro atual.',
+      );
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(
+        RTSpacing.x3,
+        RTSpacing.x3,
+        RTSpacing.x3,
+        RTSpacing.x6,
+      ),
+      itemCount: filtered.length,
+      separatorBuilder: (_, __) => const SizedBox(height: RTSpacing.x2),
+      itemBuilder: (context, index) => _buildLogEntry(filtered[index]),
+    );
+  }
+
+  Widget _buildLogEntry(Map<String, dynamic> entry) {
+    final timestamp = _formatTimestamp(entry['receivedAtMs'] as int?);
+    final title = _titleForEntry(entry);
+    final subtitle = _subtitleForEntry(entry);
+    return Theme(
+      data: ThemeData.dark().copyWith(dividerColor: Colors.transparent),
+      child: Container(
+        decoration: BoxDecoration(
+          color: _terminalSurface,
+          borderRadius: BorderRadius.circular(RTRadius.r2),
+          border: Border.all(color: _terminalBorder),
+        ),
+        child: ExpansionTile(
+          iconColor: _terminalInkSoft,
+          collapsedIconColor: _terminalInkSoft,
+          tilePadding: const EdgeInsets.symmetric(
+            horizontal: RTSpacing.x3,
+            vertical: RTSpacing.x1,
+          ),
+          childrenPadding: const EdgeInsets.fromLTRB(
+            RTSpacing.x3,
+            0,
+            RTSpacing.x3,
+            RTSpacing.x3,
+          ),
+          title: Row(
+            children: [
+              RTBadge(
+                label: _typeTagForEntry(entry),
+                tone: _toneForEntry(entry),
+                mono: true,
+              ),
+              const SizedBox(width: RTSpacing.x2),
+              Expanded(
+                child: Text(
+                  timestamp,
+                  style: RTTypography.monoSmall.copyWith(
+                    color: _terminalInk,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              title,
+              style: RTTypography.bodyStrong.copyWith(color: _terminalInk),
+            ),
+          ),
+          children: [
+            if (subtitle.isNotEmpty) ...[
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  subtitle,
+                  style: RTTypography.mono.copyWith(
+                    color: _terminalInkSoft,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              const SizedBox(height: RTSpacing.x2),
+            ],
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'PAYLOAD',
+                style: RTTypography.eyebrow.copyWith(color: _terminalInkSoft),
+              ),
+            ),
+            const SizedBox(height: RTSpacing.x1),
+            _payloadBlock(_prettyJson(entry['raw'])),
+            if (_isPolygonAuditEntry(entry)) ...[
+              const SizedBox(height: RTSpacing.x3),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  _isPolygonAuditSuccess(entry)
+                      ? 'MAPA DO POLÍGONO'
+                      : 'RESUMO DA FALHA',
+                  style:
+                      RTTypography.eyebrow.copyWith(color: _terminalInkSoft),
+                ),
+              ),
+              const SizedBox(height: RTSpacing.x1),
+              _buildPolygonResultSection(entry),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _payloadBlock(String content) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(RTSpacing.x3),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(RTRadius.r2),
+        border: Border.all(color: _terminalBorder),
+      ),
+      child: SelectableText(
+        content,
+        style: RTTypography.monoSmall.copyWith(
+          color: RTColors.ok,
+          fontSize: 11.5,
+          height: 1.45,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPolygonResultSection(Map<String, dynamic> entry) {
+    if (!_isPolygonAuditEntry(entry)) return const SizedBox.shrink();
+    if (!_isPolygonAuditSuccess(entry)) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(RTSpacing.x3),
+        decoration: BoxDecoration(
+          color: RTColors.danger.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(RTRadius.r2),
+          border: Border.all(
+            color: RTColors.danger.withValues(alpha: 0.4),
+          ),
+        ),
+        child: Text(
+          _friendlyPolygonFailure(entry),
+          style: RTTypography.bodySmall.copyWith(color: _terminalInk),
+        ),
+      );
+    }
+    return FutureBuilder<PolygonLogPreviewResolution>(
+      future: _previewForEntry(entry),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: RTSpacing.x3),
+            child: Center(
+              child: CircularProgressIndicator(color: RTColors.ok),
+            ),
+          );
+        }
+        final resolution = snapshot.data;
+        if (snapshot.hasError) {
+          return _inlineWarning(
+            'Falha ao montar preview do mapa: ${snapshot.error}',
+            RTColors.danger,
+          );
+        }
+        if (resolution == null || !resolution.ok || resolution.data == null) {
+          return _inlineWarning(
+            resolution?.errorMessage ??
+                'Não foi possível montar o mapa desse evento.',
+            RTColors.warn,
+          );
+        }
+        final svg = buildPolygonLogPreviewSvg(resolution.data!);
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(RTSpacing.x3),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(RTRadius.r2),
+            border: Border.all(color: _terminalBorder),
+          ),
+          child: AspectRatio(
+            aspectRatio: 420 / 280,
+            child: SvgPicture.string(svg, fit: BoxFit.contain),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _inlineWarning(String message, Color tone) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(RTSpacing.x3),
+      decoration: BoxDecoration(
+        color: tone.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(RTRadius.r2),
+        border: Border.all(color: tone.withValues(alpha: 0.4)),
+      ),
+      child: Text(
+        message,
+        style: RTTypography.bodySmall.copyWith(color: _terminalInk),
       ),
     );
   }

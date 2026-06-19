@@ -186,3 +186,6 @@ Idempotência de retry (duplo envio cria dois comandos distintos): limitação a
 [[fluxos-comunicacao-ponta-a-ponta]]
 [[modelagem-dados-supabase]]
 [[uiux-telas]]
+[[migracao-supabase]]
+[[stack-tecnologico]]
+[[auditoria-total-solucao-2026-04-11]]

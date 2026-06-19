@@ -6,6 +6,8 @@ O jeito mais simples de mandar essa informação para a matriz é **pela WebSock
 
 Isso porque a matriz expõe `/status` por HTTP para consulta, mas os comandos entram pela **WebSocket na porta 81** [[visao-geral]]. O app faz exatamente isso: conecta na WebSocket do gateway e envia um JSON no formato `type: "send_command"` [[fluxo-comandos]].
 
+**Conceitos relacionados:** [[gateway-matriz]] [[ruraltech]] [[modelagem-dados-supabase]] [[auditoria-comunicacao-v2.3.2]]
+
 Vou te passar o caminho mais direto, usando só navegador e o console.
 
 ## Método mais prático: navegador + console

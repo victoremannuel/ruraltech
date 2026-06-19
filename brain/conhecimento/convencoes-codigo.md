@@ -59,6 +59,8 @@ Convenções de estilo, tipagem, erros, imports e organização de artefatos que
 
 ## Related
 
+[[ruraltech]]
 [[stack-tecnologico]]
 [[padroes-implementacao]]
 [[regras-negocio]]
+[[visao-geral]]

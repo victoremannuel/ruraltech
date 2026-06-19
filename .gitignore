@@ -60,6 +60,9 @@ ruraltech10-firebase-adminsdk-fbsvc-66b85a4f95.json
 
 /gateway-matriz/manual_settings.local.h
 /firmware/shared/generated_build_info.h
+.env
+/.obsidian/**
+/obsidian
 
 # keep graph outputs, skip heavy/local-only files
 graphify-out/cache/            # optional: commit for shared extraction speed, skip to keep repo small
@@ -70,3 +73,6 @@ graphify-out
 graphify-out/**
 
 .gitignore
+/.venv/                        # optional: commit for shared extraction speed, skip to keep repo small
+
+**/graphify-out/

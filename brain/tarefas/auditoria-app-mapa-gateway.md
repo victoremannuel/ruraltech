@@ -72,7 +72,11 @@ Em andamento
 
 ## Related
 
+[[ruraltech]]
 [[requisitos]]
 [[modelagem-dados-supabase]]
 [[fluxos-comunicacao-ponta-a-ponta]]
 [[migracao-supabase]]
+[[visao-geral]]
+[[uiux-telas]]
+[[auditoria-total-solucao-2026-04-11]]

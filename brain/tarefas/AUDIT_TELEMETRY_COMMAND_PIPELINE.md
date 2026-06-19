@@ -179,3 +179,16 @@ ORDER BY received_at_ms DESC LIMIT 50;
 6. Rodar queries de validação e salvar em `audit-logs/supabase-sql.log`
 7. Validar marcador automático no mapa sem update manual
 8. Auditar pipeline de comandos end-to-end (PING → SET_PARAMS → SET_FENCE → SET_HERDING_PLAN)
+
+---
+
+## Related
+
+[[ruraltech]]
+[[visao-geral]]
+[[fluxo-comandos]]
+[[fluxos-comunicacao-ponta-a-ponta]]
+[[modelagem-dados-supabase]]
+[[auditoria-comunicacao-v2.3.2]]
+[[auditoria-comunicacao-v2.3.1]]
+[[auditoria-comunicacao-v2.3.0]]

@@ -26,24 +26,24 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Usamos sua localizacao para mostrar sua posicao no mapa.</string>
-	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Usamos Bluetooth para detectar coleiras e gateways proximos.</string>
-	<key>NSBluetoothPeripheralUsageDescription</key>
-	<string>Usamos Bluetooth para detectar coleiras e gateways proximos.</string>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Usamos a rede local para descobrir coleiras e gateways via Wi-Fi.</string>
-	<key>NSBonjourServices</key>
-	<array>
-		<string>_http._tcp</string>
-		<string>_arduino._tcp</string>
-	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Usamos Bluetooth para detectar coleiras e gateways proximos.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Usamos Bluetooth para detectar coleiras e gateways proximos.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_http._tcp</string>
+		<string>_arduino._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Usamos a rede local para descobrir coleiras e gateways via Wi-Fi.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Usamos sua localizacao para mostrar sua posicao no mapa.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -65,12 +65,12 @@
 			</array>
 		</dict>
 	</dict>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
 	</array>
-	<key>UIApplicationSupportsIndirectInputEvents</key>
-	<true/>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

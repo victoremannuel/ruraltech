@@ -1,0 +1,998 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=1440"/>
+<title>RuralTech · Proposta de Redesign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --bg: oklch(0.985 0.004 95);
+    --bgAlt: oklch(0.965 0.008 95);
+    --bgSubtle: oklch(0.945 0.012 95);
+    --ink: oklch(0.18 0.015 150);
+    --inkSoft: oklch(0.38 0.015 150);
+    --inkMute: oklch(0.58 0.010 150);
+    --hair: oklch(0.90 0.008 150);
+    --primary: oklch(0.42 0.11 150);
+    --primaryDeep: oklch(0.30 0.10 150);
+    --primarySoft: oklch(0.94 0.04 150);
+    --accent: oklch(0.62 0.14 55);
+    --accentSoft: oklch(0.93 0.05 70);
+  }
+  html, body { margin:0; background: var(--bgSubtle); color: var(--ink); font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  * { box-sizing: border-box; }
+  h1,h2,h3,h4 { font-family: 'Inter Tight', 'Inter', sans-serif; letter-spacing: -.025em; margin: 0; }
+  h1 { font-size: 56px; font-weight: 700; line-height: 1.05; letter-spacing: -.04em; }
+  h2 { font-size: 36px; font-weight: 700; line-height: 1.1; letter-spacing: -.03em; }
+  h3 { font-size: 22px; font-weight: 700; line-height: 1.2; letter-spacing: -.02em; }
+  h4 { font-size: 15px; font-weight: 600; line-height: 1.3; text-transform: uppercase; letter-spacing: .08em; color: var(--inkMute); }
+  p { margin: 0; line-height: 1.55; color: var(--inkSoft); }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 0 40px; }
+  section { padding: 80px 0; border-bottom: 1px solid var(--hair); }
+  section.dark { background: var(--ink); color: var(--bg); border-bottom: none; }
+  section.dark p { color: rgba(255,255,255,.7); }
+  section.dark h4 { color: rgba(255,255,255,.5); }
+  .eyebrow { font-family: 'JetBrains Mono', monospace; font-size: 12px; text-transform: uppercase; letter-spacing: .12em; color: var(--accent); font-weight: 600; margin-bottom: 16px; display: inline-block; }
+  .lede { font-size: 20px; line-height: 1.5; color: var(--inkSoft); max-width: 780px; }
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin-top: 24px; background: var(--bg); border: 1px solid var(--hair); border-radius: 12px; overflow: hidden; font-size: 14px; }
+  th { background: var(--bgAlt); text-align: left; padding: 14px 16px; font-weight: 600; color: var(--inkSoft); border-bottom: 1px solid var(--hair); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  td { padding: 14px 16px; border-bottom: 1px solid var(--hair); vertical-align: top; line-height: 1.45; color: var(--ink); }
+  tr:last-child td { border-bottom: none; }
+  .pill { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; font-family: 'Inter', sans-serif; }
+  .pill.hi { background: oklch(.94 .05 25); color: oklch(.45 .17 25); }
+  .pill.md { background: oklch(.94 .07 85); color: oklch(.4 .14 75); }
+  .pill.lo { background: var(--primarySoft); color: var(--primaryDeep); }
+  .pill.ok { background: oklch(.93 .06 150); color: oklch(.35 .12 150); }
+  /* Cards */
+  .cards { display: grid; gap: 16px; }
+  .card { background: var(--bg); border: 1px solid var(--hair); border-radius: 14px; padding: 20px; }
+  .card h3 { font-size: 18px; }
+  .card p { font-size: 14px; margin-top: 8px; }
+  .grid-2 { grid-template-columns: 1fr 1fr; }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+  .diagnosis .card { display: flex; gap: 16px; }
+  .diagnosis .card .num { font-family: 'JetBrains Mono', monospace; font-size: 32px; font-weight: 700; color: var(--accent); line-height: 1; flex-shrink: 0; }
+  /* Palette */
+  .swatch { aspect-ratio: 1; border-radius: 14px; position: relative; display: flex; flex-direction: column; justify-content: flex-end; padding: 14px; border: 1px solid rgba(0,0,0,.06); }
+  .swatch .lbl { font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 600; }
+  .swatch .val { font-family: 'JetBrains Mono', monospace; font-size: 10px; opacity: .7; margin-top: 2px; }
+  /* Type specimens */
+  .type-spec { padding: 24px 0; border-bottom: 1px dashed var(--hair); display: grid; grid-template-columns: 140px 1fr; gap: 24px; align-items: baseline; }
+  .type-spec .meta { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--inkMute); text-transform: uppercase; letter-spacing: .06em; }
+  /* Screen shelf */
+  .shelf { display: flex; gap: 40px; overflow-x: auto; padding: 20px 40px 40px; scroll-padding: 40px; background: linear-gradient(180deg, var(--bgSubtle) 0%, oklch(.92 .015 150) 100%); }
+  .shelf::-webkit-scrollbar { height: 8px; }
+  .shelf::-webkit-scrollbar-thumb { background: var(--hair); border-radius: 4px; }
+  .tag-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .tag { padding: 4px 10px; border-radius: 999px; background: var(--bgAlt); border: 1px solid var(--hair); font-size: 12px; font-weight: 500; color: var(--inkSoft); font-family: 'Inter', sans-serif; }
+  /* Hero */
+  .hero { padding: 120px 0 100px; background: radial-gradient(ellipse at 70% 20%, oklch(.95 .03 150) 0%, var(--bgSubtle) 50%); position: relative; overflow: hidden; }
+  .hero::before { content: ''; position: absolute; inset: 0; background: radial-gradient(circle at 85% 70%, oklch(.92 .05 60) 0%, transparent 50%); opacity: .4; }
+  .hero .content { position: relative; max-width: 900px; }
+  .topo-pattern { position: absolute; inset: 0; opacity: .08; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><path d='M0 60 Q30 30 60 60 T120 60' stroke='%23173120' fill='none' stroke-width='.8'/><path d='M0 30 Q30 0 60 30 T120 30' stroke='%23173120' fill='none' stroke-width='.8'/><path d='M0 90 Q30 60 60 90 T120 90' stroke='%23173120' fill='none' stroke-width='.8'/></svg>"); }
+  .flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-top: 32px; }
+  .flow .node { background: var(--bg); border: 1px solid var(--hair); border-radius: 12px; padding: 16px; text-align: center; position: relative; }
+  .flow .node .idx { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--accent); font-weight: 700; }
+  .flow .node .name { font-weight: 600; font-size: 14px; margin-top: 6px; }
+  .flow .node .desc { font-size: 11px; color: var(--inkMute); margin-top: 2px; }
+  .flow .node::after { content: '→'; position: absolute; right: -12px; top: 50%; transform: translateY(-50%); color: var(--inkMute); font-weight: 700; z-index: 2; }
+  .flow .node:last-child::after { display: none; }
+  /* Quote */
+  .quote { padding: 40px; background: var(--ink); color: var(--bg); border-radius: 20px; margin: 48px 0; position: relative; overflow: hidden; }
+  .quote p { color: rgba(255,255,255,.85); font-family: 'Inter Tight', sans-serif; font-size: 24px; font-weight: 500; line-height: 1.4; letter-spacing: -.015em; }
+  .quote cite { display: block; margin-top: 16px; font-size: 12px; font-style: normal; font-family: 'JetBrains Mono', monospace; color: rgba(255,255,255,.5); letter-spacing: .06em; text-transform: uppercase; }
+  /* Wireframe */
+  .wire { background: var(--bg); border: 1.5px dashed var(--hair); border-radius: 12px; padding: 20px; font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.7; color: var(--inkSoft); white-space: pre; overflow-x: auto; }
+  /* TOC nav */
+  .toc { position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--hair); z-index: 10; padding: 14px 40px; display: flex; align-items: center; gap: 24px; font-size: 13px; font-family: 'Inter', sans-serif; }
+  .toc .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-family: 'Inter Tight', sans-serif; letter-spacing: -.02em; font-size: 15px; }
+  .toc .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--primary); }
+  .toc a { color: var(--inkSoft); text-decoration: none; font-weight: 500; }
+  .toc a:hover { color: var(--ink); }
+  .toc .spacer { flex: 1; }
+  .badge-accent { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: var(--accent); color: white; border-radius: 999px; font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+
+<nav class="toc">
+  <div class="brand"><span class="dot"></span>RuralTech · Redesign</div>
+  <a href="#diagnostico">Diagnóstico</a>
+  <a href="#direcao">Direção</a>
+  <a href="#nav">Navegação</a>
+  <a href="#telas">Telas</a>
+  <a href="#design-system">Design System</a>
+  <a href="#backlog">Backlog</a>
+  <a href="#futuro">Futuro</a>
+  <div class="spacer"></div>
+  <span class="mono" style="color: var(--inkMute); font-size: 11px;">v1.0 · abr/2026</span>
+</nav>
+
+<header class="hero">
+  <div class="topo-pattern"></div>
+  <div class="wrap content">
+    <span class="badge-accent">Proposta de Redesign</span>
+    <h1 style="margin-top: 20px;">Do app funcional<br>ao produto de campo.</h1>
+    <p class="lede" style="margin-top: 24px; font-size: 22px;">
+      Uma evolução do front-end do RuralTech preservando toda a lógica operacional — mapa, coleiras LoRa, gateways, geofence e arrebanhamento — elevando UX, UI e consistência para um produto robusto, legível sob o sol e confiável em operação crítica.
+    </p>
+    <div class="tag-row" style="margin-top: 28px;">
+      <span class="tag">Flutter · Material 3</span>
+      <span class="tag">Mobile-first</span>
+      <span class="tag">Mapa como herói</span>
+      <span class="tag">Offline-resiliente</span>
+      <span class="tag">Acessível em campo</span>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== RESUMO EXECUTIVO ===================== -->
+<section>
+  <div class="wrap">
+    <span class="eyebrow">01 · Resumo executivo</span>
+    <h2>O que está sendo proposto</h2>
+    <p class="lede" style="margin-top: 20px;">A base do RuralTech é sólida em engenharia: LoRa, Supabase, WorkManager, polígonos de geofence, telemetria e condução de rebanho. A oportunidade está no <strong style="color: var(--ink)">produto</strong> — como essa engenharia se apresenta ao operador em campo.</p>
+
+    <div class="cards grid-3" style="margin-top: 40px;">
+      <div class="card">
+        <h4>1 · Problema</h4>
+        <h3 style="margin-top: 8px;">Interface funcional, mas plana</h3>
+        <p>Telas centralizadas em <code class="mono">ListTile</code> genéricos. Dashboard de 3.632 linhas acumula responsabilidades. Hierarquia visual fraca, mapa competindo com UI e dados técnicos sem destaque.</p>
+      </div>
+      <div class="card">
+        <h4>2 · Direção</h4>
+        <h3 style="margin-top: 8px;">Mapa-primeiro, dados ao toque</h3>
+        <p>Mapa em tela cheia como herói. UI flutuante, bottom sheets para contexto, chips de filtro rápido. Tipografia técnica (mono) para IDs, coordenadas e telemetria. Operação em 1 mão.</p>
+      </div>
+      <div class="card">
+        <h4>3 · Entrega</h4>
+        <h3 style="margin-top: 8px;">Design system e 8 telas-chave</h3>
+        <p>Paleta, tipografia, tokens, componentes Flutter reutilizáveis. Redesign de Login, Dashboard, Detalhes, Geofence, Arrebanhamento, Eventos e Perfil. Backlog priorizado por quick wins e evoluções estruturais.</p>
+      </div>
+    </div>
+
+    <div class="quote">
+      <p>"O app vai ser usado com sol na tela, mão suja e animal correndo. Cada toque que você economiza é tempo que o operador ganha pra cuidar do rebanho."</p>
+      <cite>Princípio de design · RuralTech v2</cite>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== DIAGNÓSTICO ===================== -->
+<section id="diagnostico" style="background: var(--bg);">
+  <div class="wrap">
+    <span class="eyebrow">02 · Diagnóstico atual</span>
+    <h2>Onde o produto está hoje</h2>
+    <p class="lede" style="margin-top: 20px;">Leitura feita a partir dos arquivos em <code class="mono">app/lib/screens/</code> e <code class="mono">main.dart</code>. São dores reais do código, não críticas genéricas.</p>
+
+    <div class="cards grid-2 diagnosis" style="margin-top: 40px;">
+      <div class="card">
+        <div class="num">01</div>
+        <div>
+          <h3>Dashboard monolítico</h3>
+          <p><code class="mono">dashboard_screen.dart</code> tem 3.632 linhas e acumula: mapa, filtros, telemetria, cadastro, onboarding de gateway, Bluetooth, localização do usuário e eventos críticos. Difícil de evoluir e testar. Violação clara de responsabilidade única.</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="num">02</div>
+        <div>
+          <h3>Navegação sem âncora</h3>
+          <p>Não há bottom navigation. Eventos, Perfil e Detalhes são empilhados via <code class="mono">Navigator.push</code> a partir da home. Usuário perde orientação e não tem atalho para telas recorrentes. Admin × user não têm contextualização visual.</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="num">03</div>
+        <div>
+          <h3>ListTiles como padrão universal</h3>
+          <p>Detalhes da coleira, Eventos, Perfil e filtros usam <code class="mono">ListTile</code> cru. Zero diferenciação entre informação crítica, telemetria técnica e metadata. Dados numéricos (lat/lon, RSSI, HDOP) misturados com texto narrativo.</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="num">04</div>
+        <div>
+          <h3>Mapa como ilustração</h3>
+          <p>Na geofence e arrebanhamento, o mapa ocupa espaço mas recebe UI pesada em cima (barras, labels, botões empilhados). Sem camadas de tile escuras para sol forte, sem gesture hints. Em dashboard, convive com pop-ups e modais que o obstruem.</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="num">05</div>
+        <div>
+          <h3>Feedback via Snackbar só</h3>
+          <p><code class="mono">AppFeedback.success/error/warning</code> cobre quase tudo. Falta estado vazio desenhado, loading skeletons, confirmações contextuais para ações irreversíveis (publicar cerca via LoRa é permanente).</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="num">06</div>
+        <div>
+          <h3>Paleta limitada e rígida</h3>
+          <p>Verde <code class="mono">#2F7D3D</code>, amarelo <code class="mono">#E7A300</code>, branco, preto esverdeado. Sem tons neutros intermediários, sem feedback tokens (ok/warn/danger/info separados da marca). Ausência de superfícies alternativas para hierarquia.</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="num">07</div>
+        <div>
+          <h3>Ausência de tipografia técnica</h3>
+          <p>Todo o texto usa a fonte padrão Material. IDs LoRa, MAC de gateway, coordenadas, timestamps e HDOP deveriam ser monoespaçados — isso acelera leitura e evita ambiguidade entre O e 0, l e 1 em campo.</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="num">08</div>
+        <div>
+          <h3>Fluxos longos sem etapas</h3>
+          <p>Arrebanhamento (<code class="mono">herding_screen.dart</code>, 786 linhas) junta seleção de coleiras, desenho de polígono alvo, revisão e publicação em uma tela só. Sem stepper, sem preview, sem confirmação final para operação irreversível.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== DIREÇÃO VISUAL ===================== -->
+<section id="direcao" class="dark">
+  <div class="wrap">
+    <span class="eyebrow" style="color: oklch(.75 .12 60);">03 · Nova direção visual</span>
+    <h2 style="color: #fff;">Rural, técnico, confiável<br>— nada genérico.</h2>
+    <p class="lede" style="margin-top: 24px; color: rgba(255,255,255,.75);">
+      A linguagem visual proposta equilibra três tensões: o <strong style="color: #fff;">campo</strong> (terra, verdes profundos, textura), a <strong style="color: #fff;">tecnologia</strong> (tipografia monoespaçada, densidade de dados) e a <strong style="color: #fff;">operação</strong> (legibilidade sob sol, hierarquia brutal, toques grandes).
+    </p>
+
+    <div class="cards grid-4" style="margin-top: 48px;">
+      <div class="card" style="background: rgba(255,255,255,.05); border-color: rgba(255,255,255,.1); color: #fff;">
+        <h4 style="color: oklch(.75 .12 60);">Adjetivo 1</h4>
+        <h3 style="color: #fff; margin-top: 8px;">Terroso</h3>
+        <p style="color: rgba(255,255,255,.7);">Verdes floresta, creme quente, terra queimada. Não é verde Material genérico.</p>
+      </div>
+      <div class="card" style="background: rgba(255,255,255,.05); border-color: rgba(255,255,255,.1); color: #fff;">
+        <h4 style="color: oklch(.75 .12 60);">Adjetivo 2</h4>
+        <h3 style="color: #fff; margin-top: 8px;">Técnico</h3>
+        <p style="color: rgba(255,255,255,.7);">Monospace para dados, alinhamentos rígidos, métricas em destaque. Estética console-operacional.</p>
+      </div>
+      <div class="card" style="background: rgba(255,255,255,.05); border-color: rgba(255,255,255,.1); color: #fff;">
+        <h4 style="color: oklch(.75 .12 60);">Adjetivo 3</h4>
+        <h3 style="color: #fff; margin-top: 8px;">Sóbrio</h3>
+        <p style="color: rgba(255,255,255,.7);">Sem gradientes apelativos, sem ilustrações fofas. Função acima de forma.</p>
+      </div>
+      <div class="card" style="background: rgba(255,255,255,.05); border-color: rgba(255,255,255,.1); color: #fff;">
+        <h4 style="color: oklch(.75 .12 60);">Adjetivo 4</h4>
+        <h3 style="color: #fff; margin-top: 8px;">Robusto</h3>
+        <p style="color: rgba(255,255,255,.7);">Alto contraste, bordas generosas, touch-targets ≥44px. Resiliente a luz, luva, poeira.</p>
+      </div>
+    </div>
+
+    <h4 style="color: oklch(.75 .12 60); margin-top: 64px;">Balanço de tensões</h4>
+    <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 32px; margin-top: 16px; align-items: start;">
+      <p style="font-family: 'Inter Tight'; font-size: 24px; font-weight: 500; color: #fff; line-height: 1.3; letter-spacing: -.015em;">Tecnologia sem frieza, campo sem rusticidade, premium sem ostentação.</p>
+      <div style="color: rgba(255,255,255,.75); font-size: 15px; line-height: 1.7;">
+        <strong style="color: #fff;">Tecnologia</strong> aparece na tipografia mono para IDs e telemetria, em grids técnicos e no tratamento escuro de mapas. <strong style="color: #fff;">Campo</strong> vem dos tons terra e verde profundo, texturas suaves de topografia e do vocabulário (propriedade, quadrante, lote, cerca). <strong style="color: #fff;">Premium</strong> se manifesta pela contenção: um único accent colorido por tela, spacing generoso, tipografia confiante. Sem stock photos de vacas, sem gradientes arco-íris, sem ícones pastel.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== NAVEGAÇÃO ===================== -->
+<section id="nav">
+  <div class="wrap">
+    <span class="eyebrow">04 · Arquitetura de navegação</span>
+    <h2>De Navigator.push → bottom nav persistente</h2>
+    <p class="lede" style="margin-top: 20px;">A navegação atual faz o usuário voltar à home para acessar Eventos ou Perfil. Proposta: 4 abas persistentes + ações contextuais em bottom sheets + FAB operacional.</p>
+
+    <h4 style="margin-top: 48px;">Estrutura proposta (4 abas)</h4>
+    <div class="flow">
+      <div class="node">
+        <div class="idx">01</div>
+        <div class="name">Mapa</div>
+        <div class="desc">Home — operação viva</div>
+      </div>
+      <div class="node">
+        <div class="idx">02</div>
+        <div class="name">Eventos</div>
+        <div class="desc">Críticos + telemetria</div>
+      </div>
+      <div class="node">
+        <div class="idx">03</div>
+        <div class="name">Operações</div>
+        <div class="desc">Cerca, arrebanhamento</div>
+      </div>
+      <div class="node">
+        <div class="idx">04</div>
+        <div class="name">Perfil</div>
+        <div class="desc">Filtros, conta, admin</div>
+      </div>
+      <div class="node" style="background: var(--primaryDeep); color: #fff; border-color: var(--primaryDeep);">
+        <div class="idx" style="color: oklch(.75 .12 60);">FAB</div>
+        <div class="name" style="color: #fff;">+ Adicionar</div>
+        <div class="desc" style="color: rgba(255,255,255,.7);">Coleira / gateway / área</div>
+      </div>
+    </div>
+
+    <div class="cards grid-2" style="margin-top: 48px;">
+      <div class="card">
+        <h4>App bar</h4>
+        <h3 style="margin-top: 4px;">Contextual, não genérica</h3>
+        <p>No Mapa: busca + filtros + notificações (sino com badge). Em Detalhes/Fluxos: voltar + título + ações secundárias (3 ícones máx). Em telas de mapa operacional (geofence): appbar escura translúcida sobre o mapa, não opaca.</p>
+      </div>
+      <div class="card">
+        <h4>Bottom sheets</h4>
+        <h3 style="margin-top: 4px;">Padrão para contexto sobre mapa</h3>
+        <p>Coleira selecionada → sheet expansível (peek de 180px → full 70%). Stack de informação: identidade → telemetria → ações. Drag handle visível. Nunca cobre controles do mapa (camadas, GPS, bússola) do lado direito.</p>
+      </div>
+      <div class="card">
+        <h4>FAB operacional</h4>
+        <h3 style="margin-top: 4px;">Ação de criação, não genérica</h3>
+        <p>FAB extendido no Mapa: "<strong>+ Novo</strong>" com speed-dial → Coleira, Gateway, Área, Propriedade. Em fluxos operacionais, se transforma em FAB de publicação (ex: "Publicar cerca") quando há estado pronto para persistir.</p>
+      </div>
+      <div class="card">
+        <h4>Modais × sheets</h4>
+        <h3 style="margin-top: 4px;">Regra clara de uso</h3>
+        <p><strong>Sheet</strong> para contexto ("o que é isso?"). <strong>Modal dialog</strong> apenas para confirmações irreversíveis (publicar via LoRa, excluir coleira). <strong>Tela cheia</strong> para fluxos multi-etapas (novo arrebanhamento, cadastro de propriedade).</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== TELAS (MOCKUPS) ===================== -->
+<section id="telas" style="padding: 60px 0 40px; background: linear-gradient(180deg, var(--bgSubtle) 0%, oklch(.92 .015 150) 100%);">
+  <div class="wrap">
+    <span class="eyebrow">05 · Redesign por tela</span>
+    <h2>Mockups hi-fi das 7 telas principais</h2>
+    <p class="lede" style="margin-top: 20px;">Arraste lateralmente para ver todas. Cada tela preserva a lógica operacional existente — o que muda é a organização, hierarquia e linguagem visual.</p>
+  </div>
+</section>
+
+<div id="mockup-shelf" class="shelf"></div>
+
+<section>
+  <div class="wrap">
+    <h4>Detalhamento por tela</h4>
+    <div class="cards grid-2" style="margin-top: 24px;">
+
+      <div class="card">
+        <span class="tag" style="background: var(--primarySoft); color: var(--primaryDeep); border-color: var(--primarySoft);">01 · Login</span>
+        <h3 style="margin-top: 10px;">Contextualização antes da autenticação</h3>
+        <p><strong style="color: var(--ink);">Objetivo:</strong> autenticar e dar sensação imediata de produto confiável.</p>
+        <p style="margin-top: 8px;"><strong style="color: var(--ink);">Problema atual:</strong> logo + 2 campos + 2 botões, sem contexto visual. Parece app genérico.</p>
+        <p style="margin-top: 8px;"><strong style="color: var(--ink);">Proposta:</strong> hero superior com padrão topográfico + polígono ilustrativo (identidade rural-tech imediata). Formulário em bottom sheet curvo. Indicação clara de modo offline (crucial em campo). Campo com ícone, toggle de visualização de senha.</p>
+        <div class="tag-row">
+          <span class="tag">Component: <span class="mono">RTAuthScaffold</span></span>
+          <span class="tag">Component: <span class="mono">RTField</span></span>
+          <span class="tag">OfflineHint</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <span class="tag" style="background: var(--primarySoft); color: var(--primaryDeep);">02 · Home / Mapa</span>
+        <h3 style="margin-top: 10px;">Mapa em tela cheia, UI flutua</h3>
+        <p><strong style="color: var(--ink);">Problema atual:</strong> mapa ocupa só parte da tela, UI compete pelo espaço. Filtros, propriedades, coleiras disputam atenção em painéis empilhados.</p>
+        <p style="margin-top: 8px;"><strong style="color: var(--ink);">Proposta:</strong> mapa full-bleed. Topo: busca + filtros rápidos em chips roláveis. Direita: controles de mapa (camadas, GPS, bússola) em coluna vertical — não obstruem info. Bottom sheet com coleira selecionada (identidade → telemetria → ações). FAB extendido para criação. Marcadores com cor por tipo (coleira verde, gateway terra, alerta laranja).</p>
+        <div class="tag-row">
+          <span class="tag">Component: <span class="mono">RTMapScaffold</span></span>
+          <span class="tag">Component: <span class="mono">RTFilterChips</span></span>
+          <span class="tag">Component: <span class="mono">RTCollarSheet</span></span>
+          <span class="tag">Component: <span class="mono">RTMarker</span></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <span class="tag" style="background: var(--primarySoft); color: var(--primaryDeep);">03 · Detalhes da coleira</span>
+        <h3 style="margin-top: 10px;">De lista de ListTiles a hierarquia clara</h3>
+        <p><strong style="color: var(--ink);">Problema atual:</strong> 6 ListTiles sequenciais misturam ID, posição, saúde, GPS, ações. Tudo na mesma hierarquia.</p>
+        <p style="margin-top: 8px;"><strong style="color: var(--ink);">Proposta:</strong> <strong>hero card</strong> verde com status global (saúde, online, timestamp). <strong>Card técnico</strong> com última posição + telemetria em grid (mono). <strong>Lista de ações</strong> com ícone + título + subtítulo + valor à direita (geofence, plano de condução, log). Cada linha tem contexto sobre por que pode/não pode ser executada (ID LoRa inválido, por exemplo).</p>
+        <div class="tag-row">
+          <span class="tag">Component: <span class="mono">RTStatusHero</span></span>
+          <span class="tag">Component: <span class="mono">RTDataGrid</span></span>
+          <span class="tag">Component: <span class="mono">RTActionRow</span></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <span class="tag" style="background: var(--primarySoft); color: var(--primaryDeep);">04 · Geofence</span>
+        <h3 style="margin-top: 10px;">Mapa escuro + HUD translúcido</h3>
+        <p><strong style="color: var(--ink);">Problema atual:</strong> banner verde claro em cima do mapa quebra imersão. Botões empilhados em Row de 3 na parte inferior.</p>
+        <p style="margin-top: 8px;"><strong style="color: var(--ink);">Proposta:</strong> tile escuro (melhor em sol). Contador de vértices + km² flutuante no topo. Controles em barra translúcida com backdrop blur. Ação principal ("Publicar cerca via LoRa") em botão accent destacado, separado de ações secundárias (undo, clear). Aviso claro de irreversibilidade.</p>
+        <div class="tag-row">
+          <span class="tag">Component: <span class="mono">RTMapNightTile</span></span>
+          <span class="tag">Component: <span class="mono">RTMapHUD</span></span>
+          <span class="tag">Component: <span class="mono">RTPolyEditor</span></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <span class="tag" style="background: var(--primarySoft); color: var(--primaryDeep);">05 · Arrebanhamento</span>
+        <h3 style="margin-top: 10px;">Wizard de 3 etapas</h3>
+        <p><strong style="color: var(--ink);">Problema atual:</strong> 786 linhas numa tela só. Seleção + polígono + revisão + publicação misturados.</p>
+        <p style="margin-top: 8px;"><strong style="color: var(--ink);">Proposta:</strong> stepper claro <strong>Coleiras → Área-alvo → Revisar</strong>. Mapa mostra origem (coleiras atuais) + alvo + seta animada de movimento. Aviso amarelo antes da publicação reforçando irreversibilidade via LoRa. Botão primário cresce de tamanho (flex 2) conforme o usuário avança.</p>
+        <div class="tag-row">
+          <span class="tag">Component: <span class="mono">RTStepper</span></span>
+          <span class="tag">Component: <span class="mono">RTHerdingMap</span></span>
+          <span class="tag">Component: <span class="mono">RTConfirmBanner</span></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <span class="tag" style="background: var(--primarySoft); color: var(--primaryDeep);">06 · Eventos e Telemetria</span>
+        <h3 style="margin-top: 10px;">Feed com hierarquia por severidade</h3>
+        <p><strong style="color: var(--ink);">Problema atual:</strong> <code class="mono">ListTile</code> com <code class="mono">type</code> e subtítulo textual, sem cor, sem timestamp relativo claro.</p>
+        <p style="margin-top: 8px;"><strong style="color: var(--ink);">Proposta:</strong> header grande com contadores. Chips de filtro por severidade. Cards com ícone colorido tonal por tipo (crítico vermelho, atenção amarelo, ok verde, info azul). Badge "AO VIVO" em eventos recém-chegados. Timestamps em mono. Empty state desenhado, não só texto.</p>
+        <div class="tag-row">
+          <span class="tag">Component: <span class="mono">RTEventFeed</span></span>
+          <span class="tag">Component: <span class="mono">RTEventCard</span></span>
+          <span class="tag">Component: <span class="mono">RTSeverityBadge</span></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <span class="tag" style="background: var(--primarySoft); color: var(--primaryDeep);">07 · Perfil / Filtros</span>
+        <h3 style="margin-top: 10px;">Identidade + controle operacional</h3>
+        <p><strong style="color: var(--ink);">Problema atual:</strong> 481 linhas alternando autenticação, filtros de mapa, lista de propriedades/áreas/coleiras/gateways com <code class="mono">CheckboxListTile</code>.</p>
+        <p style="margin-top: 8px;"><strong style="color: var(--ink);">Proposta:</strong> topo com avatar + nome + email + badge de papel (Admin/User). Bloco <strong>Filtros do mapa</strong> colapsável: 4 linhas (Propriedades, Áreas, Coleiras, Gateways) com toggle rápido + count + resumo da seleção. Bloco <strong>Conta</strong> separado: dados, notificações, sincronização, sobre. Evita sobrecarga vertical da tela atual.</p>
+        <div class="tag-row">
+          <span class="tag">Component: <span class="mono">RTAvatarHeader</span></span>
+          <span class="tag">Component: <span class="mono">RTFilterGroup</span></span>
+          <span class="tag">Component: <span class="mono">RTToggleRow</span></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <span class="tag" style="background: var(--accentSoft); color: oklch(.4 .14 55);">Fluxos auxiliares</span>
+        <h3 style="margin-top: 10px;">Cadastros e editores</h3>
+        <p><strong style="color: var(--ink);">Inclusão de coleira/gateway:</strong> wizard em 3 etapas (identidade, vinculação a propriedade, confirmação). Campo de ID LoRa com validação inline (número positivo) e feedback imediato.</p>
+        <p style="margin-top: 8px;"><strong style="color: var(--ink);">Seleção de ponto no mapa:</strong> tela cheia com crosshair fixo central, endereço geocoded flutuante no topo, botão "Confirmar" sticky.</p>
+        <p style="margin-top: 8px;"><strong style="color: var(--ink);">Edição de polígono/área/propriedade:</strong> reuso do <code class="mono">RTPolyEditor</code>. Métricas (área, perímetro, #vértices) em HUD. Lock/unlock de vértices para edição precisa.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ===================== WIREFRAMES TEXTUAIS ===================== -->
+<section style="background: var(--bg);">
+  <div class="wrap">
+    <span class="eyebrow">05b · Wireframes textuais</span>
+    <h2>Estrutura de layout das 3 telas críticas</h2>
+
+    <h4 style="margin-top: 40px;">Home / Mapa</h4>
+<div class="wire">┌─────────────────────────────────────┐
+│ [status bar]                        │
+├─────────────────────────────────────┤
+│ [🔍 Fazenda Doce Vale   · 12 ▾] 🔔 │ ← busca + count + filtros
+│ [Todos·14] [●Coleiras·9] [⚠·2] [GW]│ ← chips rolagem horizontal
+├─────────────────────────────────────┤
+│                                  [⊡]│ ← camadas
+│                                  [⊙]│ ← GPS
+│           M A P A                [◉]│ ← bússola
+│      (full-bleed, dinâmico)         │
+│        ●── polígono propriedade     │
+│        ◇── polígono área            │
+│        📍 coleira selecionada       │
+│                                     │
+├═════════════════════════════════════┤  ← sheet peek
+│ ─── (drag handle)                   │
+│ [🟢] Coleira 042     [● Online]     │
+│      Q. Norte · A2 · há 2 min       │
+│ ┌────┬────┬────┬────┐               │
+│ │ 87%│−92 │8sat│24° │ telemetria    │
+│ └────┴────┴────┴────┘               │
+│ [Geofence] [Conduzir]        [⋯]    │
+├─────────────────────────────────────┤
+│ [🗺 Mapa] [🔔 Eventos] [↗ Ops] [👤] │ ← tab bar
+└─────────────────────────────────────┘</div>
+
+    <h4 style="margin-top: 40px;">Geofence (mapa escuro)</h4>
+<div class="wire">┌─────────────────────────────────────┐
+│ [status bar · branca]               │
+│ [← Geofence · Coleira 042    ↻  ⋯]  │ ← appbar translúcida escura
+├─────────────────────────────────────┤
+│         [● 6/32 vértices · 1.6 km²] │ ← HUD flutuante
+│                                     │
+│                                     │
+│     [ mapa ESCURO noturno ]         │
+│     polígono com vértices numerados │
+│                                     │
+│                                     │
+│                                     │
+├─────────────────────────────────────┤
+│ ┌─────────────────────────────────┐ │ ← barra translúcida
+│ │  [↶ Desfazer]    [⌫ Limpar]    │ │
+│ └─────────────────────────────────┘ │
+│ [▶ Publicar cerca via LoRa      →] │ ← CTA accent
+└─────────────────────────────────────┘</div>
+
+    <h4 style="margin-top: 40px;">Arrebanhamento (wizard)</h4>
+<div class="wire">┌─────────────────────────────────────┐
+│ [status] [←] Arrebanhamento         │
+│          Etapa 2 de 3 · Área-alvo   │
+│ ▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░  stepper         │
+│ Coleiras   Área-alvo   Revisar      │
+├─────────────────────────────────────┤
+│     mapa com:                       │
+│     ◯ origem (coleiras selecionadas)│
+│     ─→ seta tracejada de movimento  │
+│     ◈ área-alvo [ALVO]              │
+│                                     │
+├═════════════════════════════════════┤
+│ ─── (handle)                        │
+│ 3 coleiras selecionadas · Lote N.   │
+│ [🟢C-017] [🟢C-042] [🟢C-088]       │
+│ ⚠ Comandos LoRa são irreversíveis   │
+│ [Voltar]         [Revisar e publicar →]│
+└─────────────────────────────────────┘</div>
+  </div>
+</section>
+
+<!-- ===================== DESIGN SYSTEM ===================== -->
+<section id="design-system" style="background: var(--bgAlt);">
+  <div class="wrap">
+    <span class="eyebrow">06 · Design system</span>
+    <h2>Tokens, primitivos e componentes</h2>
+    <p class="lede" style="margin-top: 20px;">Base mínima para um ThemeData customizado em Flutter + biblioteca interna de widgets reutilizáveis.</p>
+
+    <!-- COLORS -->
+    <h4 style="margin-top: 56px;">Paleta</h4>
+    <p style="margin-top: 8px;">Neutros quentes (chroma ≤ 0.015), primário floresta, accent terra. Tokens OKLCH — conversão automática para Color() Flutter via gerador.</p>
+
+    <div style="margin-top: 20px;">
+      <h4 style="font-size: 11px; color: var(--inkMute);">Base · Neutros</h4>
+      <div class="cards grid-4" style="grid-template-columns: repeat(6, 1fr); margin-top: 8px;">
+        <div class="swatch" style="background: var(--bg); color: var(--ink);"><div class="lbl">bg</div><div class="val">oklch(.985 .004 95)</div></div>
+        <div class="swatch" style="background: var(--bgAlt); color: var(--ink);"><div class="lbl">bg-alt</div><div class="val">oklch(.965 .008 95)</div></div>
+        <div class="swatch" style="background: var(--bgSubtle); color: var(--ink);"><div class="lbl">bg-subtle</div><div class="val">oklch(.945 .012 95)</div></div>
+        <div class="swatch" style="background: var(--hair); color: var(--ink);"><div class="lbl">hair</div><div class="val">oklch(.90 .008 150)</div></div>
+        <div class="swatch" style="background: var(--inkSoft); color: white;"><div class="lbl" style="color:#fff;">ink-soft</div><div class="val" style="color: rgba(255,255,255,.6);">oklch(.38 .015 150)</div></div>
+        <div class="swatch" style="background: var(--ink); color: white;"><div class="lbl" style="color:#fff;">ink</div><div class="val" style="color: rgba(255,255,255,.6);">oklch(.18 .015 150)</div></div>
+      </div>
+
+      <h4 style="font-size: 11px; color: var(--inkMute); margin-top: 24px;">Primário · Floresta + Accent · Terra</h4>
+      <div class="cards grid-4" style="grid-template-columns: repeat(5, 1fr); margin-top: 8px;">
+        <div class="swatch" style="background: var(--primarySoft); color: var(--primaryDeep);"><div class="lbl">primary-soft</div><div class="val">oklch(.94 .04 150)</div></div>
+        <div class="swatch" style="background: var(--primary); color: white;"><div class="lbl" style="color:#fff;">primary</div><div class="val" style="color: rgba(255,255,255,.7);">oklch(.42 .11 150)</div></div>
+        <div class="swatch" style="background: var(--primaryDeep); color: white;"><div class="lbl" style="color:#fff;">primary-deep</div><div class="val" style="color: rgba(255,255,255,.7);">oklch(.30 .10 150)</div></div>
+        <div class="swatch" style="background: var(--accentSoft); color: oklch(.4 .14 55);"><div class="lbl">accent-soft</div><div class="val">oklch(.93 .05 70)</div></div>
+        <div class="swatch" style="background: var(--accent); color: white;"><div class="lbl" style="color:#fff;">accent</div><div class="val" style="color: rgba(255,255,255,.7);">oklch(.62 .14 55)</div></div>
+      </div>
+
+      <h4 style="font-size: 11px; color: var(--inkMute); margin-top: 24px;">Feedback · Status</h4>
+      <div class="cards grid-4" style="grid-template-columns: repeat(4, 1fr); margin-top: 8px;">
+        <div class="swatch" style="background: oklch(.55 .14 150); color: white;"><div class="lbl" style="color:#fff;">ok</div><div class="val" style="color: rgba(255,255,255,.7);">sincronizado, saudável</div></div>
+        <div class="swatch" style="background: oklch(.72 .15 75); color: oklch(.25 .1 75);"><div class="lbl">warn</div><div class="val">atenção, bateria baixa</div></div>
+        <div class="swatch" style="background: oklch(.55 .19 25); color: white;"><div class="lbl" style="color:#fff;">danger</div><div class="val" style="color: rgba(255,255,255,.7);">fora da cerca, crítico</div></div>
+        <div class="swatch" style="background: oklch(.55 .12 230); color: white;"><div class="lbl" style="color:#fff;">info</div><div class="val" style="color: rgba(255,255,255,.7);">gateway conectado</div></div>
+      </div>
+    </div>
+
+    <!-- TYPOGRAPHY -->
+    <h4 style="margin-top: 72px;">Tipografia</h4>
+    <p style="margin-top: 8px;">3 famílias: <strong style="color: var(--ink);">Inter Tight</strong> (display), <strong style="color: var(--ink);">Inter</strong> (corpo), <strong style="color: var(--ink);">JetBrains Mono</strong> (dados técnicos).</p>
+
+    <div class="type-spec">
+      <div class="meta">Display 56/64<br>InterTight 700</div>
+      <div style="font-family: 'Inter Tight'; font-size: 56px; font-weight: 700; letter-spacing: -.04em; line-height: 1; color: var(--ink);">Operação em campo.</div>
+    </div>
+    <div class="type-spec">
+      <div class="meta">H2 36/40<br>InterTight 700</div>
+      <div style="font-family: 'Inter Tight'; font-size: 36px; font-weight: 700; letter-spacing: -.03em; color: var(--ink);">Coleiras, cercas e gateways</div>
+    </div>
+    <div class="type-spec">
+      <div class="meta">H3 22/28<br>InterTight 600</div>
+      <div style="font-family: 'Inter Tight'; font-size: 22px; font-weight: 600; letter-spacing: -.02em; color: var(--ink);">Saúde da coleira 042</div>
+    </div>
+    <div class="type-spec">
+      <div class="meta">Body 15/22<br>Inter 400</div>
+      <div style="font-family: 'Inter'; font-size: 15px; color: var(--inkSoft); line-height: 1.47;">Toque no mapa para adicionar vértices ao polígono da geofence. A coleira receberá o comando via LoRa assim que o gateway matriz estiver online.</div>
+    </div>
+    <div class="type-spec">
+      <div class="meta">Mono 13<br>JetBrains 600</div>
+      <div style="font-family: 'JetBrains Mono'; font-size: 13px; font-weight: 600; color: var(--ink);">C-042 · −23.2847°, −46.5920° · HDOP 1.2 · RSSI −92 dBm</div>
+    </div>
+    <div class="type-spec">
+      <div class="meta">Eyebrow 12<br>Inter 600 · UPPER</div>
+      <div style="font-family: 'Inter'; font-size: 12px; font-weight: 600; color: var(--inkMute); text-transform: uppercase; letter-spacing: .06em;">Filtros do mapa</div>
+    </div>
+
+    <!-- SPACING / RADIUS / ELEVATION -->
+    <div class="cards grid-3" style="margin-top: 64px;">
+      <div>
+        <h4>Spacing</h4>
+        <p style="margin-top: 8px;">Escala 4-based: <span class="mono">4 · 8 · 12 · 16 · 20 · 24 · 32 · 48 · 64</span>. Padding padrão de tela: <span class="mono">16</span>. Cards: <span class="mono">16</span>. Seções agrupadas: <span class="mono">24</span>. Estas distâncias refletem densidade mobile + touch-target mínimo 44px.</p>
+      </div>
+      <div>
+        <h4>Raios</h4>
+        <p style="margin-top: 8px;"><span class="mono">r1 6</span> (chips) · <span class="mono">r2 10</span> (botões SM) · <span class="mono">r3 14</span> (cards/botões) · <span class="mono">r4 18</span> (hero cards) · <span class="mono">r5 24</span> (sheets) · <span class="mono">rFull</span> (chips de filtro, avatars).</p>
+      </div>
+      <div>
+        <h4>Elevação</h4>
+        <p style="margin-top: 8px;"><span class="mono">sh1</span> bordas sutis (cards em lista) · <span class="mono">sh2</span> controles flutuantes (map buttons, search) · <span class="mono">sh3</span> FAB · <span class="mono">sh4</span> modais e sheets expandidos.</p>
+      </div>
+    </div>
+
+    <!-- COMPONENT PREVIEW STRIP -->
+    <h4 style="margin-top: 72px;">Componentes-chave</h4>
+    <div id="ds-components" style="margin-top: 16px; padding: 32px; background: var(--bg); border: 1px solid var(--hair); border-radius: 16px;"></div>
+
+  </div>
+</section>
+
+<!-- ===================== PADRÕES UX ===================== -->
+<section>
+  <div class="wrap">
+    <span class="eyebrow">07 · Padrões de UX RuralTech</span>
+    <h2>Regras para o contexto operacional</h2>
+
+    <div class="cards grid-2" style="margin-top: 40px;">
+      <div class="card">
+        <h4>Mapa</h4>
+        <h3 style="margin-top: 4px;">Sempre tela cheia, UI orbital</h3>
+        <p>Controles do mapa (camadas, GPS, bússola) em coluna vertical à direita, fixos. Filtros e busca flutuam no topo. Bottom sheet traz o contexto selecionado. Duas camadas de tile: <strong>dia</strong> (padrão) e <strong>noite</strong> (melhor em sol forte, default em fluxos operacionais como geofence).</p>
+      </div>
+      <div class="card">
+        <h4>Marcadores</h4>
+        <h3 style="margin-top: 4px;">Cor por tipo, forma por estado</h3>
+        <p>Coleira = pin verde-floresta. Gateway = pin terra. Alerta = pin amarelo. Selecionado = halo pulsante + tamanho 1.4×. Sem fix GPS = pin outline (não preenchido). Label monospace abaixo do pin para ID quando zoom > 15.</p>
+      </div>
+      <div class="card">
+        <h4>Polígonos</h4>
+        <h3 style="margin-top: 4px;">Hierarquia por preenchimento</h3>
+        <p>Propriedade = verde 12% fill, borda sólida 2px. Área = terra 18% fill, borda tracejada. Geofence individual = círculo/polígono 0% fill, borda tracejada fina 1.3px. Em edição: vértices numerados, cor accent, drag handles ampliados.</p>
+      </div>
+      <div class="card">
+        <h4>Filtros</h4>
+        <h3 style="margin-top: 4px;">Chips rápidos + painel completo</h3>
+        <p>Chips no topo do mapa = atalhos de 1-toque para mostrar/ocultar camadas. Painel completo em <strong>Perfil</strong> para seleção granular (por propriedade, por coleira específica). Sincronizados via <code class="mono">MapFilterService</code>. Badge numeric no search bar indica filtros ativos.</p>
+      </div>
+      <div class="card">
+        <h4>Operação crítica</h4>
+        <h3 style="margin-top: 4px;">Confirmação antes de LoRa</h3>
+        <p>Todo comando que vai para LoRa (publicar cerca, arrebanhamento, OTA) passa por um banner amarelo de confirmação + botão accent destacado. Uma vez publicado, toast de sucesso com opção "Acompanhar" → navega para log da coleira.</p>
+      </div>
+      <div class="card">
+        <h4>Telemetria</h4>
+        <h3 style="margin-top: 4px;">Leitura em 2 segundos</h3>
+        <p>Grid de 4 métricas (bateria, RSSI, GPS fix, temperatura) sempre no mesmo lugar no sheet de coleira. Valores mono, labels eyebrow. Cor muda só em estados anormais (bateria &lt; 20% = warn, GPS sem fix = danger). Evita ruído visual quando tudo OK.</p>
+      </div>
+      <div class="card">
+        <h4>Saúde da coleira</h4>
+        <h3 style="margin-top: 4px;">Hero card com breakdown</h3>
+        <p>Um status global no topo (OK / Atenção). Abaixo, 4 componentes (LoRa, MPU, MLX, Fila) em grid horizontal. Expandível para GPS detalhado (UART, NMEA, Fix, Sat, HDOP, I2C). Timestamp do último report em mono discreto.</p>
+      </div>
+      <div class="card">
+        <h4>Geofence</h4>
+        <h3 style="margin-top: 4px;">Desenhar é caminho feliz</h3>
+        <p>Tela abre já em modo desenho. HUD com contador vértices/km². Toque = adicionar vértice. Long-press vértice = remover. Drag vértice = reposicionar. Botões secundários (undo/clear) discretos. Primário ("Publicar") sempre visível, desabilitado até &gt;= 3 vértices.</p>
+      </div>
+      <div class="card">
+        <h4>Arrebanhamento</h4>
+        <h3 style="margin-top: 4px;">3 etapas, sem telas longas</h3>
+        <p>Etapa 1: selecionar coleiras (lista + filtros por lote/propriedade). Etapa 2: desenhar área-alvo no mapa (reusa polygon editor). Etapa 3: revisar (coleiras, polígono, estimativa de tempo, usuários a notificar). Um único CTA "Publicar arrebanhamento" no final.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BACKLOG PRIORIZADO ===================== -->
+<section id="backlog" style="background: var(--bg);">
+  <div class="wrap">
+    <span class="eyebrow">08 · Estratégia de implementação</span>
+    <h2>Backlog priorizado</h2>
+    <p class="lede" style="margin-top: 20px;">Divisão entre <strong>quick wins visuais</strong> (tokens, tipografia, cards) e <strong>mudanças estruturais de UX</strong> (bottom nav, dashboard split, wizards).</p>
+
+    <table>
+      <thead>
+        <tr><th>#</th><th>Iniciativa</th><th>Tipo</th><th>Prioridade</th><th>Esforço</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="mono">Q1</td><td>Ampliar <code class="mono">ColorScheme</code> com tokens OKLCH (primary-soft/deep, accent, feedback ok/warn/danger/info)</td><td><span class="pill lo">Quick win</span></td><td><span class="pill hi">Alta</span></td><td>1d</td></tr>
+        <tr><td class="mono">Q2</td><td>Adicionar JetBrains Mono + Inter Tight ao <code class="mono">pubspec.yaml</code> e criar <code class="mono">RTTextTheme</code></td><td><span class="pill lo">Quick win</span></td><td><span class="pill hi">Alta</span></td><td>1d</td></tr>
+        <tr><td class="mono">Q3</td><td>Substituir <code class="mono">ListTile</code> em Device Details por cards customizados (hero + grid + actions)</td><td><span class="pill lo">Quick win</span></td><td><span class="pill hi">Alta</span></td><td>2d</td></tr>
+        <tr><td class="mono">Q4</td><td>Redesenhar Eventos: severidade via cor, timestamps mono, empty state, chip de filtros</td><td><span class="pill lo">Quick win</span></td><td><span class="pill md">Média</span></td><td>2d</td></tr>
+        <tr><td class="mono">Q5</td><td>Card de login com hero topográfico + offline hint</td><td><span class="pill lo">Quick win</span></td><td><span class="pill md">Média</span></td><td>1d</td></tr>
+        <tr><td class="mono">S1</td><td>Introduzir <code class="mono">BottomNavigationBar</code> persistente (Mapa / Eventos / Operações / Perfil)</td><td><span class="pill md">Estrutural</span></td><td><span class="pill hi">Alta</span></td><td>3d</td></tr>
+        <tr><td class="mono">S2</td><td>Refatorar <code class="mono">dashboard_screen.dart</code> (3.6k linhas) em módulos: <code class="mono">MapLayer</code>, <code class="mono">MapControls</code>, <code class="mono">CollarSheet</code>, <code class="mono">SearchBar</code>, <code class="mono">OnboardingFlow</code></td><td><span class="pill md">Estrutural</span></td><td><span class="pill hi">Alta</span></td><td>2 sem</td></tr>
+        <tr><td class="mono">S3</td><td>Substituir controles do mapa por coluna vertical à direita (<code class="mono">RTMapControlsStack</code>)</td><td><span class="pill md">Estrutural</span></td><td><span class="pill hi">Alta</span></td><td>3d</td></tr>
+        <tr><td class="mono">S4</td><td>Implementar <code class="mono">DraggableScrollableSheet</code> para coleira selecionada no mapa</td><td><span class="pill md">Estrutural</span></td><td><span class="pill hi">Alta</span></td><td>4d</td></tr>
+        <tr><td class="mono">S5</td><td>Converter <code class="mono">herding_screen.dart</code> em wizard de 3 etapas com <code class="mono">PageView</code> + <code class="mono">RTStepper</code></td><td><span class="pill md">Estrutural</span></td><td><span class="pill md">Média</span></td><td>1 sem</td></tr>
+        <tr><td class="mono">S6</td><td>Geofence com tile escuro + HUD translúcido + aviso de irreversibilidade</td><td><span class="pill md">Estrutural</span></td><td><span class="pill md">Média</span></td><td>3d</td></tr>
+        <tr><td class="mono">S7</td><td>FAB extendido com speed-dial para criação (coleira / gateway / área / propriedade)</td><td><span class="pill md">Estrutural</span></td><td><span class="pill md">Média</span></td><td>2d</td></tr>
+        <tr><td class="mono">L1</td><td>Modo offline-first (sincronização visível, conflitos, retry LoRa)</td><td><span class="pill md">Estrutural</span></td><td><span class="pill md">Média</span></td><td>3 sem</td></tr>
+        <tr><td class="mono">L2</td><td>Dark mode completo (crucial para uso noturno em propriedade)</td><td><span class="pill md">Estrutural</span></td><td><span class="pill lo">Baixa</span></td><td>2 sem</td></tr>
+        <tr><td class="mono">L3</td><td>Acessibilidade: TalkBack labels, contraste AAA nos estados de coleira, suporte a texto escalado</td><td><span class="pill md">Estrutural</span></td><td><span class="pill lo">Baixa</span></td><td>1 sem</td></tr>
+      </tbody>
+    </table>
+
+    <h4 style="margin-top: 56px;">Sequência sugerida de entregas</h4>
+    <div class="flow" style="grid-template-columns: repeat(4, 1fr); margin-top: 16px;">
+      <div class="node"><div class="idx">Sprint 1</div><div class="name">Tokens + Tipografia</div><div class="desc">Q1 · Q2 · Q3</div></div>
+      <div class="node"><div class="idx">Sprint 2</div><div class="name">Bottom nav + Eventos</div><div class="desc">S1 · Q4 · Q5</div></div>
+      <div class="node"><div class="idx">Sprint 3-4</div><div class="name">Refatorar Dashboard</div><div class="desc">S2 · S3 · S4</div></div>
+      <div class="node"><div class="idx">Sprint 5-6</div><div class="name">Fluxos operacionais</div><div class="desc">S5 · S6 · S7</div></div>
+    </div>
+
+    <h4 style="margin-top: 56px;">Componentes Flutter reutilizáveis propostos</h4>
+    <div class="cards grid-3" style="margin-top: 16px;">
+      <div class="card">
+        <h3>Primitivos</h3>
+        <p><code class="mono">RTButton</code>, <code class="mono">RTChip</code>, <code class="mono">RTBadge</code>, <code class="mono">RTField</code>, <code class="mono">RTCard</code>, <code class="mono">RTSheet</code>, <code class="mono">RTStepper</code>, <code class="mono">RTEmptyState</code>, <code class="mono">RTLoadingSkeleton</code></p>
+      </div>
+      <div class="card">
+        <h3>Mapa</h3>
+        <p><code class="mono">RTMapScaffold</code>, <code class="mono">RTMarker</code>, <code class="mono">RTMapControls</code>, <code class="mono">RTPolyEditor</code>, <code class="mono">RTMapHUD</code>, <code class="mono">RTFilterChips</code>, <code class="mono">RTMapTileStyle.day/night</code></p>
+      </div>
+      <div class="card">
+        <h3>Domínio</h3>
+        <p><code class="mono">RTCollarSheet</code>, <code class="mono">RTHealthHero</code>, <code class="mono">RTTelemetryGrid</code>, <code class="mono">RTEventCard</code>, <code class="mono">RTGatewayCard</code>, <code class="mono">RTPropertyPicker</code>, <code class="mono">RTConfirmLoRa</code></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== TABELA FINAL ===================== -->
+<section style="background: var(--bgAlt);">
+  <div class="wrap">
+    <span class="eyebrow">09 · Tabela consolidada</span>
+    <h2>Tela × problema × proposta × impacto × complexidade</h2>
+
+    <table>
+      <thead>
+        <tr><th style="width: 13%;">Tela atual</th><th style="width: 22%;">Problema principal</th><th style="width: 30%;">Proposta de melhoria</th><th style="width: 20%;">Impacto em UX</th><th style="width: 15%;">Complexidade</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Login</strong></td>
+          <td>Logo + campos + botão. Zero contexto visual de produto.</td>
+          <td>Hero topográfico, bottom sheet curvo, campos com ícone, hint de modo offline.</td>
+          <td>Alto — primeira impressão define confiança</td>
+          <td><span class="pill lo">Baixa</span> · 1d</td>
+        </tr>
+        <tr>
+          <td><strong>Dashboard / Mapa</strong></td>
+          <td>3.632 linhas, mapa parcial, UI competindo com conteúdo, sem bottom nav.</td>
+          <td>Mapa full-bleed, search + chips no topo, controles à direita, bottom sheet dinâmico, bottom nav persistente.</td>
+          <td>Crítico — é o uso diário</td>
+          <td><span class="pill hi">Alta</span> · 3 sem</td>
+        </tr>
+        <tr>
+          <td><strong>Detalhes da coleira</strong></td>
+          <td>6 ListTiles sequenciais, sem hierarquia, dados técnicos misturados com ações.</td>
+          <td>Hero card de saúde com breakdown. Grid de telemetria mono. Lista de ações com estados contextuais.</td>
+          <td>Alto — é a tela de diagnóstico</td>
+          <td><span class="pill md">Média</span> · 3d</td>
+        </tr>
+        <tr>
+          <td><strong>Geofence</strong></td>
+          <td>Banner claro em cima do mapa. Botões empilhados iguais.</td>
+          <td>Mapa escuro, HUD flutuante com km² e vértices, CTA accent destacado, aviso de irreversibilidade.</td>
+          <td>Alto — operação crítica em campo</td>
+          <td><span class="pill md">Média</span> · 3d</td>
+        </tr>
+        <tr>
+          <td><strong>Arrebanhamento</strong></td>
+          <td>786 linhas numa tela. Seleção + polígono + publicação misturados.</td>
+          <td>Wizard 3 etapas (coleiras / área-alvo / revisar). Mapa com origem + alvo + seta. Confirmação antes de LoRa.</td>
+          <td>Alto — reduz erros em operação irreversível</td>
+          <td><span class="pill hi">Alta</span> · 1 sem</td>
+        </tr>
+        <tr>
+          <td><strong>Eventos e Telemetria</strong></td>
+          <td>ListTile com type + subtitle, sem cor, sem filtro, sem empty state.</td>
+          <td>Header com contadores, chips por severidade, cards tonais com ícone, badge "AO VIVO", timestamps mono.</td>
+          <td>Médio — melhora triagem diária</td>
+          <td><span class="pill lo">Baixa</span> · 2d</td>
+        </tr>
+        <tr>
+          <td><strong>Perfil / Filtros</strong></td>
+          <td>481 linhas, identidade + filtros + todas entidades misturadas.</td>
+          <td>Header de identidade (avatar + papel). Bloco filtros com toggle+count. Bloco conta separado.</td>
+          <td>Médio — reduz carga cognitiva</td>
+          <td><span class="pill md">Média</span> · 4d</td>
+        </tr>
+        <tr>
+          <td><strong>Cadastros</strong><br>(coleira, gateway)</td>
+          <td>Forms longos sem validação inline.</td>
+          <td>Wizard 3 etapas com validação inline (ID LoRa numérico positivo), preview final antes de salvar.</td>
+          <td>Médio — reduz erros de cadastro</td>
+          <td><span class="pill md">Média</span> · 4d</td>
+        </tr>
+        <tr>
+          <td><strong>Seleção de ponto</strong></td>
+          <td>Mapa + botão "confirmar". Sem contexto de onde está.</td>
+          <td>Crosshair fixo, endereço geocoded flutuante, coords mono em HUD, botão sticky na parte inferior.</td>
+          <td>Baixo — mas torna a UX profissional</td>
+          <td><span class="pill lo">Baixa</span> · 1d</td>
+        </tr>
+        <tr>
+          <td><strong>Editor polígono/área</strong></td>
+          <td>Controles divididos, sem métricas visíveis.</td>
+          <td>HUD com km² + perímetro + #vértices. Long-press remove, drag move. Snap em vértices próximos.</td>
+          <td>Médio</td>
+          <td><span class="pill md">Média</span> · 5d</td>
+        </tr>
+        <tr>
+          <td><strong>Editor propriedade rural</strong></td>
+          <td>Form denso com muitos campos técnicos.</td>
+          <td>Wizard em 2 etapas (identidade → mapa de polígono). Campos agrupados em fieldsets. Labels mono para códigos técnicos.</td>
+          <td>Médio</td>
+          <td><span class="pill md">Média</span> · 1 sem</td>
+        </tr>
+        <tr>
+          <td><strong>Log da coleira</strong></td>
+          <td>Scrollview longo, sem filtro, sem search.</td>
+          <td>Terminal-style mono (fundo escuro), timestamp + type + payload com syntax highlight leve. Filtro por tipo de mensagem e range de tempo.</td>
+          <td>Médio — crítico para debug de campo</td>
+          <td><span class="pill md">Média</span> · 3d</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ===================== VISÃO DE FUTURO ===================== -->
+<section id="futuro" class="dark" style="border-bottom: none;">
+  <div class="wrap">
+    <span class="eyebrow" style="color: oklch(.75 .12 60);">10 · Visão de futuro</span>
+    <h2 style="color: #fff;">Como o RuralTech pode parecer<br>em 3-5 versões.</h2>
+
+    <div style="margin-top: 40px; display: grid; grid-template-columns: 1fr 1fr; gap: 40px;">
+      <div>
+        <p style="color: rgba(255,255,255,.8); font-size: 17px; line-height: 1.6;">O RuralTech de hoje é um app de monitoramento. A versão madura é um <strong style="color: #fff;">copiloto de operação rural</strong>: antecipa ao invés de reagir, aprende com o rebanho, conecta operadores.</p>
+      </div>
+      <div>
+        <p style="color: rgba(255,255,255,.8); font-size: 17px; line-height: 1.6;">As fundações propostas aqui — design system modular, mapa-primeiro, telemetria técnica legível — são o piso. O que está acima é como um produto passa de ferramenta a <strong style="color: #fff;">infraestrutura</strong> da operação.</p>
+      </div>
+    </div>
+
+    <div class="cards grid-3" style="margin-top: 64px;">
+      <div class="card" style="background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.1); color: #fff;">
+        <h4 style="color: oklch(.75 .12 60);">v2 · Inteligência</h4>
+        <h3 style="color: #fff; margin-top: 8px;">Padrões do rebanho</h3>
+        <p style="color: rgba(255,255,255,.7);">Timeline de comportamento (tempo em cada quadrante, rotas mais usadas, picos de atividade). Alertas preditivos: "C-042 está atípica há 3h, historicamente isso precede cio". Heatmap de ocupação.</p>
+      </div>
+      <div class="card" style="background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.1); color: #fff;">
+        <h4 style="color: oklch(.75 .12 60);">v3 · Colaboração</h4>
+        <h3 style="color: #fff; margin-top: 8px;">Equipe em campo</h3>
+        <p style="color: rgba(255,255,255,.7);">Localização de operadores no mapa. Atribuição de tarefas (arrebanhar, conferir, vacinar). Checklist de rota diária. Chat leve por propriedade. Handoff de turnos com nota em áudio.</p>
+      </div>
+      <div class="card" style="background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.1); color: #fff;">
+        <h4 style="color: oklch(.75 .12 60);">v4 · Planejamento</h4>
+        <h3 style="color: #fff; margin-top: 8px;">Rotação de pastagem</h3>
+        <p style="color: rgba(255,255,255,.7);">Modelo de áreas com capacidade (UA/ha) e tempo de descanso. Sugestão automática de próxima rotação. Integração com estação meteorológica: não arrebanhar em dia de chuva &gt; 30mm.</p>
+      </div>
+      <div class="card" style="background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.1); color: #fff;">
+        <h4 style="color: oklch(.75 .12 60);">v5 · Ecossistema</h4>
+        <h3 style="color: #fff; margin-top: 8px;">Rede de propriedades</h3>
+        <p style="color: rgba(255,255,255,.7);">Visão consolidada para quem administra múltiplas fazendas. Benchmark anônimo (sua taxa de perda × média da região). Compartilhamento de cercas virtuais entre vizinhos.</p>
+      </div>
+      <div class="card" style="background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.1); color: #fff;">
+        <h4 style="color: oklch(.75 .12 60);">v6 · Hardware</h4>
+        <h3 style="color: #fff; margin-top: 8px;">Controle de frota</h3>
+        <p style="color: rgba(255,255,255,.7);">OTA em massa, fleet health dashboard, troubleshooting guiado por tipo de falha, estoque de coleiras e consumo de bateria projetado.</p>
+      </div>
+      <div class="card" style="background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.1); color: #fff;">
+        <h4 style="color: oklch(.75 .12 60);">v7 · Voz</h4>
+        <h3 style="color: #fff; margin-top: 8px;">Mãos ocupadas</h3>
+        <p style="color: rgba(255,255,255,.7);">"Onde está a C-042?", "Arrebanhar lote norte para o curral", "Registrar nascimento na coleira 088". Perfil off-road: tela, voz, vibração — nada de digitação.</p>
+      </div>
+    </div>
+
+    <div style="margin-top: 80px; padding: 40px; background: linear-gradient(135deg, rgba(255,255,255,.05), rgba(255,255,255,.02)); border: 1px solid rgba(255,255,255,.1); border-radius: 20px;">
+      <div class="mono" style="font-size: 11px; letter-spacing: .12em; color: oklch(.75 .12 60); text-transform: uppercase;">Princípio norte</div>
+      <p style="font-family: 'Inter Tight'; font-size: 28px; font-weight: 600; color: #fff; line-height: 1.35; letter-spacing: -.02em; margin-top: 16px;">
+        O RuralTech maduro é invisível na ferramenta e presente no resultado. O operador não pensa no app — pensa no rebanho. O app só aparece quando precisa avisar, confirmar ou celebrar.
+      </p>
+    </div>
+
+  </div>
+</section>
+
+<footer style="padding: 40px 0; background: var(--ink); color: rgba(255,255,255,.4); font-family: 'JetBrains Mono'; font-size: 11px; letter-spacing: .08em; text-transform: uppercase;">
+  <div class="wrap" style="display: flex; justify-content: space-between; align-items: center;">
+    <span>RuralTech · Proposta de Redesign · abr/2026</span>
+    <span>Baseado no repositório <span style="color: rgba(255,255,255,.6);">victoremannuel/ruraltech@main</span></span>
+  </div>
+</footer>
+
+<!-- ============ REACT MOCKUPS ============ -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script type="text/babel" src="components/Tokens.jsx"></script>
+<script type="text/babel" src="components/Primitives.jsx"></script>
+<script type="text/babel" src="components/LoginScreen.jsx"></script>
+<script type="text/babel" src="components/DashboardScreen.jsx"></script>
+<script type="text/babel" src="components/MoreScreens.jsx"></script>
+<script type="text/babel">
+
+function ShelfItem({ label, note, children }) {
+  return (
+    <div style={{flexShrink: 0}}>
+      <Phone label={label} note={note}>{children}</Phone>
+    </div>
+  );
+}
+
+function Shelf() {
+  return (
+    <React.Fragment>
+      <ShelfItem label="01 · Login" note="Hero + form">
+        <LoginScreen/>
+      </ShelfItem>
+      <ShelfItem label="02 · Home · Mapa" note="Coleira selecionada">
+        <DashboardScreen/>
+      </ShelfItem>
+      <ShelfItem label="03 · Detalhes da coleira" note="Saúde + telemetria + ações">
+        <DeviceDetailsScreen/>
+      </ShelfItem>
+      <ShelfItem label="04 · Geofence" note="Mapa noturno + HUD">
+        <GeofenceScreen/>
+      </ShelfItem>
+      <ShelfItem label="05 · Arrebanhamento" note="Wizard etapa 2/3">
+        <HerdingScreen/>
+      </ShelfItem>
+      <ShelfItem label="06 · Eventos" note="Feed por severidade">
+        <EventsScreen/>
+      </ShelfItem>
+      <ShelfItem label="07 · Perfil · Filtros" note="Identidade + controles">
+        <ProfileScreen/>
+      </ShelfItem>
+    </React.Fragment>
+  );
+}
+
+function DSComponents() {
+  const row = {display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', padding: '16px 0', borderBottom: `1px dashed ${RT.hairSoft}`};
+  const label = {width: 140, fontFamily: RT.mono, fontSize: 11, color: RT.inkMute, textTransform: 'uppercase', letterSpacing: '.06em', flexShrink: 0};
+  return (
+    <div>
+      <div style={row}>
+        <div style={label}>Buttons</div>
+        <Btn>Entrar</Btn>
+        <Btn variant="accent">Publicar via LoRa</Btn>
+        <Btn variant="tonal">Conduzir</Btn>
+        <Btn variant="ghost">Cancelar</Btn>
+        <Btn variant="danger" icon="trash">Excluir</Btn>
+      </div>
+      <div style={row}>
+        <div style={label}>Chips</div>
+        <Chip active icon="layers">Todos · 14</Chip>
+        <Chip dot={RT.ok}>Coleiras · 9</Chip>
+        <Chip dot={RT.warn}>Alertas · 2</Chip>
+        <Chip icon="gateway">Gateways</Chip>
+      </div>
+      <div style={row}>
+        <div style={label}>Badges</div>
+        <Badge tone="ok">● Online</Badge>
+        <Badge tone="warn">Bateria 18%</Badge>
+        <Badge tone="danger">● AO VIVO</Badge>
+        <Badge tone="primary">Admin</Badge>
+        <Badge tone="accent">Matriz</Badge>
+      </div>
+      <div style={row}>
+        <div style={label}>Field</div>
+        <div style={{width: 300}}>
+          <Field label="ID LoRa" icon="collar" value="042" hint="Número inteiro positivo"/>
+        </div>
+      </div>
+      <div style={row}>
+        <div style={label}>Map pin</div>
+        <div style={{position: 'relative', width: 200, height: 80, background: 'oklch(.91 .015 120)', borderRadius: 10, overflow: 'hidden'}}>
+          <Pin x={40} y={60} variant="collar"/>
+          <Pin x={90} y={60} variant="collar" active/>
+          <Pin x={140} y={60} variant="collar" status="warn"/>
+          <Pin x={180} y={60} variant="gateway"/>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const shelfRoot = ReactDOM.createRoot(document.getElementById('mockup-shelf'));
+shelfRoot.render(<Shelf/>);
+
+const dsRoot = ReactDOM.createRoot(document.getElementById('ds-components'));
+dsRoot.render(<DSComponents/>);
+
+</script>
+</body>
+</html>

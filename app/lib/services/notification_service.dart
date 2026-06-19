@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -35,6 +36,9 @@ class NotificationService extends ChangeNotifier {
     required CloudService cloud,
   }) async {
     if (uid.isEmpty) return;
+    // Web não tem canal nativo nem flutter_local_notifications; sair cedo
+    // evita acessar dart:io Platform e estourar Unsupported operation.
+    if (kIsWeb) return;
 
     await _initLocalNotifications();
 

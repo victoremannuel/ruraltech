@@ -333,8 +333,10 @@ HomeScreen → DeviceDetailsScreen → ver health flags + temperatura + uptime
 
 ## Related
 
+[[ruraltech]]
 [[regras-negocio]]
 [[fluxos-comunicacao-ponta-a-ponta]]
 [[requisitos]]
+[[visao-geral]]
 
 #arquitetura #ruraltech 
