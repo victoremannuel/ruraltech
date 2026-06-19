@@ -35,6 +35,15 @@ struct Rpv2FenceChunkPlan {
 
 namespace rpv2fenceplanner {
 
+static constexpr uint16_t kDefaultMaxFencePointsPerChunk = 5;
+
+static inline uint16_t maxFencePointsPerChunkForWireLimit(uint16_t maxWireBytes) {
+  (void)maxWireBytes;
+  // The current 128-byte secure envelope fits 5 points and rejects 6.
+  // Stay conservative for larger limits until a codec-level estimator is available.
+  return kDefaultMaxFencePointsPerChunk;
+}
+
 struct PlannerContext {
   uint32_t deviceId = 0;
   uint64_t scopeId = 0;
@@ -110,10 +119,20 @@ static inline uint16_t reasonCodeFromLabel(const char* reason) {
   if (strcmp(reason, "codec_or_buffer_error") == 0) {
     return rpv2::REASON_NO_POINT_FITS_IN_FRAME;
   }
+  if (strcmp(reason, "single_point_encode_failed") == 0) {
+    return rpv2::REASON_NO_POINT_FITS_IN_FRAME;
+  }
+  if (strcmp(reason, "planner_no_chunk_fit") == 0 ||
+      strcmp(reason, "plan_capacity_exhausted") == 0) {
+    return rpv2::REASON_NO_POINT_FITS_IN_FRAME;
+  }
+  if (strcmp(reason, "invalid_point_count") == 0) {
+    return rpv2::REASON_INVALID_POINT_COUNT;
+  }
   if (strcmp(reason, "planner_or_dispatch_stall") == 0) {
     return rpv2::REASON_RETRY_EXHAUSTED;
   }
-  return rpv2::REASON_NO_POINT_FITS_IN_FRAME;
+  return rpv2::REASON_NONE;
 }
 
 static inline DispatchDecision decideDispatchAfterPlanning(const Rpv2FenceChunkPlan& plan) {
@@ -208,8 +227,17 @@ static inline bool buildFenceRpv2PlanStrict(
   uint16_t startPointIndex = 0;
   while (startPointIndex < pointCount) {
     const uint16_t remaining = pointCount - startPointIndex;
-    uint16_t candidateCount = remaining;
+    const uint16_t maxCandidate =
+        maxFencePointsPerChunkForWireLimit(ctx.maxWireBytes);
+    uint16_t candidateCount =
+        remaining < maxCandidate ? remaining : maxCandidate;
     bool accepted = false;
+
+    if (candidateCount == 0) {
+      strncpy(plan->reasonLabel, "planner_no_chunk_fit", sizeof(plan->reasonLabel) - 1);
+      plan->lastReasonCode = rpv2::REASON_NO_POINT_FITS_IN_FRAME;
+      return false;
+    }
 
     while (candidateCount >= 1) {
       MeasuredCandidate measured{};
@@ -230,10 +258,19 @@ static inline bool buildFenceRpv2PlanStrict(
           ctx.maxWireBytes,
           measured.reason,
           candidateCount);
+      const bool reducibleMeasurementFailure =
+          !decision.fitsLimit &&
+          !decision.reducibleOversize &&
+          candidateCount > 1;
+      const char* decisionReason = reducibleMeasurementFailure
+          ? "candidate_measure_failed_reducing"
+          : decision.reason;
       const char* classification = decision.fitsLimit
           ? "fit"
           : decision.reducibleOversize
               ? "oversize_reducible"
+              : reducibleMeasurementFailure
+                  ? "codec_or_buffer_error_reducible"
               : decision.terminalSinglePointOversize
                   ? "oversize_terminal_single_point"
                   : "codec_or_buffer_error";
@@ -241,7 +278,7 @@ static inline bool buildFenceRpv2PlanStrict(
       LogEvent evalEvent{};
       evalEvent.eventType = "RPV2_PLAN_CANDIDATE_EVAL";
       evalEvent.classification = classification;
-      evalEvent.reason = decision.reason;
+      evalEvent.reason = decisionReason;
       evalEvent.commandId = ctx.commandId;
       evalEvent.deviceId = ctx.deviceId;
       evalEvent.radioCommandId = ctx.radioCommandId;
@@ -322,18 +359,20 @@ static inline bool buildFenceRpv2PlanStrict(
         break;
       }
 
-      if (decision.reducibleOversize) {
+      if (decision.reducibleOversize || reducibleMeasurementFailure) {
         plan->rejectCount++;
         LogEvent rejectEvent{};
         rejectEvent.eventType = "RPV2_PLAN_CHUNK_REJECT";
         rejectEvent.classification = classification;
-        rejectEvent.reason = decision.reason;
+        rejectEvent.reason = decisionReason;
         rejectEvent.commandId = ctx.commandId;
         rejectEvent.deviceId = ctx.deviceId;
         rejectEvent.radioCommandId = ctx.radioCommandId;
         rejectEvent.fragmentIndex = static_cast<uint16_t>(plan->totalChunks + 1);
         rejectEvent.startPointIndex = startPointIndex;
         rejectEvent.pointCount = candidateCount;
+        rejectEvent.measurementOk = decision.measurementOk;
+        rejectEvent.fitsLimit = false;
         rejectEvent.wireLenFinal = measured.wireLenFinal;
         rejectEvent.limit = ctx.maxWireBytes;
         emitLog(logFn, logUserData, rejectEvent);
@@ -341,10 +380,11 @@ static inline bool buildFenceRpv2PlanStrict(
         continue;
       }
 
-      strncpy(
-          plan->reasonLabel,
-          decision.reason ? decision.reason : "codec_or_buffer_error",
-          sizeof(plan->reasonLabel) - 1);
+      const char* terminalReason =
+          candidateCount == 1 && !decision.measurementOk
+              ? "single_point_encode_failed"
+              : (decision.reason ? decision.reason : "codec_or_buffer_error");
+      strncpy(plan->reasonLabel, terminalReason, sizeof(plan->reasonLabel) - 1);
       plan->lastReasonCode = reasonCodeFromLabel(plan->reasonLabel);
       LogEvent terminalEvent{};
       terminalEvent.eventType = "RPV2_PLAN_FAILED_TERMINAL";

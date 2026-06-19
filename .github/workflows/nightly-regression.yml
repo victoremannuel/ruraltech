@@ -110,6 +110,10 @@ jobs:
             firmware/tests/rpv2_fence_crc_test.cpp \
             -o /tmp/rpv2_fence_crc_test
           /tmp/rpv2_fence_crc_test
+          g++ -std=c++17 -Wall -Wextra -pedantic -I. -Ifirmware/tests/arduino_compat \
+            firmware/tests/rpv2_fence_planner_test.cpp \
+            -o /tmp/rpv2_fence_planner_test
+          /tmp/rpv2_fence_planner_test
 
   firmware-regression:
     name: Firmware Regression Compile

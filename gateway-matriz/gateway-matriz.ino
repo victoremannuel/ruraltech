@@ -2457,6 +2457,8 @@ static bool publishImmediateMatrixCommandResult(
     const JsonArrayConst targetGatewayIds = JsonArrayConst()) {
   if (!cfg::FEATURE_CLOUD) return false;
   if (!commandId || !commandId[0]) return false;
+  const char* safeReason =
+      reason && reason[0] ? reason : "command_failed";
   DynamicJsonDocument doc(2048);
   doc["commandId"] = commandId;
   if (command && command[0]) doc["command"] = command;
@@ -2482,10 +2484,53 @@ static bool publishImmediateMatrixCommandResult(
   if (!targetGatewayIds.isNull()) {
     doc["targetGatewayIds"] = targetGatewayIds;
   }
-  if (reason && reason[0]) doc["reason"] = reason;
+  if (status && (strcmp(status, "failed") == 0 ||
+                 strcmp(status, "rejected") == 0 ||
+                 strcmp(status, "expired") == 0)) {
+    doc["reason"] = safeReason;
+  } else if (reason && reason[0]) {
+    doc["reason"] = reason;
+  }
+  const bool failed =
+      status && (strcmp(status, "failed") == 0 ||
+                 strcmp(status, "rejected") == 0 ||
+                 strcmp(status, "expired") == 0);
+  const bool fenceFailure =
+      failed && command && strcmp(command, "SET_FENCE") == 0;
+  const uint16_t reasonCode = failed
+      ? rpv2fenceplanner::reasonCodeFromLabel(safeReason)
+      : rpv2::REASON_NONE;
+  if (reasonCode != rpv2::REASON_NONE) {
+    doc["reasonCode"] = reasonCode;
+  }
+  if (failed && !targetDeviceIds.isNull()) {
+    JsonObject deviceResults = doc["deviceResults"].to<JsonObject>();
+    for (JsonVariantConst rawId : targetDeviceIds) {
+      char targetId[32]{};
+      if (rawId.is<uint32_t>()) {
+        snprintf(targetId, sizeof(targetId), "%lu", (unsigned long)rawId.as<uint32_t>());
+      } else {
+        copyStringToBuffer(targetId, sizeof(targetId), rawId | "");
+      }
+      if (!targetId[0]) continue;
+      JsonObject item = deviceResults.createNestedObject(targetId);
+      item["ok"] = false;
+      item["status"] = "failed";
+      item["reason"] = safeReason;
+      if (reasonCode != rpv2::REASON_NONE) item["reasonCode"] = reasonCode;
+    }
+  }
 
   String body;
   serializeJson(doc, body);
+  if (fenceFailure) {
+    LOGI(
+        "RPV2_PLAN_FAILURE_PUBLISH_BEGIN commandId=%s reason=%s reasonCode=%u targetCount=%u",
+        commandId,
+        safeReason,
+        (unsigned)reasonCode,
+        (unsigned)(targetDeviceIds.isNull() ? 0 : targetDeviceIds.size()));
+  }
   const bool matrixOk = rtdbWrite(
       "PUT",
       String("matrixCommandResults/") + matrixCloudId() + "/" + commandId,
@@ -2499,8 +2544,14 @@ static bool publishImmediateMatrixCommandResult(
       propertyId,
       commandId,
       status,
-      reason,
+      failed ? safeReason : reason,
       &doc);
+  if (fenceFailure) {
+    LOGI(
+        "RPV2_PLAN_FAILURE_PUBLISH_RESULT commandId=%s ok=%u",
+        commandId,
+        matrixOk && propertyOk && eventOk ? 1U : 0U);
+  }
   if (!(matrixOk && propertyOk && eventOk)) {
     setLastCloudWriteError("command_status", String(commandId));
   }

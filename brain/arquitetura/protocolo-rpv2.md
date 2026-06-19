@@ -20,6 +20,9 @@ Substitui o envio JSON textual para comandos de cerca, oferecendo:
 - CRC canônico compartilhado sobre `count + latE7 + lonE7` em little-endian explícito
 - Preservação dos pontos E7 recebidos na coleira, sem round-trip por `double` antes do COMMIT
 - Encerramento imediato de RPv2/RTR após `crc_mismatch` terminal
+- Planner bounded-first para cercas de 3 a 32 pontos, com máximo conservador de 5 pontos por frame seguro de 128 bytes
+- Falhas de medição multiponto redutíveis; somente a falha de um fragmento unitário encerra o planejamento
+- Resultado terminal de falha com `reason`, `reasonCode` e `deviceResults` por alvo
 
 ## Components
 
@@ -219,24 +222,35 @@ crc: u32
 
 ### Planner de Chunking
 
-O planner calcula quantos pontos cabem em cada chunk testando payloads candidatos reais:
+O planner calcula quantos pontos cabem em cada chunk testando payloads candidatos
+reais, mas nunca começa por um candidato maior que o limite seguro conhecido. Para
+o envelope seguro de 128 bytes, o limite conservador é 5 pontos:
 
 ```cpp
 // Pseudocódigo do planner
-for (candidate_count = max_points; candidate_count > 0; candidate_count--) {
+candidate_count = min(remaining_points, 5);
+for (; candidate_count > 0; candidate_count--) {
     build_test_chunk(candidate_count);
     frame_size = measure_safe_frame_size(test_chunk);
     if (frame_size <= LORA_MAX_PAYLOAD) {
         return candidate_count; // cabe
     }
+    // Erro de codec/medição também reduz enquanto houver mais de um ponto.
 }
-return 0; // nem um ponto cabe
+return terminal_single_point_failure;
 ```
 
-**Overhead por chunk:**
-- `type` (1B) + `chunk_index` (1B) + `points_count` (1B) + `chunk_crc` (4B) = 7B fixos
-- Pontos: 10 bytes cada (int40_t lat + int40_t lon)
-- Máximo útil: ~12 pontos por chunk (dependendo do perfil LoRa)
+Com o contrato atual:
+
+- 5 pontos produzem frame seguro de aproximadamente 126 bytes.
+- 6 pontos excedem o limite de 128 bytes.
+- 20 pontos usam `5+5+5+5`.
+- 32 pontos usam `5+5+5+5+5+5+2`, com 7 fragmentos sequenciais.
+- Falha de medição com mais de um ponto gera
+  `codec_or_buffer_error_reducible/candidate_measure_failed_reducing`.
+- Falha de medição com um ponto gera `single_point_encode_failed` e encerra.
+- Falhas antes do rádio devem publicar resultado estruturado por dispositivo;
+  registros `failed` com `reason` vazio ou `deviceResults={}` são inválidos.
 
 ## Data Flow
 
@@ -284,6 +298,8 @@ App (Realtime)
 | Memória insuficiente | NACK com reasonCode, aborta sessão |
 | Timeout de etapa | `no_ack_timeout`, reasonCode persistido |
 | Ponto não cabe no frame | Planner falha com `fence_single_point_chunk_too_large` |
+| Candidato grande estoura codec antes da medição | Candidato inicial limitado a 5 e falha multiponto reduzida progressivamente |
+| Falha do planner gera registro vazio | Publicação imediata inclui reason, reasonCode e deviceResults por alvo |
 | Cloud bloqueia próximo fragmento | Status diferido em RAM e flush pós-sessão |
 | COMMIT chega logo após o ACK final fora da escuta normal | Janela síncrona de COMMIT com validação completa e grace timeout |
 | Lacuna de escuta entre estágios (ex.: `BEGIN_ACK → POINTS#1`) | Pump unificado que re-ancora a janela em cada TX, sem janelas aninhadas |

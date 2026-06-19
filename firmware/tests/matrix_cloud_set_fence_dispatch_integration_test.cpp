@@ -110,12 +110,14 @@ int main() {
         &plan);
     assert(ok);
     assert(state.plannerCalled);
-    assert(state.candidateEvalCount >= 2);
-    assert(state.rejectCount >= 1);
-    assert(state.fitCount >= 1);
+    assert(state.candidateEvalCount == 2);
+    assert(state.rejectCount == 0);
+    assert(state.fitCount == 2);
     assert(state.finalCount == 1);
     assert(plan.planReady);
-    assert(plan.totalChunks >= 2);
+    assert(plan.totalChunks == 2);
+    assert(plan.items[0].pointCount == 5);
+    assert(plan.items[1].pointCount == 1);
     for (uint16_t i = 0; i < plan.totalChunks; ++i) {
       assert(plan.items[i].secureWireSize <= 128);
     }
