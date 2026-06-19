@@ -136,3 +136,8 @@ struct EventRecord {
   PolygonErrorStage errorStage = PolygonErrorStage::NONE;
   EventPayloadData payload{};
 };
+
+static_assert(
+    sizeof(((PolygonAuditPayload*)nullptr)->commandId) ==
+        rtcmdid::COMMAND_ID_MAX_LEN,
+    "Collar audit command ID buffer must follow the shared policy");

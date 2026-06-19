@@ -1,9 +1,36 @@
 #include <cassert>
 #include <cstdint>
+#include <cstring>
 
+#include "../shared/command_id_policy.h"
 #include "../shared/rpv2_transport_policy.h"
 
 int main() {
+  constexpr char kFullCommandId[] =
+      "AUTO_AREA_FENCE:kQSjWOVdkqTNDM9WBggT:"
+      "1F7B4BD263B6A8CD:23A00185B336A70A";
+  char commandId[rtcmdid::COMMAND_ID_MAX_LEN]{};
+  size_t sourceLength = 0;
+  assert(
+      rtcmdid::copyToBuffer(
+          commandId, sizeof(commandId), kFullCommandId, &sourceLength) ==
+      rtcmdid::CopyResult::kOk);
+  assert(sourceLength == std::strlen(kFullCommandId));
+  assert(std::strcmp(commandId, kFullCommandId) == 0);
+
+  char tooLong[rtcmdid::COMMAND_ID_MAX_LEN + 1]{};
+  std::memset(tooLong, 'X', rtcmdid::COMMAND_ID_MAX_LEN);
+  tooLong[rtcmdid::COMMAND_ID_MAX_LEN] = '\0';
+  assert(
+      rtcmdid::copyToBuffer(
+          commandId, sizeof(commandId), tooLong, &sourceLength) ==
+      rtcmdid::CopyResult::kTooLong);
+  assert(commandId[0] == '\0');
+  assert(
+      std::strcmp(
+          rtcmdid::copyResultReason(rtcmdid::CopyResult::kTooLong),
+          "command_id_too_long") == 0);
+
   assert(rpv2transport::isImmediatelyPreviousFragment(1, 2));
   assert(!rpv2transport::isImmediatelyPreviousFragment(2, 2));
   assert(!rpv2transport::isImmediatelyPreviousFragment(3, 2));
@@ -20,5 +47,35 @@ int main() {
   assert(rpv2transport::deadlineReached(100, 100));
   assert(rpv2transport::deadlineReached(101, 100));
   assert(rpv2transport::deadlineReached(5, UINT32_MAX - 5));
+
+  assert(rpv2transport::statusFlushBackoffMs(1) == 1000UL);
+  assert(rpv2transport::statusFlushBackoffMs(2) == 3000UL);
+  assert(rpv2transport::statusFlushBackoffMs(3) == 10000UL);
+  assert(rpv2transport::statusFlushBackoffMs(4) == 30000UL);
+  assert(rpv2transport::statusFlushBackoffMs(255) == 30000UL);
+  assert(rpv2transport::statusFlushDue(100, 0));
+  assert(!rpv2transport::statusFlushDue(99, 100));
+  assert(rpv2transport::statusFlushDue(100, 100));
+
+  assert(rpv2transport::statusFlushAllowed(false, true, true, true, 1));
+  assert(!rpv2transport::statusFlushAllowed(true, true, true, true, 1));
+  assert(!rpv2transport::statusFlushAllowed(false, true, true, true, 0));
+
+  uint8_t attempts = 0;
+  uint32_t nextAttemptAtMs = 0;
+  assert(
+      rpv2transport::scheduleStatusFlushRetry(
+          attempts, nextAttemptAtMs, 500) == 1000UL);
+  assert(attempts == 1);
+  assert(nextAttemptAtMs == 1500);
+  assert(!rpv2transport::statusFlushDue(501, nextAttemptAtMs));
+  assert(rpv2transport::statusFlushDue(1500, nextAttemptAtMs));
+
+  assert(
+      rpv2transport::statusFlushContextMatches(
+          kFullCommandId, kFullCommandId));
+  assert(
+      !rpv2transport::statusFlushContextMatches(
+          kFullCommandId, "AUTO_AREA_FENCE:truncated"));
   return 0;
 }

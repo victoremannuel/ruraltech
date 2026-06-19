@@ -30,6 +30,7 @@ Substitui o envio JSON textual para comandos de cerca, oferecendo:
 | `radio_proto_v2_id` | `firmware/shared/radio_proto_v2_id.h` | FNV-1a 64 para radio_command_id |
 | `radio_proto_v2_reason_codes` | `firmware/shared/radio_proto_v2_reason_codes.h` | Códigos de erro/status |
 | `rpv2_transport_policy` | `firmware/shared/rpv2_transport_policy.h` | Política compartilhada de retry, duplicidade e deadlines |
+| `command_id_policy` | `firmware/shared/command_id_policy.h` | Limite canônico de 128 bytes e cópia sem truncamento silencioso |
 | Fila de status diferidos | `gateway-matriz/gateway-matriz.ino` | Preserva progresso em RAM e faz flush após a seção radio-crítica |
 
 ### Coleira
@@ -86,8 +87,15 @@ Após o `RTR_PAGE_ACK`, a matriz entra em `RPV2_RADIO_CRITICAL_ENTER` antes do
 `rtdbWrite`, publicação de resultado e eventos não executam nesse intervalo.
 
 Ao concluir ou abortar, a guarda emite `RPV2_RADIO_CRITICAL_EXIT` e drena os
-estados em ordem. Se o backhaul estiver indisponível, o comando ativo permanece
-retido até que o estado terminal possa ser publicado.
+estados em ordem. Cada item registra tentativas e próximo instante elegível;
+falhas usam backoff de 1 s, 3 s, 10 s e depois 30 s, sem `delay()` e sem hot
+loop. O item só é removido após publicação completa, e o contexto do command ID
+deve coincidir com o comando ativo. Se o backhaul estiver indisponível, o
+comando ativo permanece retido até que o estado terminal possa ser publicado.
+
+Command IDs de cloud são preservados em buffers fixos de 128 bytes na matriz e
+na coleira. Overflow é rejeitado com `command_id_too_long`; não há truncamento
+silencioso nos estados ativos, sessões de wake, feedback ou fila diferida.
 
 ### Timeout e recovery da coleira
 
@@ -209,6 +217,9 @@ App (Realtime)
 | Cloud bloqueia próximo fragmento | Status diferido em RAM e flush pós-sessão |
 | ACK perdido causa reenvio | Fragmento anterior é ACKado idempotentemente |
 | Heap instável no drain de eventos | Burst limitado e consumo somente após TX |
+| Command ID longo perde correlação cloud | Política compartilhada de 128 bytes e cópia estrita |
+| Falha cloud causa hot loop no flush | Retry cooperativo com due time e backoff limitado |
+| Registro de auditoria maior colide com GPS na EEPROM | Fila versionada v3 com 8 slots, mantendo o limite reservado |
 
 ## Related
 

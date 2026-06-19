@@ -124,6 +124,11 @@ static void logPolygonApplyResult(
     int32_t pointCount = 0,
     int32_t phaseCount = 0);
 static void copyStringToBuffer(char* dst, size_t dstSize, const char* src);
+static bool copyCommandIdToBuffer(
+    char* dst,
+    size_t dstSize,
+    const char* src,
+    const char* sourceLabel);
 static const char* eventTypeLabel(EventType type);
 static bool eventUsesOperationId(EventType type);
 static const char* commandLabel(MsgType type);
@@ -398,6 +403,31 @@ static void copyStringToBuffer(char* dst, size_t dstSize, const char* src) {
   }
   strncpy(dst, src, dstSize - 1);
   dst[dstSize - 1] = '\0';
+}
+
+static bool copyCommandIdToBuffer(
+    char* dst,
+    size_t dstSize,
+    const char* src,
+    const char* sourceLabel) {
+  size_t sourceLength = 0;
+  const rtcmdid::CopyResult result =
+      rtcmdid::copyToBuffer(dst, dstSize, src, &sourceLength);
+  if (result == rtcmdid::CopyResult::kOk) return true;
+  if (result == rtcmdid::CopyResult::kTooLong) {
+    LOGW(
+        "COMMAND_ID_TOO_LONG source=%s len=%u max=%u prefix=%.32s",
+        sourceLabel && sourceLabel[0] ? sourceLabel : "unknown",
+        (unsigned)sourceLength,
+        dstSize > 0 ? (unsigned)(dstSize - 1) : 0U,
+        src ? src : "");
+  } else if (result != rtcmdid::CopyResult::kMissing) {
+    LOGW(
+        "COMMAND_ID_INVALID source=%s reason=%s",
+        sourceLabel && sourceLabel[0] ? sourceLabel : "unknown",
+        rtcmdid::copyResultReason(result));
+  }
+  return false;
 }
 
 static void recordBootStage(const char* stage) {
@@ -2554,10 +2584,11 @@ static void extractCommandMetadataFromPayload(
   if (deserializeJson(payload, frame.payload, frame.payloadLen) != DeserializationError::Ok) {
     return;
   }
-  copyStringToBuffer(
+  copyCommandIdToBuffer(
       commandId,
       commandIdSize,
-      payload["cmd_id"] | payload["command_id"] | "");
+      payload["cmd_id"] | payload["command_id"] | "",
+      "extractCommandMetadataFromPayload");
 }
 
 static void fillPolygonAuditContext(
@@ -2569,10 +2600,11 @@ static void fillPolygonAuditContext(
   *out = PolygonAuditContext{};
   out->scopeId = scopeId;
   out->commandType = commandType;
-  copyStringToBuffer(
+  copyCommandIdToBuffer(
       out->commandId,
       sizeof(out->commandId),
-      pickFirstText(payload["cmd_id"], payload["command_id"]));
+      pickFirstText(payload["cmd_id"], payload["command_id"]),
+      "fillPolygonAuditContext");
   out->polygonKind = polygonKindFromText(
       pickFirstText(payload["polygon_kind"], payload["polygonKind"]));
   out->originDocType = originDocTypeFromText(
@@ -2648,10 +2680,11 @@ static void logPolygonApplyResult(
   ev.polygonKind = polygonKind;
   ev.originDocType = originDocType;
   ev.errorStage = ok ? PolygonErrorStage::NONE : errorStage;
-  copyStringToBuffer(
+  copyCommandIdToBuffer(
       ev.payload.audit.commandId,
       sizeof(ev.payload.audit.commandId),
-      commandId);
+      commandId,
+      "logPolygonApplyResult.event");
   copyStringToBuffer(
       ev.payload.audit.originDocId,
       sizeof(ev.payload.audit.originDocId),
@@ -2668,7 +2701,11 @@ static void logPolygonApplyResult(
   ctx.polygonKind = polygonKind;
   ctx.originDocType = originDocType;
   copyStringToBuffer(ctx.originDocId, sizeof(ctx.originDocId), originDocId);
-  copyStringToBuffer(ctx.commandId, sizeof(ctx.commandId), commandId);
+  copyCommandIdToBuffer(
+      ctx.commandId,
+      sizeof(ctx.commandId),
+      commandId,
+      "logPolygonApplyResult.context");
   logPolygonApplySerial(ctx, ok, errorCode, errorStage, pointCount, phaseCount);
 }
 
@@ -3161,7 +3198,20 @@ static void applyDownlink(const LoRaFrame& frame) {
   if (docReady) {
     const char* parsedCommandId = pickFirstText(doc["cmd_id"], doc["command_id"]);
     if (parsedCommandId[0] != '\0') {
-      copyStringToBuffer(commandId, sizeof(commandId), parsedCommandId);
+      if (!copyCommandIdToBuffer(
+              commandId,
+              sizeof(commandId),
+              parsedCommandId,
+              "applyDownlink")) {
+        sendCommandFeedback(
+            frame,
+            false,
+            "command_id_too_long",
+            "failed",
+            nullptr,
+            parsedCommandId);
+        return;
+      }
     }
   }
 
@@ -3169,7 +3219,11 @@ static void applyDownlink(const LoRaFrame& frame) {
   if (polygonAuditCommand) {
     auditCtx.scopeId = frame.scopeId;
     auditCtx.commandType = frame.msgType;
-    copyStringToBuffer(auditCtx.commandId, sizeof(auditCtx.commandId), commandId);
+    copyCommandIdToBuffer(
+        auditCtx.commandId,
+        sizeof(auditCtx.commandId),
+        commandId,
+        "applyDownlink.audit");
     if (docReady) {
       fillPolygonAuditContext(
           &auditCtx, frame.msgType, frame.scopeId, doc.as<JsonVariantConst>());

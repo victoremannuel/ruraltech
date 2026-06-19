@@ -8,7 +8,7 @@
 
 namespace {
 constexpr uint32_t kQueueMagic = 0x52544532UL;
-constexpr uint16_t kQueueVersion = 2;
+constexpr uint16_t kQueueVersion = 3;
 constexpr uint16_t kMagicAddr = 0;
 constexpr uint16_t kVersionAddr = 4;
 }

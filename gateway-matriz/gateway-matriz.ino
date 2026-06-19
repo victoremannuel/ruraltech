@@ -55,6 +55,7 @@
 #include "../firmware/shared/radio_proto_v2_planner_support.h"
 #include "../firmware/shared/radio_proto_v2_reason_codes.h"
 #include "../firmware/shared/rpv2_transport_policy.h"
+#include "../firmware/shared/command_id_policy.h"
 
 LoRaGateway lora;
 BlePresence blePresence;
@@ -166,7 +167,7 @@ char lastSimpleCommandFeedbackOutcome[24]{};
 bool simpleAckWaitActive = false;
 uint32_t simpleAckWaitDeviceId = 0;
 uint32_t simpleAckWaitDeadlineAtMs = 0;
-char simpleAckWaitCommandId[48]{};
+char simpleAckWaitCommandId[rtcmdid::COMMAND_ID_MAX_LEN]{};
 uint32_t bootStartedAtMs = 0;
 
 struct HerdPoint {
@@ -206,8 +207,8 @@ struct HerdingOperationState {
   char requestedByRole[16]{};
   char matrixGatewayId[32]{};
   char propertyScopeId[17]{};
-  char loraCommandId[48]{};
-  char lastCommandStatus[20]{};
+  char loraCommandId[rtcmdid::COMMAND_ID_MAX_LEN]{};
+  char lastCommandStatus[40]{};
   char failureReason[48]{};
   HerdPoint targetPolygon[cfg::MAX_POLYGON_POINTS]{};
   HerdingOperationDeviceState devices[cfg::MAX_HERD_OPERATION_DEVICES]{};
@@ -217,7 +218,7 @@ struct ActiveSimpleCommandTargetState {
   char targetId[32]{};
   bool terminal = false;
   bool ok = false;
-  char status[20]{};
+  char status[40]{};
   char reason[48]{};
 };
 
@@ -241,10 +242,10 @@ struct ActiveSimpleCommandState {
   uint8_t targetCount = 0;
   uint16_t retryCount = 0;
   uint16_t lastReasonCode = rpv2::REASON_NONE;
-  char commandId[48]{};
+  char commandId[rtcmdid::COMMAND_ID_MAX_LEN]{};
   char command[24]{};
   char transportState[32]{};
-  char feedbackCommandId[48]{};
+  char feedbackCommandId[rtcmdid::COMMAND_ID_MAX_LEN]{};
   char lastFeedbackOutcome[24]{};
   char propertyId[48]{};
   char propertyScopeId[17]{};
@@ -276,16 +277,21 @@ struct DeferredRpv2Status {
   bool used = false;
   bool terminal = false;
   bool ok = false;
+  bool flushing = false;
+  uint8_t attempts = 0;
   uint32_t deviceId = 0;
   uint32_t queuedAtMs = 0;
+  uint32_t nextAttemptAtMs = 0;
+  uint32_t lastAttemptAtMs = 0;
   uint64_t radioCommandId = 0;
   uint32_t sessionNonce = 0;
   uint16_t reasonCode = rpv2::REASON_NONE;
   uint16_t fragmentIndex = 0;
   uint16_t acceptedPoints = 0;
-  char commandId[48]{};
+  char commandId[rtcmdid::COMMAND_ID_MAX_LEN]{};
   char status[32]{};
-  char reason[48]{};
+  char reason[64]{};
+  char lastError[64]{};
 };
 
 constexpr uint8_t kDeferredRpv2StatusCapacity = 16;
@@ -298,7 +304,7 @@ uint32_t rpv2RadioCriticalSessionNonce = 0;
 
 struct PendingWakeSession {
   rtrwake::SessionCore core{};
-  char commandId[48]{};
+  char commandId[rtcmdid::COMMAND_ID_MAX_LEN]{};
   uint64_t scopeId = 0;
   MsgType commandType = MsgType::SET_FENCE;
   uint64_t radioCommandId = 0;
@@ -319,6 +325,16 @@ PendingWakeSession pendingWakeSessions[kMaxPendingWakeSessions]{};
 rtrwake::Presence devicePresence[kMaxDevicePresenceEntries]{};
 rtrdiag::PageSnapshot lastPageDiag{};
 rtrdiag::WakeLoopSnapshot wakeLoopDiag{};
+
+static_assert(
+    sizeof(activeSimpleCommand.commandId) == rtcmdid::COMMAND_ID_MAX_LEN,
+    "Active command ID buffer must follow the shared policy");
+static_assert(
+    sizeof(deferredRpv2Statuses[0].commandId) == rtcmdid::COMMAND_ID_MAX_LEN,
+    "Deferred RPv2 command ID buffer must follow the shared policy");
+static_assert(
+    sizeof(pendingWakeSessions[0].commandId) == rtcmdid::COMMAND_ID_MAX_LEN,
+    "Pending wake command ID buffer must follow the shared policy");
 
 struct CloudPublishContext {
   uint32_t nowSec = 0;
@@ -360,6 +376,12 @@ static void printBootChecklist(
     bool cloudConfigured,
     bool queueConfigured);
 static void copyStringToBuffer(char* dst, size_t dstSize, const char* src);
+static bool copyCommandIdToBuffer(
+    char* dst,
+    size_t dstSize,
+    const char* src,
+    const char* sourceLabel,
+    const char** reason = nullptr);
 static void loadBindingConfig();
 static bool persistBindingConfig(
     const JsonVariantConst payload,
@@ -425,6 +447,10 @@ static bool enqueueDeferredRpv2Status(
     uint16_t acceptedPoints = 0);
 static void drainDeferredRpv2Statuses(uint8_t budget);
 static bool hasDeferredRpv2StatusForActiveCommand();
+static uint8_t deferredRpv2StatusCount();
+static uint8_t deferredRpv2StatusCountForCommand(const char* commandId);
+static int findNextDueDeferredRpv2Status(uint32_t nowMs);
+static void clearDeferredRpv2Status(uint8_t idx, const char* reason);
 static String payloadBytesToString(const uint8_t* data, size_t len);
 static void fillCloudWriteTrace(
     CloudWriteTrace* trace,
@@ -1007,6 +1033,34 @@ static void copyStringToBuffer(char* dst, size_t dstSize, const char* src) {
   }
   strncpy(dst, src, dstSize - 1);
   dst[dstSize - 1] = '\0';
+}
+
+static bool copyCommandIdToBuffer(
+    char* dst,
+    size_t dstSize,
+    const char* src,
+    const char* sourceLabel,
+    const char** reason) {
+  size_t sourceLength = 0;
+  const rtcmdid::CopyResult result =
+      rtcmdid::copyToBuffer(dst, dstSize, src, &sourceLength);
+  if (result == rtcmdid::CopyResult::kOk) return true;
+  const char* copyReason = rtcmdid::copyResultReason(result);
+  if (reason) *reason = copyReason;
+  if (result == rtcmdid::CopyResult::kTooLong) {
+    LOGW(
+        "COMMAND_ID_TOO_LONG source=%s len=%u max=%u prefix=%.32s",
+        sourceLabel && sourceLabel[0] ? sourceLabel : "unknown",
+        (unsigned)sourceLength,
+        dstSize > 0 ? (unsigned)(dstSize - 1) : 0U,
+        src ? src : "");
+  } else {
+    LOGW(
+        "COMMAND_ID_INVALID source=%s reason=%s",
+        sourceLabel && sourceLabel[0] ? sourceLabel : "unknown",
+        copyReason ? copyReason : "command_id_copy_failed");
+  }
+  return false;
 }
 
 static String scopeIdToHex(uint64_t scopeId) {
@@ -2044,6 +2098,13 @@ static void publishEventToCloud(const LoRaFrame& rx) {
 }
 
 static void clearActiveSimpleCommand() {
+  if (activeSimpleCommand.active && hasDeferredRpv2StatusForActiveCommand()) {
+    LOGW(
+        "SIMPLE_COMMAND_CLEAR_DEFERRED commandId=%s reason=deferred_rpv2_status_pending queued=%u",
+        activeSimpleCommand.commandId[0] ? activeSimpleCommand.commandId : "-",
+        (unsigned)deferredRpv2StatusCountForCommand(activeSimpleCommand.commandId));
+    return;
+  }
   if (activeSimpleCommand.active) {
     AS_MATRIX_SIMPLE_COMMAND_CLEARED(
         activeSimpleCommand.commandId[0] ? activeSimpleCommand.commandId : "-",
@@ -2169,6 +2230,11 @@ static bool publishSimpleCommandResult(const char* status, const char* reason) {
         status && status[0] ? status : "-");
     return false;
   }
+  LOGI(
+      "COMMAND_RESULT_PUBLISH commandId=%s len=%u status=%s",
+      activeSimpleCommand.commandId,
+      (unsigned)strlen(activeSimpleCommand.commandId),
+      status && status[0] ? status : "-");
 
   DynamicJsonDocument doc(2048);
   doc["commandId"] = activeSimpleCommand.commandId;
@@ -2878,10 +2944,11 @@ static void openActiveSimpleCommandFeedbackWindow(uint32_t deviceId) {
       activeSimpleCommand.feedbackWindowOpenedAtMs +
       cfg::SIMPLE_COMMAND_ACK_PRIORITY_WINDOW_MS;
   activeSimpleCommand.sawTargetUplinkSinceDispatch = false;
-  copyStringToBuffer(
+  copyCommandIdToBuffer(
       activeSimpleCommand.feedbackCommandId,
       sizeof(activeSimpleCommand.feedbackCommandId),
-      activeSimpleCommand.commandId);
+      activeSimpleCommand.commandId,
+      "openActiveSimpleCommandFeedbackWindow.feedbackCommandId");
   copyStringToBuffer(
       activeSimpleCommand.lastFeedbackOutcome,
       sizeof(activeSimpleCommand.lastFeedbackOutcome),
@@ -2889,8 +2956,11 @@ static void openActiveSimpleCommandFeedbackWindow(uint32_t deviceId) {
   simpleAckWaitActive = true;
   simpleAckWaitDeviceId = deviceId;
   simpleAckWaitDeadlineAtMs = activeSimpleCommand.feedbackDeadlineAtMs;
-  copyStringToBuffer(
-      simpleAckWaitCommandId, sizeof(simpleAckWaitCommandId), activeSimpleCommand.commandId);
+  copyCommandIdToBuffer(
+      simpleAckWaitCommandId,
+      sizeof(simpleAckWaitCommandId),
+      activeSimpleCommand.commandId,
+      "openActiveSimpleCommandFeedbackWindow.simpleAckWaitCommandId");
   copyStringToBuffer(
       lastSimpleCommandFeedbackOutcome,
       sizeof(lastSimpleCommandFeedbackOutcome),
@@ -3239,74 +3309,187 @@ static bool enqueueDeferredRpv2Status(
   entry.reasonCode = reasonCode;
   entry.fragmentIndex = fragmentIndex;
   entry.acceptedPoints = acceptedPoints;
-  copyStringToBuffer(
-      entry.commandId,
-      sizeof(entry.commandId),
-      activeSimpleCommand.commandId);
+  const char* copyReason = nullptr;
+  if (!copyCommandIdToBuffer(
+          entry.commandId,
+          sizeof(entry.commandId),
+          activeSimpleCommand.commandId,
+          "enqueueDeferredRpv2Status",
+          &copyReason)) {
+    entry = DeferredRpv2Status{};
+    LOGW(
+        "RPV2_STATUS_DEFERRED_DROP deviceId=%lu status=%s reason=%s",
+        (unsigned long)deviceId,
+        status,
+        copyReason ? copyReason : "command_id_copy_failed");
+    return false;
+  }
   copyStringToBuffer(entry.status, sizeof(entry.status), status);
   copyStringToBuffer(entry.reason, sizeof(entry.reason), reason ? reason : "");
   LOGI(
-      "RPV2_STATUS_DEFERRED deviceId=%lu commandId=%s radioCommandId=%llu status=%s reason=%s terminal=%d fragmentIndex=%u acceptedPoints=%u",
+      "RPV2_STATUS_DEFERRED_ENQUEUE deviceId=%lu commandId=%s radioCommandId=%llu status=%s reason=%s terminal=%d fragmentIndex=%u acceptedPoints=%u queued=%u",
       (unsigned long)deviceId,
-      activeSimpleCommand.commandId[0] ? activeSimpleCommand.commandId : "-",
+      entry.commandId,
       (unsigned long long)entry.radioCommandId,
       entry.status,
       entry.reason[0] ? entry.reason : "-",
       terminal ? 1 : 0,
       (unsigned)fragmentIndex,
-      (unsigned)acceptedPoints);
+      (unsigned)acceptedPoints,
+      (unsigned)deferredRpv2StatusCount());
   return true;
 }
 
+static uint8_t deferredRpv2StatusCount() {
+  uint8_t count = 0;
+  for (uint8_t i = 0; i < kDeferredRpv2StatusCapacity; ++i) {
+    if (deferredRpv2Statuses[i].used) count++;
+  }
+  return count;
+}
+
+static uint8_t deferredRpv2StatusCountForCommand(const char* commandId) {
+  if (!commandId || !commandId[0]) return 0;
+  uint8_t count = 0;
+  for (uint8_t i = 0; i < kDeferredRpv2StatusCapacity; ++i) {
+    if (deferredRpv2Statuses[i].used &&
+        strcmp(deferredRpv2Statuses[i].commandId, commandId) == 0) {
+      count++;
+    }
+  }
+  return count;
+}
+
+static int findNextDueDeferredRpv2Status(uint32_t nowMs) {
+  int slot = -1;
+  uint32_t oldestAtMs = UINT32_MAX;
+  for (uint8_t i = 0; i < kDeferredRpv2StatusCapacity; ++i) {
+    const DeferredRpv2Status& entry = deferredRpv2Statuses[i];
+    if (!entry.used || entry.flushing ||
+        !rpv2transport::statusFlushDue(nowMs, entry.nextAttemptAtMs)) {
+      continue;
+    }
+    if (entry.queuedAtMs <= oldestAtMs) {
+      oldestAtMs = entry.queuedAtMs;
+      slot = i;
+    }
+  }
+  return slot;
+}
+
+static void clearDeferredRpv2Status(uint8_t idx, const char* reason) {
+  if (idx >= kDeferredRpv2StatusCapacity || !deferredRpv2Statuses[idx].used) return;
+  LOGI(
+      "RPV2_STATUS_DEFERRED_CLEAR index=%u commandId=%s status=%s reason=%s",
+      (unsigned)idx,
+      deferredRpv2Statuses[idx].commandId,
+      deferredRpv2Statuses[idx].status,
+      reason && reason[0] ? reason : "-");
+  deferredRpv2Statuses[idx] = DeferredRpv2Status{};
+}
+
 static void drainDeferredRpv2Statuses(uint8_t budget) {
-  if (budget == 0 || isRpv2RadioCriticalActive() || !cfg::FEATURE_CLOUD ||
-      !activeSimpleCommand.active || !backhaulWindowOpen()) {
+  if (budget == 0) return;
+  const uint8_t queuedBefore = deferredRpv2StatusCount();
+  if (queuedBefore == 0 || isRpv2RadioCriticalActive()) return;
+  if (!rpv2transport::statusFlushAllowed(
+          false,
+          cfg::FEATURE_CLOUD,
+          activeSimpleCommand.active && activeSimpleCommand.commandId[0],
+          backhaulWindowOpen(),
+          queuedBefore)) {
     return;
   }
+  const uint32_t nowMs = millis();
+  if (findNextDueDeferredRpv2Status(nowMs) < 0) return;
   LOGI(
-      "RPV2_STATUS_FLUSH_BEGIN commandId=%s budget=%u",
-      activeSimpleCommand.commandId[0] ? activeSimpleCommand.commandId : "-",
-      (unsigned)budget);
+      "RPV2_STATUS_FLUSH_BEGIN queued=%u budget=%u commandId=%s",
+      (unsigned)queuedBefore,
+      (unsigned)budget,
+      activeSimpleCommand.commandId);
   uint8_t flushed = 0;
-  while (flushed < budget) {
-    int slot = -1;
-    uint32_t oldestAtMs = UINT32_MAX;
-    for (uint8_t i = 0; i < kDeferredRpv2StatusCapacity; ++i) {
-      if (deferredRpv2Statuses[i].used &&
-          strcmp(
-              deferredRpv2Statuses[i].commandId,
-              activeSimpleCommand.commandId) == 0 &&
-          deferredRpv2Statuses[i].queuedAtMs <= oldestAtMs) {
-        oldestAtMs = deferredRpv2Statuses[i].queuedAtMs;
-        slot = i;
-      }
-    }
+  uint8_t failed = 0;
+  uint8_t attempted = 0;
+  while (attempted < budget) {
+    const int slot = findNextDueDeferredRpv2Status(nowMs);
     if (slot < 0) break;
     DeferredRpv2Status& entry = deferredRpv2Statuses[slot];
-    setFenceTargetTransportState(
-        entry.deviceId,
-        entry.status,
-        entry.terminal,
-        entry.ok,
-        entry.reason,
-        entry.reasonCode);
-    if (!publishSimpleCommandResult(
-            entry.status,
-            entry.reason[0] ? entry.reason : nullptr)) {
-      LOGW(
-          "RPV2_STATUS_FLUSH_FAIL commandId=%s status=%s",
-          activeSimpleCommand.commandId,
-          entry.status);
-      return;
-    }
+    entry.flushing = true;
+    entry.lastAttemptAtMs = nowMs;
+    attempted++;
     LOGI(
-        "RPV2_STATUS_FLUSH_DONE commandId=%s status=%s queuedForMs=%lu",
-        activeSimpleCommand.commandId,
+        "RPV2_STATUS_FLUSH_ITEM_BEGIN index=%d commandId=%s status=%s attempts=%u",
+        slot,
+        entry.commandId,
         entry.status,
-        (unsigned long)(millis() - entry.queuedAtMs));
-    entry = DeferredRpv2Status{};
-    flushed++;
+        (unsigned)entry.attempts);
+
+    bool published = false;
+    if (!rpv2transport::statusFlushContextMatches(
+            entry.commandId, activeSimpleCommand.commandId)) {
+      copyStringToBuffer(
+          entry.lastError,
+          sizeof(entry.lastError),
+          "active_command_context_mismatch");
+      LOGW(
+          "RPV2_STATUS_FLUSH_CONTEXT_MISMATCH itemCommandId=%s activeCommandId=%s",
+          entry.commandId,
+          activeSimpleCommand.commandId);
+    } else {
+      if (entry.deviceId != 0) {
+        setFenceTargetTransportState(
+            entry.deviceId,
+            entry.status,
+            entry.terminal,
+            entry.ok,
+            entry.reason,
+            entry.reasonCode);
+      }
+      published = publishSimpleCommandResult(
+          entry.status,
+          entry.reason[0] ? entry.reason : nullptr);
+    }
+
+    entry.flushing = false;
+    if (published) {
+      LOGI(
+          "RPV2_STATUS_FLUSH_ITEM_OK index=%d commandId=%s status=%s queuedForMs=%lu",
+          slot,
+          entry.commandId,
+          entry.status,
+          (unsigned long)(millis() - entry.queuedAtMs));
+      clearDeferredRpv2Status((uint8_t)slot, "flushed");
+      flushed++;
+      continue;
+    }
+
+    const uint32_t backoffMs = rpv2transport::scheduleStatusFlushRetry(
+        entry.attempts, entry.nextAttemptAtMs, nowMs);
+    if (!entry.lastError[0]) {
+      copyStringToBuffer(
+          entry.lastError,
+          sizeof(entry.lastError),
+          lastCloudWriteError[0] ? lastCloudWriteError : "cloud_write_failed");
+    }
+    failed++;
+    LOGW(
+        "RPV2_STATUS_FLUSH_ITEM_FAIL index=%d commandId=%s status=%s attempts=%u backoffMs=%lu nextAttemptAtMs=%lu reason=%s",
+        slot,
+        entry.commandId,
+        entry.status,
+        (unsigned)entry.attempts,
+        (unsigned long)backoffMs,
+        (unsigned long)entry.nextAttemptAtMs,
+        entry.lastError);
+    break;
   }
+  LOGI(
+      "RPV2_STATUS_FLUSH_END queuedBefore=%u attempted=%u flushed=%u failed=%u remaining=%u",
+      (unsigned)queuedBefore,
+      (unsigned)attempted,
+      (unsigned)flushed,
+      (unsigned)failed,
+      (unsigned)deferredRpv2StatusCount());
 }
 
 static bool hasDeferredRpv2StatusForActiveCommand() {
@@ -3380,7 +3563,15 @@ static void publishFenceTransportState(
         ok);
     return;
   }
-  publishSimpleCommandResult(transportState, reason);
+  if (!publishSimpleCommandResult(transportState, reason) && terminal) {
+    enqueueDeferredRpv2Status(
+        deviceId,
+        transportState,
+        reason,
+        reasonCode,
+        terminal,
+        ok);
+  }
 }
 
 static void markFenceCommandDispatchingBegin() {
@@ -3561,7 +3752,16 @@ static void finalizeFenceCommandIfAllTargetsTerminal() {
   const bool anyFailed = anyActiveSimpleTargetFailed();
   const char* finalStatus = anyFailed ? "failed" : "applied";
   const char* finalReason = anyFailed ? firstActiveSimpleTargetFailureReason() : nullptr;
-  publishSimpleCommandResult(finalStatus, finalReason);
+  if (!publishSimpleCommandResult(finalStatus, finalReason)) {
+    enqueueDeferredRpv2Status(
+        0,
+        finalStatus,
+        finalReason,
+        activeSimpleCommand.lastReasonCode,
+        true,
+        !anyFailed);
+    return;
+  }
   clearActiveSimpleCommand();
 }
 
@@ -5752,7 +5952,15 @@ static bool prepareFenceWakeSession(
   session->core.state = recentHint
       ? rtrwake::State::PAGING_READY_TO_SEND
       : rtrwake::State::PAGING_WAITING_UPLINK;
-  copyStringToBuffer(session->commandId, sizeof(session->commandId), commandId);
+  if (!copyCommandIdToBuffer(
+          session->commandId,
+          sizeof(session->commandId),
+          commandId,
+          "prepareFenceWakeSession",
+          reason)) {
+    *session = PendingWakeSession{};
+    return false;
+  }
   session->scopeId = scopeId == 0 ? bindingScopeIdValue() : scopeId;
   session->commandType = MsgType::SET_FENCE;
   session->radioCommandId = radioCommandId;
@@ -5775,6 +5983,11 @@ static bool prepareFenceWakeSession(
       (unsigned)session->estimatedFragments,
       (unsigned long)session->core.predictedWakeAtMs,
       (unsigned long)session->core.lastUplinkAtMs);
+  LOGI(
+      "PENDING_WAKE_COMMAND_ID_SET deviceId=%lu commandId=%s len=%u",
+      (unsigned long)deviceId,
+      session->commandId,
+      (unsigned)strlen(session->commandId));
   if (!recentHint) {
     LOGI(
         "RTR_PAGE_DEFERRED_WAITING_UPLINK commandId=%s deviceId=%lu campaignCount=%u",
@@ -7165,7 +7378,19 @@ static bool dispatchQueuedSimpleCommand(
   activeSimpleCommand.lastReasonCode = rpv2::REASON_NONE;
   activeSimpleCommand.createdAtMs = commandDoc["createdAtMs"] | 0ULL;
   activeSimpleCommand.expiresAtMs = commandDoc["expiresAtMs"] | 0ULL;
-  copyStringToBuffer(activeSimpleCommand.commandId, sizeof(activeSimpleCommand.commandId), commandId.c_str());
+  if (!copyCommandIdToBuffer(
+          activeSimpleCommand.commandId,
+          sizeof(activeSimpleCommand.commandId),
+          commandId.c_str(),
+          "dispatchQueuedSimpleCommand",
+          reason)) {
+    activeSimpleCommand = ActiveSimpleCommandState{};
+    return false;
+  }
+  LOGI(
+      "QUEUE_COMMAND_ID_LOADED len=%u commandId=%s",
+      (unsigned)commandId.length(),
+      activeSimpleCommand.commandId);
   copyStringToBuffer(activeSimpleCommand.command, sizeof(activeSimpleCommand.command), command);
   copyStringToBuffer(activeSimpleCommand.propertyId, sizeof(activeSimpleCommand.propertyId), propertyId);
   copyStringToBuffer(
@@ -7394,7 +7619,17 @@ static void processNextQueuedCommand() {
     return;
   }
 
-  if (strcmp(command, "SET_FENCE") == 0) {
+  if (commandId.length() >= rtcmdid::COMMAND_ID_MAX_LEN) {
+    LOGW(
+        "COMMAND_ID_TOO_LONG source=processNextQueuedCommand len=%u max=%u prefix=%.32s",
+        (unsigned)commandId.length(),
+        (unsigned)rtcmdid::COMMAND_ID_MAX_PAYLOAD_LEN,
+        commandId.c_str());
+    failStatus = "failed";
+    failReason = "command_id_too_long";
+  }
+
+  if (!failStatus && strcmp(command, "SET_FENCE") == 0) {
     const char* areaId = commandDoc["payload"]["originDocId"] | commandDoc["payload"]["origin_doc_id"] | "";
     const int targetCount = commandDoc["targetDeviceIds"].as<JsonArrayConst>().size();
     const FencePointsResolution pointsResolution =
@@ -7405,7 +7640,9 @@ static void processNextQueuedCommand() {
         commandId.c_str(), areaId, propertyId, propertyScopeId, targetCount, pointCount);
   }
 
-  if (expiresAtMs != 0 && expiresAtMs <= nowMs) {
+  if (failStatus) {
+    // Preserve the deterministic command-id validation failure.
+  } else if (expiresAtMs != 0 && expiresAtMs <= nowMs) {
     failStatus = "expired";
     failReason = "command_expired";
     char expected[24];
@@ -7500,7 +7737,11 @@ static void processNextQueuedCommand() {
           commandDoc["targetDeviceIds"].as<JsonArrayConst>(),
           commandDoc["targetGatewayIds"].as<JsonArrayConst>());
     } else {
-      copyStringToBuffer(herdOp.loraCommandId, sizeof(herdOp.loraCommandId), commandId.c_str());
+      copyCommandIdToBuffer(
+          herdOp.loraCommandId,
+          sizeof(herdOp.loraCommandId),
+          commandId.c_str(),
+          "processNextQueuedCommand.herding");
       copyStringToBuffer(
           herdOp.propertyScopeId, sizeof(herdOp.propertyScopeId), propertyScopeId);
       herdOp.createdAtMs = commandDoc["createdAtMs"] | 0ULL;
@@ -7858,10 +8099,14 @@ static bool startHerdingOperation(const JsonVariantConst payload, const char** r
       next.propertyScopeId,
       sizeof(next.propertyScopeId),
       nextPropertyScopeId);
-  copyStringToBuffer(
+  if (!copyCommandIdToBuffer(
       next.loraCommandId,
       sizeof(next.loraCommandId),
-      pickFirstText(payload["cmd_id"], payload["command_id"]));
+      pickFirstText(payload["cmd_id"], payload["command_id"]),
+      "startHerdingOperation",
+      reason)) {
+    return false;
+  }
 
   for (uint8_t i = 0; i < pointCount; ++i) {
     double lat = 0.0;
