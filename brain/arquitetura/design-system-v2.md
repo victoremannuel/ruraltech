@@ -8,6 +8,7 @@
 Design system estabelecido em Sprint 1 do redesign. Centraliza tokens OKLCH,
 tipografia (Inter Tight / Inter / JetBrains Mono) e componentes primitivos/
 domínio usados por todas as novas telas.
+Update context: o subgrafo `app/graphify-out-web/GRAPH_REPORT.md` atualizado em 2026-06-18 confirmou `colors.dart`, `tokens.dart`, `typography.dart` e `theme.dart` como abstrações centrais entre as comunidades do app.
 
 Lema do handoff: "Mapa é herói, UI orbita ao redor, dados técnicos em mono".
 
@@ -59,6 +60,11 @@ Lema do handoff: "Mapa é herói, UI orbita ao redor, dados técnicos em mono".
 
 - `RTFab` — FAB extendido accent com speed-dial (rotação 45° do ícone, fade
   + translate dos `_ActionPill`). Label padrão "Novo".
+
+### Hubs confirmados pelo grafo do app (2026-06-18)
+
+- `RTActionRow`, `RTField`, `RTFab`, `RTCollarSheet` e `HomeShell` aparecem como hubs de comunidades relevantes no recorte web do `app/`.
+- `colors.dart`, `tokens.dart`, `typography.dart` e `theme.dart` continuam atuando como eixo transversal entre telas, componentes primitivos e componentes de domínio.
 
 ## Shell (Sprint 2)
 

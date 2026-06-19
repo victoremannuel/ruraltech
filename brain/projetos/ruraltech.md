@@ -10,6 +10,13 @@ Sistema em 3 camadas físicas (coleira → gateway → cloud) com app de gestão
 
 ## Details
 
+### Status atual (2026-06-18)
+
+- Branch ativa: `main`
+- Graphify por módulo foi refreshado no worktree atual
+- O `app/` agora tem um recorte dedicado `app/graphify-out-web/` para navegação arquitetural focada na camada Flutter
+- Update context: o novo relatório do `app` destacou o design system (`colors.dart`, `tokens.dart`, `typography.dart`, `theme.dart`) como eixo estrutural entre telas e componentes
+
 ### Status atual (2026-04-19)
 
 - Branch ativa: `fix/comandos/app-to-coleira` — implementação do protocolo RPv2 para SET_FENCE
