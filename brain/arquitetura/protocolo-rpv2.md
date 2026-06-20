@@ -23,6 +23,10 @@ Substitui o envio JSON textual para comandos de cerca, oferecendo:
 - Planner bounded-first para cercas de 3 a 32 pontos, com máximo conservador de 5 pontos por frame seguro de 128 bytes
 - Falhas de medição multiponto redutíveis; somente a falha de um fragmento unitário encerra o planejamento
 - Resultado terminal de falha com `reason`, `reasonCode` e `deviceResults` por alvo
+- Timeout de COMMIT_ACK e APPLY_STATUS escalado por quantidade de fragmentos
+- Retry de COMMIT com o mesmo binding de sessão e ate 3 tentativas para 6 ou mais fragmentos
+- APPLY_STATUS terminal valido aceito durante a espera de COMMIT_ACK
+- Cache idempotente na coleira para reenviar ACK e APPLY_STATUS de COMMIT ja aplicado
 
 ## Components
 
@@ -38,7 +42,7 @@ Substitui o envio JSON textual para comandos de cerca, oferecendo:
 | `radio_proto_v2_constants` | `firmware/shared/radio_proto_v2_constants.h` | Constantes do protocolo |
 | `radio_proto_v2_id` | `firmware/shared/radio_proto_v2_id.h` | FNV-1a 64 para radio_command_id |
 | `radio_proto_v2_reason_codes` | `firmware/shared/radio_proto_v2_reason_codes.h` | Códigos de erro/status |
-| `rpv2_transport_policy` | `firmware/shared/rpv2_transport_policy.h` | Política compartilhada de retry, duplicidade e deadlines; inclui `shouldOpenFirstPointsWindow` e `shouldOpenCommitWindow` |
+| `rpv2_transport_policy` | `firmware/shared/rpv2_transport_policy.h` | Política compartilhada de retry, duplicidade e deadlines; inclui timeouts COMMIT/APPLY por fragmentos, tentativas de COMMIT, validação de APPLY_STATUS e COMMIT aplicado duplicado |
 | `rtr_wake_policy` | `firmware/shared/rtr_wake_policy.h` | `waitingUplinkTimeoutMs(estimatedCycleMs, floor, margin)` — timeout dinâmico de espera de uplink proporcional ao ciclo real do dispositivo |
 | `command_id_policy` | `firmware/shared/command_id_policy.h` | Limite canônico de 128 bytes e cópia sem truncamento silencioso |
 | Fila de status diferidos | `gateway-matriz/gateway-matriz.ino` | Preserva progresso em RAM e faz flush após a seção radio-crítica |
@@ -82,13 +86,23 @@ Substitui o envio JSON textual para comandos de cerca, oferecendo:
 
 3. COMMIT
    Coleira: após o ACK final, abre janela síncrona de 10 s para COMMIT.
+            O grace adicional e de 15 s para ate 3 fragmentos, 22 s para
+            4-5 fragmentos e 30 s para 6 ou mais fragmentos.
             Valida binding, scope, tipo externo, header, tipo interno,
             radio_command_id e session_nonce antes de reutilizar applyDownlink.
             Calcula o CRC diretamente do vetor E7 preservado durante a remontagem;
             o `Polygon` em double é usado para geofence, não como fonte do CRC.
    Matriz: frame = {type: COMMIT, fence_crc}
+           Espera COMMIT_ACK por 6/9/12 s conforme 1-3/4-5/6+ fragmentos.
+           Usa 2 tentativas em sessoes curtas e 3 em sessoes com 6+ fragmentos.
    → LoRa TX
-   ← APPLY_STATUS (success=true/false, reasonCode)
+   ← COMMIT_ACK e APPLY_STATUS (success=true/false, reasonCode)
+
+   Se o ACK isolado for perdido, um APPLY_STATUS da mesma sessao somente e aceito
+   como sucesso quando `apply=1`, `reasonCode=0`, CRC e total de pontos coincidirem.
+   A coleira conserva um cache do ultimo COMMIT aplicado; uma repeticao com os
+   mesmos IDs, CRC, token, pontos e fragmentos reenvia ACK/APPLY_STATUS sem
+   persistir ou reaplicar destrutivamente a cerca.
 
 4. Resultado
    Matriz: persiste property_commands com:
@@ -155,9 +169,11 @@ Quando expira, a sessão preserva contexto mínimo por um grace period limitado.
 Ao final desse prazo, staging e modo RTR são limpos sem ativar cerca incompleta.
 
 Após o último ACK de pontos, a coleira abre uma janela imediata de COMMIT de
-10 segundos. Se o COMMIT não chegar, mantém somente a espera limitada por mais
-15 segundos; ao expirar, encerra a sessão com `commit_wait_timeout`, em vez de
-aguardar todo o wake lock.
+10 segundos. Se o COMMIT não chegar, mantém a espera por grace escalado:
+15 segundos para ate 3 fragmentos, 22 segundos para 4-5 e 30 segundos para
+6 ou mais. O teto global do pump e estendido ate esse deadline, evitando que
+uma sessao longa seja encerrada pelo limite geral antes da politica de COMMIT.
+Ao expirar, encerra com `commit_wait_timeout`, em vez de aguardar todo o wake lock.
 
 ### Timing do RTR na matriz (paging de nó dormindo)
 

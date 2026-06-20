@@ -5,6 +5,15 @@
 namespace rpv2transport {
 
 constexpr uint8_t MAX_POINTS_FRAGMENT_ATTEMPTS = 3;
+constexpr uint32_t SHORT_COMMIT_ACK_TIMEOUT_MS = 6000UL;
+constexpr uint32_t MEDIUM_COMMIT_ACK_TIMEOUT_MS = 9000UL;
+constexpr uint32_t LONG_COMMIT_ACK_TIMEOUT_MS = 12000UL;
+constexpr uint32_t SHORT_APPLY_STATUS_TIMEOUT_MS = 10000UL;
+constexpr uint32_t MEDIUM_APPLY_STATUS_TIMEOUT_MS = 12000UL;
+constexpr uint32_t LONG_APPLY_STATUS_TIMEOUT_MS = 15000UL;
+constexpr uint32_t SHORT_COLLAR_COMMIT_WAIT_GRACE_MS = 15000UL;
+constexpr uint32_t MEDIUM_COLLAR_COMMIT_WAIT_GRACE_MS = 22000UL;
+constexpr uint32_t LONG_COLLAR_COMMIT_WAIT_GRACE_MS = 30000UL;
 constexpr uint32_t STATUS_FLUSH_MAX_BACKOFF_MS = 30000UL;
 constexpr uint8_t STATUS_FLUSH_NORMAL_BUDGET = 1;
 constexpr uint8_t STATUS_FLUSH_MAX_BUDGET = 2;
@@ -26,6 +35,64 @@ inline bool acceptedRangeEndsAt(
 
 inline bool shouldRetryFragment(uint8_t attempt) {
   return attempt < MAX_POINTS_FRAGMENT_ATTEMPTS;
+}
+
+inline bool isLongFenceSession(uint16_t totalChunks) {
+  return totalChunks >= 6;
+}
+
+inline uint32_t commitAckTimeoutMs(uint16_t totalChunks) {
+  if (isLongFenceSession(totalChunks)) return LONG_COMMIT_ACK_TIMEOUT_MS;
+  if (totalChunks >= 4) return MEDIUM_COMMIT_ACK_TIMEOUT_MS;
+  return SHORT_COMMIT_ACK_TIMEOUT_MS;
+}
+
+inline uint32_t applyStatusTimeoutMs(uint16_t totalChunks) {
+  if (isLongFenceSession(totalChunks)) return LONG_APPLY_STATUS_TIMEOUT_MS;
+  if (totalChunks >= 4) return MEDIUM_APPLY_STATUS_TIMEOUT_MS;
+  return SHORT_APPLY_STATUS_TIMEOUT_MS;
+}
+
+inline uint32_t collarCommitWaitGraceMs(uint16_t totalChunks) {
+  if (isLongFenceSession(totalChunks)) {
+    return LONG_COLLAR_COMMIT_WAIT_GRACE_MS;
+  }
+  if (totalChunks >= 4) return MEDIUM_COLLAR_COMMIT_WAIT_GRACE_MS;
+  return SHORT_COLLAR_COMMIT_WAIT_GRACE_MS;
+}
+
+inline uint8_t commitMaxAttempts(uint16_t totalChunks) {
+  return isLongFenceSession(totalChunks) ? 3 : 2;
+}
+
+inline bool successfulApplyStatusMatches(
+    bool applyStatus,
+    bool ack,
+    bool nack,
+    uint16_t reasonCode,
+    uint16_t activePoints,
+    uint16_t expectedPoints,
+    uint32_t activeCrc32,
+    uint32_t expectedCrc32) {
+  return applyStatus && ack && !nack && reasonCode == 0 &&
+         activePoints == expectedPoints && activeCrc32 == expectedCrc32;
+}
+
+inline bool duplicateAppliedCommitMatches(
+    uint16_t receivedTotalPoints,
+    uint16_t expectedTotalPoints,
+    uint16_t receivedTotalChunks,
+    uint16_t expectedTotalChunks,
+    uint32_t receivedFenceCrc32,
+    uint32_t receivedStagedCrc32,
+    uint32_t expectedFenceCrc32,
+    uint32_t receivedCommitToken,
+    uint32_t expectedCommitToken) {
+  return receivedTotalPoints == expectedTotalPoints &&
+         receivedTotalChunks == expectedTotalChunks &&
+         receivedFenceCrc32 == expectedFenceCrc32 &&
+         receivedStagedCrc32 == expectedFenceCrc32 &&
+         receivedCommitToken == expectedCommitToken;
 }
 
 inline bool deadlineReached(uint32_t nowMs, uint32_t deadlineMs) {
@@ -80,6 +147,7 @@ inline bool isCoalescableStatus(const char* status) {
          statusTextEquals(status, "awaiting_points_ack") ||
          statusTextEquals(status, "points_retry_pending") ||
          statusTextEquals(status, "awaiting_commit_ack") ||
+         statusTextEquals(status, "commit_retry_pending") ||
          statusTextEquals(status, "rpv2_begin_sent") ||
          statusTextEquals(status, "rpv2_commit_sent");
 }

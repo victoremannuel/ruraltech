@@ -43,6 +43,48 @@ int main() {
   assert(rpv2transport::shouldRetryFragment(2));
   assert(!rpv2transport::shouldRetryFragment(3));
 
+  assert(!rpv2transport::isLongFenceSession(5));
+  assert(rpv2transport::isLongFenceSession(6));
+  assert(rpv2transport::commitAckTimeoutMs(3) == 6000UL);
+  assert(rpv2transport::commitAckTimeoutMs(4) == 9000UL);
+  assert(rpv2transport::commitAckTimeoutMs(6) == 12000UL);
+  assert(rpv2transport::applyStatusTimeoutMs(3) == 10000UL);
+  assert(rpv2transport::applyStatusTimeoutMs(4) == 12000UL);
+  assert(rpv2transport::applyStatusTimeoutMs(7) == 15000UL);
+  assert(rpv2transport::collarCommitWaitGraceMs(3) == 15000UL);
+  assert(rpv2transport::collarCommitWaitGraceMs(4) == 22000UL);
+  assert(rpv2transport::collarCommitWaitGraceMs(7) == 30000UL);
+  assert(rpv2transport::commitMaxAttempts(3) == 2);
+  assert(rpv2transport::commitMaxAttempts(7) == 3);
+  for (uint16_t chunks = 2; chunks <= 7; ++chunks) {
+    assert(
+        rpv2transport::commitAckTimeoutMs(chunks) >=
+        rpv2transport::commitAckTimeoutMs(chunks - 1));
+    assert(
+        rpv2transport::applyStatusTimeoutMs(chunks) >=
+        rpv2transport::applyStatusTimeoutMs(chunks - 1));
+    assert(
+        rpv2transport::collarCommitWaitGraceMs(chunks) >=
+        rpv2transport::collarCommitWaitGraceMs(chunks - 1));
+    assert(
+        rpv2transport::commitMaxAttempts(chunks) >=
+        rpv2transport::commitMaxAttempts(chunks - 1));
+  }
+  assert(rpv2transport::successfulApplyStatusMatches(
+      true, true, false, 0, 32, 32, 0x12345678UL, 0x12345678UL));
+  assert(!rpv2transport::successfulApplyStatusMatches(
+      true, true, false, 0, 31, 32, 0x12345678UL, 0x12345678UL));
+  assert(!rpv2transport::successfulApplyStatusMatches(
+      true, true, false, 0, 32, 32, 0x12345679UL, 0x12345678UL));
+  assert(!rpv2transport::successfulApplyStatusMatches(
+      true, true, false, 31, 32, 32, 0x12345678UL, 0x12345678UL));
+  assert(rpv2transport::duplicateAppliedCommitMatches(
+      32, 32, 7, 7, 0x12345678UL, 0x12345678UL, 0x12345678UL, 99, 99));
+  assert(!rpv2transport::duplicateAppliedCommitMatches(
+      32, 32, 7, 7, 0x12345678UL, 0x12345678UL, 0x12345678UL, 98, 99));
+  assert(!rpv2transport::duplicateAppliedCommitMatches(
+      31, 32, 7, 7, 0x12345678UL, 0x12345678UL, 0x12345678UL, 99, 99));
+
   assert(!rpv2transport::deadlineReached(99, 100));
   assert(rpv2transport::deadlineReached(100, 100));
   assert(rpv2transport::deadlineReached(101, 100));
@@ -72,6 +114,7 @@ int main() {
   assert(rpv2transport::statusFlushPriority(false, true) <
          rpv2transport::statusFlushPriority(true, false));
   assert(rpv2transport::isCoalescableStatus("awaiting_points_ack"));
+  assert(rpv2transport::isCoalescableStatus("commit_retry_pending"));
   assert(rpv2transport::isCoalescableStatus("rpv2_commit_sent"));
   assert(!rpv2transport::isCoalescableStatus("rpv2_points_ack"));
   assert(!rpv2transport::isCoalescableStatus("applied"));
