@@ -9,12 +9,39 @@
  */
 #pragma once
 #include <Arduino.h>
+#include <cstddef>
+
+inline const char* areaSyncSafeLogArg(const char* value) {
+  return value ? value : "";
+}
+
+inline const char* areaSyncSafeLogArg(char* value) {
+  return value ? value : "";
+}
+
+inline const char* areaSyncSafeLogArg(std::nullptr_t) {
+  return "";
+}
+
+template <typename T>
+inline T areaSyncSafeLogArg(T value) {
+  return value;
+}
+
+template <typename... Args>
+inline void areaSyncLog(const char* format, Args... args) {
+  Serial.printf(format, areaSyncSafeLogArg(args)...);
+}
+
+#ifndef AS_SAFE_STR
+#define AS_SAFE_STR(value) areaSyncSafeLogArg(value)
+#endif
 
 // ---------------------------------------------------------------------------
 // Macros base
 // ---------------------------------------------------------------------------
 #define _AS_LOG(role, level, event, fmt, ...) \
-  Serial.printf("[AREA_SYNC][" role "][" level "][" event "] " fmt "\n", ##__VA_ARGS__)
+  areaSyncLog("[AREA_SYNC][" role "][" level "][" event "] " fmt "\n", ##__VA_ARGS__)
 
 // ---------------------------------------------------------------------------
 // MATRIX

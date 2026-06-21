@@ -114,6 +114,14 @@ jobs:
             firmware/tests/rpv2_fence_planner_test.cpp \
             -o /tmp/rpv2_fence_planner_test
           /tmp/rpv2_fence_planner_test
+          g++ -std=c++17 -Wall -Wextra -pedantic -Ifirmware/tests/arduino_compat \
+            firmware/tests/area_sync_logger_test.cpp \
+            -o /tmp/area_sync_logger_test
+          /tmp/area_sync_logger_test
+          g++ -std=c++17 -Wall -Wextra -pedantic \
+            firmware/tests/collar_rpv2_binary_routing_test.cpp \
+            -o /tmp/collar_rpv2_binary_routing_test
+          /tmp/collar_rpv2_binary_routing_test
 
   firmware-regression:
     name: Firmware Regression Compile

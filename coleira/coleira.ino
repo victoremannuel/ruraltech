@@ -2813,7 +2813,7 @@ static void logPolygonApplyResult(
       ok ? "" : errorCode);
   storage.pushEvent(ev);
 
-  PolygonAuditContext ctx;
+  PolygonAuditContext ctx{};
   ctx.scopeId = scopeId;
   ctx.commandType = commandType;
   ctx.polygonKind = polygonKind;
@@ -3410,6 +3410,30 @@ static void applyDownlink(const LoRaFrame& frame) {
     refreshRtrSessionActivity("downlink_frame");
   }
   const bool rpv2Fence = isRpv2FencePayload(frame);
+  if (rpv2Fence) {
+    if (!bindingReady_) {
+      LOGW(
+          "RPV2_SESSION_RX_REJECT reason=binding_missing outerMsgType=%u scopeId=%016llX",
+          (unsigned)frame.msgType,
+          (unsigned long long)frame.scopeId);
+      return;
+    }
+    if (frame.scopeId == 0 || frame.scopeId != bindingScopeIdValue()) {
+      LOGW(
+          "RPV2_SESSION_RX_REJECT reason=scope_mismatch outerMsgType=%u frameScopeId=%016llX expectedScopeId=%016llX",
+          (unsigned)frame.msgType,
+          (unsigned long long)frame.scopeId,
+          (unsigned long long)bindingScopeIdValue());
+      return;
+    }
+    LOGI(
+        "RPV2_BINARY_DOWNLINK_ROUTE msgType=%u payloadLen=%u scopeId=%016llX",
+        (unsigned)frame.msgType,
+        (unsigned)frame.payloadLen,
+        (unsigned long long)frame.scopeId);
+    applyFenceRpv2Frame(frame);
+    return;
+  }
 
   char commandId[cfg::EVENT_COMMAND_ID_MAX_LEN]{};
   extractCommandMetadataFromPayload(frame, commandId, sizeof(commandId));
@@ -3441,7 +3465,7 @@ static void applyDownlink(const LoRaFrame& frame) {
     }
   }
 
-  PolygonAuditContext auditCtx;
+  PolygonAuditContext auditCtx{};
   if (polygonAuditCommand) {
     auditCtx.scopeId = frame.scopeId;
     auditCtx.commandType = frame.msgType;
@@ -3512,11 +3536,6 @@ static void applyDownlink(const LoRaFrame& frame) {
 
   if (frame.msgType == MsgType::PING) {
     sendCommandFeedback(frame, true, "pong", nullptr, nullptr, commandId);
-    return;
-  }
-
-  if (rpv2Fence) {
-    applyFenceRpv2Frame(frame);
     return;
   }
 

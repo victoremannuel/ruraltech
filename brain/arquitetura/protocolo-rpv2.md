@@ -162,6 +162,19 @@ a ser "processa 1 frame → ACK → atualiza estado", sem abrir janelas. Um úni
 `RPV2_SESSION_MAX_MS` (60 s). Watchdog alimentado a cada iteração. Sem cloud I/O
 no pump.
 
+### Roteamento seguro de ingress binario na coleira
+
+Em `applyDownlink`, um `SET_FENCE` reconhecido por `isRpv2FencePayload` valida
+binding e scope e segue diretamente para `applyFenceRpv2Frame`. Esse early
+dispatch ocorre antes de extracao de metadata, `deserializeJson`,
+`PolygonAuditContext` e logs de auditoria do fluxo legado.
+
+O caminho JSON permanece exclusivo para comandos nao RPv2. Os logs
+`AreaSyncLogger` sanitizam globalmente argumentos `char*`/`const char*` nulos
+antes de chamar `Serial.printf`, e os contextos locais de auditoria sao
+inicializados com `{}`. Isso impede que um `FENCE_BEGIN` binario seja tratado
+como JSON ou derrube a coleira antes do `BEGIN_ACK`.
+
 ### Timeout e recovery da coleira
 
 A janela imediata de pontos é configurável e usa 10 segundos na bancada.
@@ -327,6 +340,8 @@ App (Realtime)
 | Flush acumulado dispara watchdog | Um item por slice, limite temporal, gap mínimo e feed antes/depois da publicação |
 | Intermediário antigo sobrescreve terminal | Prioridade terminal e limpeza de estados supersededidos após sucesso |
 | Registro de auditoria maior colide com GPS na EEPROM | Fila versionada v3 com 8 slots, mantendo o limite reservado |
+| Payload RPv2 entra no parsing/auditoria JSON | Early dispatch apos binding/scope e antes de metadata, JSON e logs legados |
+| Ponteiro de string nulo em log AreaSync | Adaptador global converte strings nulas em texto vazio antes de `Serial.printf` |
 
 ## Related
 
@@ -337,5 +352,6 @@ App (Realtime)
 [[estabilizacao-transporte-rpv2-2026-06-19]]
 [[estabilizacao-commit-window-flush-slicing-rpv2-2026-06-19]]
 [[pump-unificado-rpv2-timing-rtr-2026-06-19]]
+[[correcao-roteamento-binario-rpv2-coleira-2026-06-21]]
 
 #arquitetura #ruraltech
