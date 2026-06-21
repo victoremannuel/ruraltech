@@ -29,6 +29,8 @@ Implementacao local concluida na `main`; builds Arduino e validacao fisica perma
 
 Update context: politica dinamica, retry COMMIT, APPLY_STATUS antecipado seguro, cache idempotente e diagnosticos implementados em 2026-06-20.
 
+Update context: em 2026-06-21, a `main` e `origin/main` foram auditadas no commit `2a2e8088`; o hardening permanece em `5bd8b652`, a suite host-side oficial passou integralmente e o worktree permaneceu limpo.
+
 Concluido:
 - timeouts COMMIT_ACK de 6/9/12 s e APPLY_STATUS de 10/12/15 s por quantidade de fragmentos;
 - 2 tentativas de COMMIT para sessoes curtas e 3 para sessoes com 6 ou mais fragmentos;
@@ -52,6 +54,8 @@ Update context: itens operacionais dependem de hardware e servicos remotos.
 Builds de `gateway-matriz` e `coleira` foram interrompidos apos 60 segundos sem qualquer saida, repetindo o hang silencioso conhecido deste host.
 
 Update context: o bloqueio e de validacao do ambiente Arduino, nao de implementacao host-side.
+
+Update context: o bloqueio foi reproduzido novamente em 2026-06-21 nos dois sketches, sem saida do `arduino-cli` por mais de 60 segundos.
 
 ## Next step
 
